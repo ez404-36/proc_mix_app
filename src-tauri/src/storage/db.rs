@@ -1,0 +1,775 @@
+// SQLite connection-pool bootstrap for the local command library.
+//
+// The DB file lives in the Tauri-resolved app data directory (e.g.
+// `~/.config/app.procmix.desktop/procmix.db` on Linux). The pool is
+// created once during `tauri::Builder::setup` and held in app state via
+// `app.manage(pool)`; IPC handlers retrieve it through `State<DbPool>`.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::Row;
+
+/// Shared handle to the SQLite connection pool. `Arc` so it can be cloned
+/// cheaply across tasks; the pool itself is internally `Arc`-counted, but
+/// the explicit alias keeps the Tauri state type stable.
+pub type DbPool = Arc<SqlitePool>;
+
+/// Build (or open) the SQLite database at `db_path`, ensuring the parent
+/// directory exists and the schema is applied. Returns an `Arc<SqlitePool>`
+/// suitable for `app.manage`.
+pub async fn init_pool(db_path: PathBuf) -> Result<DbPool, String> {
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create db parent dir: {e}"))?;
+    }
+
+    let opts = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .create_if_missing(true);
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+        .map_err(|e| {
+            format!(
+                "failed to connect to sqlite db at {}: {e}",
+                db_path.display()
+            )
+        })?;
+
+    // Apply the schema. `raw_sql` supports multi-statement scripts (the
+    // single-statement `query` API was deprecated for multi-statement
+    // usage in sqlx 0.9).
+    sqlx::raw_sql(include_str!("schema.sql"))
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("failed to apply db schema: {e}"))?;
+
+    // Run idempotent column-additions for users whose DB was created
+    // before a column existed. SQLite has no `ADD COLUMN IF NOT EXISTS`,
+    // so we inspect `PRAGMA table_info` first.
+    ensure_commands_columns(&pool).await?;
+    ensure_workflows_columns(&pool).await?;
+    ensure_schedules_columns(&pool).await?;
+    ensure_history_columns(&pool).await?;
+
+    Ok(Arc::new(pool))
+}
+
+/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `commands` table.
+///
+/// `CREATE TABLE IF NOT EXISTS` only creates the schema as it was on
+/// first launch; columns added in later releases (like `run_as_admin`,
+/// v0.2.0) won't be applied to existing databases. SQLite has no
+/// `ADD COLUMN IF NOT EXISTS`, so we ask `PRAGMA table_info` what is
+/// there and add what isn't.
+///
+/// New columns must be NULLable or have a DEFAULT — both apply to
+/// `run_as_admin INTEGER NOT NULL DEFAULT 0`, so the migration is safe
+/// regardless of how many existing rows the user has.
+async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
+    let rows = sqlx::query("PRAGMA table_info(commands)")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("inspect commands table: {e}"))?;
+
+    let existing: std::collections::HashSet<String> = rows
+        .into_iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .collect();
+
+    // (column_name, "ADD COLUMN …" fragment). Append future columns
+    // here. The SQL must be a `&'static str` for sqlx 0.9's
+    // `SqlSafeStr` bound — that's also a desirable property because
+    // a runtime-built ALTER would invite injection bugs.
+    let migrations: &[(&str, &'static str)] = &[
+        (
+            "run_as_admin",
+            "ALTER TABLE commands ADD COLUMN run_as_admin INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "variables",
+            "ALTER TABLE commands ADD COLUMN variables TEXT NOT NULL DEFAULT '[]'",
+        ),
+        (
+            "timeout_seconds",
+            "ALTER TABLE commands ADD COLUMN timeout_seconds INTEGER",
+        ),
+        (
+            "output_schema",
+            "ALTER TABLE commands ADD COLUMN output_schema TEXT",
+        ),
+    ];
+
+    for &(col, sql) in migrations {
+        if !existing.contains(col) {
+            sqlx::query(sql)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("add column {col} to commands: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `workflows` table.
+///
+/// The `workflows` table was introduced whole in v0.5.0, so on first
+/// release there are no missing columns to backfill — the migration list
+/// is intentionally empty. It exists now (rather than being added later)
+/// so future workflow columns have an established, tested home that mirrors
+/// [`ensure_commands_columns`]. The same `PRAGMA table_info` inspection
+/// guards idempotency once entries are added.
+async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
+    let rows = sqlx::query("PRAGMA table_info(workflows)")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("inspect workflows table: {e}"))?;
+
+    let existing: std::collections::HashSet<String> = rows
+        .into_iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .collect();
+
+    // (column_name, "ADD COLUMN …" fragment). Append future columns here.
+    // The SQL must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound —
+    // a runtime-built ALTER would also invite injection bugs. Empty for
+    // the v0.5.0 initial release; see the doc comment above.
+    let migrations: &[(&str, &'static str)] = &[];
+
+    for &(col, sql) in migrations {
+        if !existing.contains(col) {
+            sqlx::query(sql)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("add column {col} to workflows: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `schedules` table.
+///
+/// The `schedules` table was introduced whole in v0.2.0, so on first release
+/// there are no missing columns to backfill — the migration list is
+/// intentionally empty. It exists now (rather than being added later) so
+/// future schedule columns have an established, tested home that mirrors
+/// [`ensure_workflows_columns`]. The same `PRAGMA table_info` inspection
+/// guards idempotency once entries are added.
+async fn ensure_schedules_columns(pool: &SqlitePool) -> Result<(), String> {
+    let rows = sqlx::query("PRAGMA table_info(schedules)")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("inspect schedules table: {e}"))?;
+
+    let existing: std::collections::HashSet<String> = rows
+        .into_iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .collect();
+
+    // (column_name, "ADD COLUMN …" fragment). Append future columns here.
+    // The SQL must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound —
+    // a runtime-built ALTER would also invite injection bugs.
+    let migrations: &[(&str, &'static str)] = &[
+        (
+            "catch_up_policy",
+            "ALTER TABLE schedules ADD COLUMN catch_up_policy TEXT NOT NULL DEFAULT 'none'",
+        ),
+        (
+            "timeout_seconds",
+            "ALTER TABLE schedules ADD COLUMN timeout_seconds INTEGER",
+        ),
+        (
+            "max_retries",
+            "ALTER TABLE schedules ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "capture_output",
+            "ALTER TABLE schedules ADD COLUMN capture_output INTEGER NOT NULL DEFAULT 1",
+        ),
+    ];
+
+    for &(col, sql) in migrations {
+        if !existing.contains(col) {
+            sqlx::query(sql)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("add column {col} to schedules: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `history_events` table.
+///
+/// `schedule_id` (added in v0.8.0) denormalises the schedule id for
+/// `scheduledRun` events so the schedule view can filter a single schedule's
+/// run history without scanning `payload_json`. NULLable, so the migration is
+/// safe for existing rows. Mirrors [`ensure_schedules_columns`]; the same
+/// `PRAGMA table_info` inspection guards idempotency.
+async fn ensure_history_columns(pool: &SqlitePool) -> Result<(), String> {
+    let rows = sqlx::query("PRAGMA table_info(history_events)")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("inspect history_events table: {e}"))?;
+
+    let existing: std::collections::HashSet<String> = rows
+        .into_iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .collect();
+
+    // (column_name, "ADD COLUMN …" fragment). Append future columns here.
+    // The SQL must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound —
+    // a runtime-built ALTER would also invite injection bugs.
+    let migrations: &[(&str, &'static str)] = &[(
+        "schedule_id",
+        "ALTER TABLE history_events ADD COLUMN schedule_id TEXT",
+    )];
+
+    for &(col, sql) in migrations {
+        if !existing.contains(col) {
+            sqlx::query(sql)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("add column {col} to history_events: {e}"))?;
+        }
+    }
+
+    // Back-fill `schedule_id` for rows written BEFORE the column existed.
+    // The `ALTER TABLE … ADD COLUMN schedule_id TEXT` above leaves every
+    // pre-existing row NULL, so a schedule that fired many times before the
+    // upgrade would show an empty History tab (the view filters
+    // `WHERE schedule_id = ?`). The denormalised id is already inside each
+    // `scheduledRun` event's `payload_json` as the camelCase `scheduleId`
+    // (serde wire format), so we recover it via SQLite's JSON1 `json_extract`.
+    // Guarded by `schedule_id IS NULL`, this is idempotent and a no-op once
+    // every row is populated, so it is safe to run on every launch.
+    sqlx::query(
+        "UPDATE history_events \
+         SET schedule_id = json_extract(payload_json, '$.scheduleId') \
+         WHERE kind = 'scheduledRun' AND schedule_id IS NULL",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("back-fill history schedule_id: {e}"))?;
+
+    // Create the `schedule_id` index HERE rather than in schema.sql: on an
+    // existing database `CREATE TABLE IF NOT EXISTS` does not add the column,
+    // and schema.sql runs before the ALTER above — so indexing `schedule_id`
+    // there panics with "no such column: schedule_id". By this point the
+    // column is guaranteed to exist (fresh DB: created by schema.sql; old DB:
+    // just added by the ALTER), so the idempotent index creation is safe.
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_history_schedule_id \
+         ON history_events(schedule_id)",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("create idx_history_schedule_id: {e}"))?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn fresh_pool() -> SqlitePool {
+        let opts = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .create_if_missing(true);
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap()
+    }
+
+    /// Simulate an old database that was created BEFORE `run_as_admin`
+    /// existed. The migration must add the column and leave existing
+    /// rows untouched (defaulting to 0).
+    #[tokio::test]
+    async fn ensure_commands_columns_adds_missing_run_as_admin() {
+        let pool = fresh_pool().await;
+        // Create the "old" schema by hand — same as schema.sql but
+        // WITHOUT the run_as_admin column.
+        sqlx::raw_sql(
+            "CREATE TABLE commands (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                script TEXT NOT NULL,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                favorite INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_count INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO commands (id, name, script, created_at, updated_at)
+             VALUES ('a', 'n', 'echo', '2026-05-28', '2026-05-28')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_commands_columns(&pool).await.unwrap();
+
+        let row = sqlx::query("SELECT run_as_admin FROM commands WHERE id = 'a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let v: i64 = row.try_get("run_as_admin").unwrap();
+        assert_eq!(v, 0, "existing row must default to run_as_admin = 0");
+    }
+
+    /// Running the migration twice must NOT fail (no duplicate-column
+    /// error). This is the idempotency invariant.
+    #[tokio::test]
+    async fn ensure_commands_columns_is_idempotent() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The schema already has run_as_admin; the migration should
+        // detect it and skip the ALTER.
+        ensure_commands_columns(&pool).await.unwrap();
+        ensure_commands_columns(&pool).await.unwrap();
+    }
+
+    /// The schema must create the `history_events` table on a fresh
+    /// database. We check the table is present with the columns the
+    /// history module relies on — column-by-column assertions live in
+    /// the history module's own tests. This guards against accidental
+    /// schema removal during refactors.
+    #[tokio::test]
+    async fn schema_creates_history_events_table() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rows = sqlx::query("PRAGMA table_info(history_events)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let cols: std::collections::HashSet<String> = rows
+            .into_iter()
+            .filter_map(|r| r.try_get::<String, _>("name").ok())
+            .collect();
+        for required in [
+            "id",
+            "created_at",
+            "kind",
+            "command_id",
+            "command_name",
+            "payload_json",
+            "execution_id",
+            "exit_code",
+            "duration_ms",
+            "status",
+            "schedule_id",
+        ] {
+            assert!(
+                cols.contains(required),
+                "history_events missing column `{required}`; got {cols:?}"
+            );
+        }
+    }
+
+    /// Simulate an old database created BEFORE `schedule_id` existed. The
+    /// migration must add the (NULLable) column and remain idempotent across
+    /// repeated calls.
+    #[tokio::test]
+    async fn ensure_history_columns_adds_missing_schedule_id() {
+        let pool = fresh_pool().await;
+        // Old history_events schema WITHOUT schedule_id.
+        sqlx::raw_sql(
+            "CREATE TABLE history_events (
+                id TEXT PRIMARY KEY NOT NULL,
+                created_at TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                command_id TEXT,
+                command_name TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                execution_id TEXT,
+                exit_code INTEGER,
+                duration_ms INTEGER,
+                status TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_history_columns(&pool).await.unwrap();
+
+        let rows = sqlx::query("PRAGMA table_info(history_events)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let cols: std::collections::HashSet<String> = rows
+            .into_iter()
+            .filter_map(|r| r.try_get::<String, _>("name").ok())
+            .collect();
+        assert!(cols.contains("schedule_id"), "schedule_id must be added");
+
+        // Running again must remain a no-op (idempotent).
+        ensure_history_columns(&pool).await.unwrap();
+    }
+
+    /// Re-applying the schema must remain a no-op (CREATE TABLE IF NOT
+    /// EXISTS). Same idempotency invariant as for the `commands` table.
+    #[tokio::test]
+    async fn schema_history_events_creation_is_idempotent() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// Simulate an old database that was created BEFORE `variables`
+    /// existed. The migration must add the column and default existing
+    /// rows to the empty JSON array `'[]'` so list/decode keeps working.
+    #[tokio::test]
+    async fn ensure_commands_columns_adds_missing_variables() {
+        let pool = fresh_pool().await;
+        // Old schema — has run_as_admin (so we only test the variables
+        // migration step) but no `variables` column.
+        sqlx::raw_sql(
+            "CREATE TABLE commands (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                script TEXT NOT NULL,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                favorite INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_count INTEGER NOT NULL DEFAULT 0,
+                run_as_admin INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO commands (id, name, script, created_at, updated_at)
+             VALUES ('a', 'n', 'echo', '2026-05-28', '2026-05-28')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_commands_columns(&pool).await.unwrap();
+
+        let row = sqlx::query("SELECT variables FROM commands WHERE id = 'a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let v: String = row.try_get("variables").unwrap();
+        assert_eq!(v, "[]", "existing rows must default to an empty array");
+
+        // Running the migration again must remain a no-op (idempotent).
+        ensure_commands_columns(&pool).await.unwrap();
+    }
+
+    /// The schema must create the `workflows` table on a fresh database
+    /// with the columns the workflows module relies on. Guards against
+    /// accidental schema removal during refactors (mirrors the
+    /// `history_events` schema test above).
+    #[tokio::test]
+    async fn schema_creates_workflows_table() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rows = sqlx::query("PRAGMA table_info(workflows)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let cols: std::collections::HashSet<String> = rows
+            .into_iter()
+            .filter_map(|r| r.try_get::<String, _>("name").ok())
+            .collect();
+        for required in [
+            "id",
+            "name",
+            "description",
+            "icon",
+            "nodes_json",
+            "edges_json",
+            "tags_json",
+            "category_id",
+            "favorite",
+            "created_at",
+            "updated_at",
+            "last_run_at",
+            "run_count",
+        ] {
+            assert!(
+                cols.contains(required),
+                "workflows missing column `{required}`; got {cols:?}"
+            );
+        }
+    }
+
+    /// `ensure_workflows_columns` must be a no-op on the current schema
+    /// and remain idempotent across repeated calls (the invariant future
+    /// column-additions rely on).
+    #[tokio::test]
+    async fn ensure_workflows_columns_is_idempotent() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_workflows_columns(&pool).await.unwrap();
+        ensure_workflows_columns(&pool).await.unwrap();
+    }
+
+    /// The schema must create the `schedules` table on a fresh database
+    /// with the columns the schedules module relies on. Guards against
+    /// accidental schema removal during refactors (mirrors the workflows
+    /// schema test above).
+    #[tokio::test]
+    async fn schema_creates_schedules_table() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rows = sqlx::query("PRAGMA table_info(schedules)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let cols: std::collections::HashSet<String> = rows
+            .into_iter()
+            .filter_map(|r| r.try_get::<String, _>("name").ok())
+            .collect();
+        for required in [
+            "id",
+            "name",
+            "enabled",
+            "target_kind",
+            "target_id",
+            "cron",
+            "variable_values",
+            "skip_if_running",
+            "catch_up_policy",
+            "timeout_seconds",
+            "max_retries",
+            "capture_output",
+            "created_at",
+            "updated_at",
+            "last_run_at",
+            "last_run_status",
+            "next_run_at",
+            "run_count",
+        ] {
+            assert!(
+                cols.contains(required),
+                "schedules missing column `{required}`; got {cols:?}"
+            );
+        }
+    }
+
+    /// `ensure_schedules_columns` must be a no-op on the current schema and
+    /// remain idempotent across repeated calls (the invariant future
+    /// column-additions rely on).
+    #[tokio::test]
+    async fn ensure_schedules_columns_is_idempotent() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_schedules_columns(&pool).await.unwrap();
+        ensure_schedules_columns(&pool).await.unwrap();
+    }
+
+    /// Regression for the startup panic "no such column: schedule_id".
+    ///
+    /// Reproduces the REAL upgrade path on a database that predates the
+    /// `schedule_id` column: an existing `history_events` table WITHOUT the
+    /// column, then `schema.sql` (whose `CREATE TABLE IF NOT EXISTS` is a
+    /// no-op for the existing table) followed by `ensure_history_columns`,
+    /// exactly as `init_pool` runs them. If `schema.sql` were to index
+    /// `schedule_id` (it must NOT — the index lives in ensure_history_columns),
+    /// the `CREATE INDEX` would fire before the column existed and panic. This
+    /// test fails iff that ordering bug is reintroduced.
+    #[tokio::test]
+    async fn upgrade_old_history_db_does_not_panic_on_schedule_id_index() {
+        let pool = fresh_pool().await;
+        // Pre-create an "old" history_events table WITHOUT schedule_id (the
+        // pre-v0.8.0 shape) so schema.sql's CREATE TABLE IF NOT EXISTS is a
+        // no-op against it.
+        sqlx::raw_sql(
+            "CREATE TABLE history_events (
+                id TEXT PRIMARY KEY NOT NULL,
+                created_at TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                command_id TEXT,
+                command_name TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                execution_id TEXT,
+                exit_code INTEGER,
+                duration_ms INTEGER,
+                status TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Apply schema.sql exactly like init_pool. This must NOT fail with
+        // "no such column: schedule_id" (the original startup panic).
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .expect("schema.sql must not reference schedule_id before the ALTER");
+
+        // Then the idempotent column-add + index creation.
+        ensure_history_columns(&pool).await.unwrap();
+
+        // The column now exists.
+        let rows = sqlx::query("PRAGMA table_info(history_events)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let cols: std::collections::HashSet<String> = rows
+            .into_iter()
+            .filter_map(|r| r.try_get::<String, _>("name").ok())
+            .collect();
+        assert!(cols.contains("schedule_id"), "schedule_id must be added");
+
+        // And the index exists (created by ensure_history_columns).
+        let idx = sqlx::query(
+            "SELECT name FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_history_schedule_id'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(idx.is_some(), "idx_history_schedule_id must be created");
+
+        // Whole upgrade is idempotent on a second pass.
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_history_columns(&pool).await.unwrap();
+    }
+
+    /// Regression for the empty "История" tab: a schedule with runs recorded
+    /// BEFORE the `schedule_id` column existed must still appear in the
+    /// schedule-history filter after upgrade. `ensure_history_columns` must
+    /// back-fill `schedule_id` from each `scheduledRun` row's
+    /// `payload_json.scheduleId`; without the back-fill those rows stay NULL
+    /// and `WHERE schedule_id = ?` matches nothing.
+    #[tokio::test]
+    async fn ensure_history_columns_backfills_schedule_id_from_payload() {
+        let pool = fresh_pool().await;
+        // Old history_events table WITHOUT schedule_id.
+        sqlx::raw_sql(
+            "CREATE TABLE history_events (
+                id TEXT PRIMARY KEY NOT NULL,
+                created_at TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                command_id TEXT,
+                command_name TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                execution_id TEXT,
+                exit_code INTEGER,
+                duration_ms INTEGER,
+                status TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // An old scheduledRun row: the schedule id lives only inside
+        // payload_json (camelCase `scheduleId`, the serde wire shape).
+        sqlx::query(
+            "INSERT INTO history_events \
+             (id, created_at, kind, command_name, payload_json) \
+             VALUES (?, ?, 'scheduledRun', ?, ?)",
+        )
+        .bind("evt-1")
+        .bind("2026-06-01T00:00:00Z")
+        .bind("Nightly backup")
+        .bind(
+            r#"{"kind":"scheduledRun","scheduleId":"sched-42",
+                "scheduleName":"Nightly backup","targetKind":"command",
+                "targetId":"cmd-1","status":"success"}"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // A non-scheduled row must stay NULL (back-fill is scheduledRun-only).
+        sqlx::query(
+            "INSERT INTO history_events \
+             (id, created_at, kind, command_name, payload_json) \
+             VALUES (?, ?, 'commandCreated', ?, ?)",
+        )
+        .bind("evt-2")
+        .bind("2026-06-01T00:00:01Z")
+        .bind("Greet")
+        .bind(r#"{"kind":"commandCreated"}"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_history_columns(&pool).await.unwrap();
+
+        // The old scheduledRun row is back-filled from payload_json.
+        let sched: Option<String> =
+            sqlx::query("SELECT schedule_id FROM history_events WHERE id = 'evt-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .try_get("schedule_id")
+                .unwrap();
+        assert_eq!(
+            sched.as_deref(),
+            Some("sched-42"),
+            "scheduledRun row must be back-filled from payload_json.scheduleId"
+        );
+
+        // The non-scheduled row stays NULL.
+        let non_sched: Option<String> =
+            sqlx::query("SELECT schedule_id FROM history_events WHERE id = 'evt-2'")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .try_get("schedule_id")
+                .unwrap();
+        assert_eq!(non_sched, None, "non-scheduled rows must remain NULL");
+
+        // Idempotent: a second pass changes nothing and does not error.
+        ensure_history_columns(&pool).await.unwrap();
+        let sched2: Option<String> =
+            sqlx::query("SELECT schedule_id FROM history_events WHERE id = 'evt-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .try_get("schedule_id")
+                .unwrap();
+        assert_eq!(sched2.as_deref(), Some("sched-42"));
+    }
+}

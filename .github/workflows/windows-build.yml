@@ -1,0 +1,102 @@
+name: Build Windows installer (manual)
+
+# On-demand "build the Windows .exe" button, separate from the release
+# pipeline. Use this after a small Windows-only fix to get a fresh NSIS
+# installer WITHOUT re-running the full release workflow (no lint/test gate,
+# no Linux jobs, no GitHub Release).
+#
+# Trigger: manual only (Actions tab -> "Build Windows installer (manual)" ->
+# "Run workflow"). The installer is uploaded as a workflow artifact; it is
+# never attached to a GitHub Release (that stays the job of release.yml on a
+# tag push).
+#
+# Code signing is OPTIONAL and identical to release.yml: it activates only
+# when the WINDOWS_CERTIFICATE / WINDOWS_CERTIFICATE_PASSWORD secrets are set.
+# See docs/windows-installer.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: 'Sign the installer (requires WINDOWS_CERTIFICATE secret)'
+        type: boolean
+        default: true
+
+# A new manual run cancels an in-flight one for the same branch, so repeated
+# clicks after consecutive micro-patches don't pile up parallel builds.
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      # Surfaced as an env var so the conditional signing step can be gated in
+      # an `if:` expression (secrets are not available in `if:` directly).
+      # Honour both the cert secret AND the run-time "sign" input.
+      HAS_SIGNING_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' && inputs.sign }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # Authenticode signing is OPTIONAL. It activates only when the cert
+      # secret is present AND the `sign` input is true. This step imports the
+      # .pfx into the runner's CurrentUser cert store and patches
+      # `bundle.windows.certificateThumbprint` into the Tauri config so
+      # `tauri build` signs the app + installer. Without it the build stays
+      # unsigned. See docs/windows-installer.md.
+      - name: Import signing certificate
+        if: ${{ env.HAS_SIGNING_CERT == 'true' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          New-Item -ItemType Directory -Force -Path certificate | Out-Null
+          Set-Content -Path certificate/tempCert.txt -Value $env:WINDOWS_CERTIFICATE
+          certutil -decode certificate/tempCert.txt certificate/certificate.pfx
+          Remove-Item -Path certificate/tempCert.txt
+          $pwd = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath certificate/certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pwd
+          $thumbprint = $cert.Thumbprint
+          $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $conf.bundle.windows | Add-Member -NotePropertyName certificateThumbprint -NotePropertyValue $thumbprint -Force
+          $conf.bundle.windows | Add-Member -NotePropertyName digestAlgorithm -NotePropertyValue 'sha256' -Force
+          $conf.bundle.windows | Add-Member -NotePropertyName timestampUrl -NotePropertyValue 'http://timestamp.digicert.com' -Force
+          $conf | ConvertTo-Json -Depth 32 | Set-Content src-tauri/tauri.conf.json
+          Write-Output "Signing enabled with thumbprint $thumbprint"
+
+      - name: Build Windows installer (NSIS)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Only emit the per-user NSIS installer; skip MSI/WiX. No tagName is
+          # passed, so the action never creates a GitHub Release.
+          args: --bundles nsis
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: procmix-windows-nsis
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

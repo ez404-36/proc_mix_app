@@ -1,0 +1,125 @@
+[package]
+name = "procmix"
+version = "0.3.4"
+description = "ProcMix - cross-platform automation tool"
+authors = ["Zenkin Egor Andreevich"]
+edition = "2021"
+license = "MIT"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "procmix_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "devtools"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.52.3", features = ["full"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite"] }
+uuid = { version = "1", features = ["v4"] }
+dirs = "5"
+tauri-plugin-single-instance = "2.4.2"
+tauri-plugin-global-shortcut = "2.3.1"
+thiserror = "2"
+
+# --- Licensing (client-side, verify-only) ---
+#
+# The lease / DTO / error-code wire contract is declared LOCALLY in
+# `security::license::contract` (mirroring the server's `proc_mix_license_server`
+# format, pinned by contract tests there) so the client does not depend on the
+# server's private repository. See docs/plans/procmix-license-server-rust-axum-kms-implementation-plan.md
+# and the server's docs/licensing.md.
+
+# Ed25519 verification of the server-signed lease. Verify-only on the
+# client: the binary embeds the server's PUBLIC key (see
+# `security::license::lease`) and never holds any private key, so a lease
+# cannot be forged client-side.
+ed25519-dalek = "2"
+
+# base64url (no padding) decoding of the compact `header.payload.sig`
+# lease token. Matches the server's `URL_SAFE_NO_PAD` encoding.
+base64 = "0.22"
+
+# SHA-256 for the composite-HWID hash. Raw machine identifiers are hashed
+# (salt + pepper) before they ever leave the device.
+sha2 = "0.10"
+
+# RFC 3339 timestamp parsing for lease expiry / signed-clock comparisons.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+# Cron expression parser used by the Scheduler (core::scheduler). PARSE /
+# next-fire only — the scheduling loop itself is hand-written (a single Tokio
+# task), so the crate never owns a job registry or a runtime. The crate uses a
+# 7-field cron format (sec min hour dom month dow year); the user types the
+# classic 5-field Unix form, which `core::scheduler::cron_spec` normalises to
+# 7 fields before parsing. Depends on chrono ~0.4 (already a dependency).
+cron = "0.15"
+
+# HTTPS client for the activate / trial / refresh calls to the license
+# server. `rustls` (NOT native-tls / OpenSSL) keeps the dependency tree
+# pure-Rust and the cross-platform build simple. `json` for serde bodies.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Regular-expression engine for the `regex` output parser in
+# `core::extractor`. The `regex` crate is RE2-style (linear-time, no
+# catastrophic backtracking), which bounds the worst case for
+# user-supplied patterns parsing command stdout.
+regex = "1"
+
+# Native open/save file dialogs for the JSON Import/Export feature.
+# Used INSIDE Tauri commands (not as a JS plugin) so the app keeps a
+# minimal allowlist — `rfd` opens the OS dialog and `std::fs` does the
+# raw IO, while serialization/validation stays in the TS layer where the
+# Command/Workflow types live. The blocking dialog is run via
+# `tokio::task::spawn_blocking` so it never stalls the async command
+# runtime.
+rfd = "0.15"
+
+# Persist the main window's position and size (including which monitor it
+# was on) across launches, restoring it on the next startup. Desktop-only:
+# the plugin is meaningless on mobile, so it is gated to desktop targets.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-window-state = "2.4.1"
+
+# OS keychain access for storing the sudo password used by the
+# "Run as administrator" feature on Unix. On Windows the keychain is
+# never read (UAC handles elevation); the crate still compiles cleanly
+# there thanks to `windows-native`.
+#
+# `vendored` pulls in a bundled libdbus build so users don't need
+# `libdbus-1-dev` on their system at compile time.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "vendored"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+# Event Tracing for Windows (ETW) subscription for Process Capture — the
+# background "command recorder" that observes process births and surfaces
+# their command lines. Windows-only: the crate (and the entire feature) is
+# gated to Windows; other platforms return the `CAPTURE_UNSUPPORTED`
+# sentinel. See `docs/process-capture.md`.
+ferrisetw = "1.2"
+
+# Enable Tauri's `test` feature for our test target only — exposes
+# `tauri::test::mock_app()` and the MockRuntime needed for integration
+# tests that spawn real child processes through `spawn_execution`.
+# Keeping it as a dev-dependency only avoids pulling test scaffolding
+# into release builds.
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+tempfile = "3"
+

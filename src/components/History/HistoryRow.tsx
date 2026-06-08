@@ -1,0 +1,255 @@
+// One row in the History list. Shows the kind (Created/Edited/…),
+// the localized "<verb> <name>" sentence, a timestamp, and — for the
+// undoable variants — the action buttons.
+//
+// Action-button visibility rules (per the requirements):
+//   - commandEdited  → "Undo" visible only while the command still
+//                       exists. If the user deletes it later, undo
+//                       no longer makes sense (the command is gone).
+//   - commandDeleted → "Restore" visible only while the command does
+//                       NOT currently exist. After a successful
+//                       restore, the row's Restore button hides
+//                       because the command is back.
+// All other kinds have no action buttons.
+
+import { type ReactElement } from "react";
+import { useTranslation } from "react-i18next";
+import { useCommandStore } from "../../stores/commandStore";
+import { useHistoryStore } from "../../stores/historyStore";
+import type { HistoryEvent } from "../../types";
+import {
+  historyEventSubjectId,
+  historyEventSubjectName,
+} from "../../types";
+import {
+  EditIcon,
+  PlusIcon,
+  RestoreIcon,
+  RunIcon,
+  TrashIcon,
+} from "../icons";
+import { ScheduledRunOutput } from "./ScheduledRunOutput";
+
+/**
+ * Color grouping for the action-icon column — drives the `--<group>` CSS
+ * modifier (and thus the icon hue). Several `kind`s share a color
+ * (create/edit/delete/run); `restore` is its own (blue) group.
+ */
+type ActionGroup = "create" | "edit" | "delete" | "run" | "restore";
+
+function actionGroup(kind: HistoryEvent["kind"]): ActionGroup {
+  switch (kind) {
+    case "commandCreated":
+    case "workflowCreated":
+      return "create";
+    case "commandEdited":
+    case "workflowEdited":
+    case "commandReverted":
+      // An undone edit shares the edit (orange) hue; its glyph differs
+      // (the restore arrow) and the aria-label reads "Undo edit".
+      return "edit";
+    case "commandDeleted":
+    case "workflowDeleted":
+      return "delete";
+    case "commandRun":
+    case "workflowRun":
+    case "scheduledRun":
+      return "run";
+    case "commandRestored":
+      return "restore";
+  }
+}
+
+/**
+ * Glyph for a history kind. Edits use the pencil; an undone edit
+ * (`commandReverted`) and a restored deletion (`commandRestored`) use the
+ * undo/restore arrow so they read as "return to a prior state".
+ */
+function ActionIcon({ kind }: { kind: HistoryEvent["kind"] }): ReactElement {
+  switch (kind) {
+    case "commandCreated":
+    case "workflowCreated":
+      return <PlusIcon />;
+    case "commandEdited":
+    case "workflowEdited":
+      return <EditIcon />;
+    case "commandReverted":
+    case "commandRestored":
+      return <RestoreIcon />;
+    case "commandDeleted":
+    case "workflowDeleted":
+      return <TrashIcon />;
+    case "commandRun":
+    case "workflowRun":
+    case "scheduledRun":
+      return <RunIcon />;
+  }
+}
+
+interface HistoryRowProps {
+  event: HistoryEvent;
+}
+
+/**
+ * Format an ISO timestamp using the browser's locale-aware
+ * `toLocaleString`. Returns the original string on a parse failure
+ * — we never want the row to render "Invalid Date" because of a
+ * malformed timestamp.
+ */
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
+
+/**
+ * Build the human-readable kind label used in the row title.
+ * Translation keys live under `history.kinds.<kind>` and accept a
+ * `{{name}}` interpolation.
+ */
+function kindKey(event: HistoryEvent): `history.kinds.${HistoryEvent["kind"]}` {
+  return `history.kinds.${event.kind}` as const;
+}
+
+export function HistoryRow({ event }: HistoryRowProps): ReactElement {
+  const { t } = useTranslation();
+  const undoEdit = useHistoryStore((s) => s.undoEdit);
+  const restoreDeleted = useHistoryStore((s) => s.restoreDeleted);
+  // Subscribe to *just* the existence boolean — using a selector that
+  // returns a primitive prevents re-rendering when unrelated commands
+  // change. The Zustand store re-runs the selector on every update;
+  // identity-stable primitives short-circuit React reconciliation.
+  const subjectId = historyEventSubjectId(event);
+  const commandExists = useCommandStore((s) =>
+    s.commands.some((c) => c.id === subjectId),
+  );
+
+  const showUndo = event.kind === "commandEdited" && commandExists;
+  const showRestore = event.kind === "commandDeleted" && !commandExists;
+
+  // Per-row run-status badge for `commandRun` events.
+  let runStatusBadge: ReactElement | null = null;
+  if (event.kind === "commandRun") {
+    let statusText: string;
+    switch (event.status) {
+      case "running":
+        statusText = t("history.runStatus.running");
+        break;
+      case "succeeded":
+        statusText = t("history.runStatus.succeeded");
+        break;
+      case "failed":
+        // A timeout is recorded with `status: "failed"` and `timedOut`.
+        // The process was signal-killed so there is usually no exit code
+        // — showing "Exit ?" (the old behaviour) was the confusing
+        // symptom the user reported. Surface a dedicated label instead.
+        statusText = event.timedOut
+          ? t("history.runStatus.timedOut")
+          : t("history.runStatus.failed", {
+              code: event.exitCode ?? "?",
+            });
+        break;
+      case "cancelled":
+        statusText = t("history.runStatus.cancelled");
+        break;
+    }
+    runStatusBadge = (
+      <span
+        className={`history-row__status history-row__status--${event.status}${
+          event.timedOut ? " history-row__status--timedOut" : ""
+        }`}
+      >
+        {statusText}
+      </span>
+    );
+  } else if (event.kind === "scheduledRun") {
+    // Scheduled fires carry a richer status set than the streaming
+    // executor (success / error / missingVariable / skipped / cancelled).
+    runStatusBadge = (
+      <span
+        className={`history-row__status history-row__status--scheduled-${event.status}`}
+      >
+        {t(`scheduler.status.${event.status}` as const)}
+      </span>
+    );
+  }
+
+  const icon = (
+    <span
+      className={`history-row__action-icon history-row__action-icon--${actionGroup(
+        event.kind,
+      )}`}
+      aria-label={t(`history.kindLabels.${event.kind}` as const)}
+      title={t(`history.kindLabels.${event.kind}` as const)}
+    >
+      <ActionIcon kind={event.kind} />
+    </span>
+  );
+  const title = (
+    <span className="history-row__title">
+      {t(kindKey(event), { name: historyEventSubjectName(event) })}
+    </span>
+  );
+  const meta = (
+    <div className="history-row__meta">
+      {showUndo && (
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => void undoEdit(event.id)}
+        >
+          {t("history.undoBtn")}
+        </button>
+      )}
+      {showRestore && (
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => void restoreDeleted(event.id)}
+        >
+          {t("history.restoreBtn")}
+        </button>
+      )}
+      <time
+        className="history-row__timestamp"
+        dateTime={event.createdAt}
+        title={event.createdAt}
+      >
+        {formatTimestamp(event.createdAt)}
+      </time>
+    </div>
+  );
+
+  // A scheduled run is expandable: the row becomes the clickable summary of a
+  // `<details>` and reveals the same captured output / result / "no output"
+  // block as the schedule view's История tab (shared `ScheduledRunOutput`).
+  // Every other kind keeps the plain, non-interactive row.
+  if (event.kind === "scheduledRun") {
+    return (
+      <li className="history-row history-row--scheduled">
+        <details className="history-row__disclosure">
+          <summary className="history-row__summary">
+            <div className="history-row__main">
+              {icon}
+              {title}
+              {runStatusBadge}
+            </div>
+            {meta}
+          </summary>
+          <ScheduledRunOutput event={event} />
+        </details>
+      </li>
+    );
+  }
+
+  return (
+    <li className="history-row">
+      <div className="history-row__main">
+        {icon}
+        {title}
+        {runStatusBadge}
+      </div>
+      {meta}
+    </li>
+  );
+}

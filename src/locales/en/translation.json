@@ -1,0 +1,832 @@
+{
+  "common": {
+    "appName": "ProcMix",
+    "cancel": "Cancel",
+    "change": "Change",
+    "clear": "Clear",
+    "close": "Close",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "edit": "Edit",
+    "loading": "Loading…",
+    "reset": "Reset",
+    "run": "Run",
+    "save": "Save",
+    "search": "Search",
+    "apply": "Apply"
+  },
+  "nav": {
+    "home": "Home",
+    "library": "Library",
+    "scheduler": "Scheduler",
+    "history": "History",
+    "recorder": "Recorder",
+    "env": "Environment",
+    "settings": "Settings",
+    "cycleThemeTitle": "Cycle theme",
+    "themeLabel": "Theme: {{label}}",
+    "paletteHint": "command search",
+    "openConsole": "Open console",
+    "openConsoleTitle": "Open the application console",
+    "collapse": "Collapse menu",
+    "expand": "Expand menu",
+    "versionLabel": "Version"
+  },
+  "home": {
+    "title": "Home",
+    "subtitle": "Quick access to your favorite and recent commands.",
+    "favoritesSection": "Favorites",
+    "recentSection": "Recent",
+    "noFavorites": "No favorites yet.",
+    "noRecent": "No commands have been run yet. Pick one from the Library to get started."
+  },
+  "library": {
+    "title": "Library",
+    "subtitle": "Manage your commands and workflows.",
+    "newCommand": "New command",
+    "searchPlaceholder": "Search by name, description, or tag…",
+    "noResults": "No commands match your search.",
+    "noCommands": "No commands yet. Create your first one.",
+    "favorite": "Favorite",
+    "unfavorite": "Unfavorite",
+    "view": "View",
+    "filterByTag": "Filter by tag",
+    "filterByCategory": "Filter by category",
+    "allCategories": "All categories",
+    "clearFilters": "Clear filters",
+    "deleteConfirmTitle": "Delete command?",
+    "deleteConfirm": "Delete \"{{name}}\"? You can restore it from the History view, though older entries are eventually purged.",
+    "newCommandLabel": "Command"
+  },
+  "listView": {
+    "controls": "List controls",
+    "sortBy": "Sort by",
+    "sortByCreatedAt": "Date created",
+    "sortByName": "Name",
+    "sortNewestFirst": "Newest first",
+    "sortOldestFirst": "Oldest first",
+    "sortNameAsc": "Name (A-Z)",
+    "sortNameDesc": "Name (Z-A)",
+    "sortRunsDesc": "Most runs",
+    "sortRunsAsc": "Fewest runs",
+    "viewMode": "View mode",
+    "tilesView": "Tiles",
+    "tableView": "Table",
+    "groupByCategory": "Group by category",
+    "uncategorized": "Uncategorized",
+    "columnCategory": "Category"
+  },
+  "pagination": {
+    "label": "Pagination",
+    "show": "Show",
+    "perPage": "{{count}} / page",
+    "perPageLabel": "Items per page",
+    "pageLabel": "Page {{page}} of {{pages}}",
+    "previous": "Previous page",
+    "next": "Next page"
+  },
+  "commandEditor": {
+    "subtitle": {
+      "create": "Define a new command to run and save to your library.",
+      "edit": "Edit this command's script, variables, and output."
+    },
+    "unsavedTitle": "Discard unsaved changes?",
+    "unsavedMessage": "You have unsaved changes. Leaving this form will discard them.",
+    "unsavedConfirm": "Discard"
+  },
+  "editor": {
+    "title": "Editor",
+    "subtitle": "Drag and drop command blocks to build workflows.",
+    "comingSoonTitle": "Visual workflow editor",
+    "comingSoonSubtitle": "Coming in v0.5.0",
+    "editingWorkflow": "Editing \"{{name}}\"",
+    "newWorkflow": "New workflow",
+    "unknownWorkflow": "Workflow not found",
+    "untitled": "Untitled workflow",
+    "details": "Properties",
+    "saved": "Workflow saved",
+    "insertPreview": "Insert here",
+    "clear": "Clear",
+    "cancel": "Cancel",
+    "discard": "Discard",
+    "clearConfirm": "Clear the editor and discard unsaved changes? This resets the canvas to a single Start node.",
+    "clearConfirmTitle": "Clear editor?",
+    "cancelConfirm": "Discard unsaved changes? This reverts the workflow to its last saved version.",
+    "cancelConfirmTitle": "Discard changes?",
+    "nodes": {
+      "start": "Start",
+      "command": "Command",
+      "condition": "Condition",
+      "end": "End",
+      "then": "then",
+      "else": "else",
+      "unboundCommand": "Pick a command…"
+    },
+    "palette": {
+      "nodes": "Nodes",
+      "commands": "Commands",
+      "dragHint": "Drag a command onto the canvas, or click it to append a step. Drop on a connection to insert between steps.",
+      "clickHint": "Click to append after the last step",
+      "noCommands": "No commands yet. Create one in the Library first."
+    },
+    "inspector": {
+      "command": "Command",
+      "pickCommand": "Pick a command…",
+      "deleteNode": "Delete",
+      "hint": {
+        "start": "Entry point of the workflow.",
+        "end": "Terminal node — execution stops here."
+      },
+      "title": "Node"
+    },
+    "meta": {
+      "title": "Workflow details",
+      "name": "Name",
+      "nameRequired": "Name is required.",
+      "description": "Description",
+      "tags": "Tags",
+      "tagsPlaceholder": "Comma-separated tags"
+    },
+    "validation": {
+      "noStart": "The workflow needs exactly one Start node.",
+      "multipleStart": "The workflow has {{count}} Start nodes — keep exactly one.",
+      "noEnd": "Add at least one End node so the workflow can finish.",
+      "endUnreachable": "No End node is reachable from Start.",
+      "nodeMissingCommand": "Node \"{{label}}\" has no command assigned.",
+      "danglingEdge": "An edge (\"{{id}}\") connects to a node that no longer exists.",
+      "conditionBranches": "Condition \"{{label}}\" should wire both the then and else branches."
+    }
+  },
+  "workflow": {
+    "tabs": {
+      "commands": "Commands",
+      "workflows": "Workflows"
+    },
+    "new": "New workflow",
+    "searchPlaceholder": "Search workflows by name, description, or tag…",
+    "noResults": "No workflows match your search.",
+    "noWorkflows": "No workflows yet. Create your first one.",
+    "favorite": "Favorite",
+    "unfavorite": "Unfavorite",
+    "run": "Run",
+    "view": "View",
+    "edit": "Edit",
+    "delete": "Delete",
+    "nodeCount": "{{count}} step",
+    "nodeCount_plural": "{{count}} steps",
+    "deleteConfirmTitle": "Delete workflow?",
+    "deleteConfirm": "Delete \"{{name}}\"? You can restore it from the History view, though older entries are eventually purged.",
+    "missingCommand": "This workflow references a command that no longer exists. Open it in the editor to fix the broken step.",
+    "newLabel": "Workflow"
+  },
+  "scheduler": {
+    "title": "Scheduler",
+    "subtitle": "Run commands and workflows automatically on a schedule.",
+    "searchPlaceholder": "Search schedules by name…",
+    "new": "New schedule",
+    "noSchedules": "No schedules yet. Create one to run a command or workflow automatically.",
+    "noResults": "No schedules match your search.",
+    "proOnly": "Scheduling is a PRO feature. Upgrade to automate your commands and workflows on a cron schedule.",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
+    "runsWhileOpen": "Schedules run only while ProcMix is running (including minimized to the tray).",
+    "nextRun": "Next run: {{time}}",
+    "nextRunNever": "Next run: —",
+    "lastRun": "Last run: {{time}}",
+    "lastRunNever": "Last run: never",
+    "runCount_one": "{{count}} run",
+    "runCount_other": "{{count}} runs",
+    "runNow": "Run now",
+    "runNowStarted": "Schedule run started",
+    "runNowFailed": "Failed to run the schedule",
+    "nextRunLabel": "Next run",
+    "lastRunLabel": "Last run",
+    "runCountLabel": "Total runs",
+    "view": {
+      "cron": "Cron expression",
+      "never": "—",
+      "yes": "Yes",
+      "tabParams": "Parameters",
+      "tabHistory": "History",
+      "historyEmpty": "This schedule hasn't run yet.",
+      "historyLoading": "Loading history…",
+      "outputLabel": "Output",
+      "resultLabel": "Result",
+      "exitCodeLabel": "Exit code",
+      "durationLabel": "Duration",
+      "noOutput": "Output not saved",
+      "resultError": "Extraction failed: {{message}}"
+    },
+    "deleteConfirmTitle": "Delete schedule?",
+    "deleteConfirm": "Delete \"{{name}}\"? This stops its automatic runs. Past runs remain in History.",
+    "form": {
+      "createTitle": "New schedule",
+      "editTitle": "Edit schedule",
+      "name": "Name",
+      "namePlaceholder": "e.g. Nightly backup",
+      "target": "Run target",
+      "targetCommand": "Command",
+      "targetWorkflow": "Workflow",
+      "selectTarget": "Select a {{kind}}…",
+      "noTargets": "No {{kind}} available. Create one first.",
+      "basicSection": "Basic",
+      "scheduleSection": "Recurrence",
+      "advancedSection": "Advanced",
+      "when": "When",
+      "everyNMinutesLabel": "Every N minutes",
+      "everyNMinutesHint": "Runs are aligned to the hour grid (on minutes divisible by N), not to when you save. For example, N=5 fires at :00, :05, :10 … :55.",
+      "minutesInterval": "Minutes",
+      "hoursInterval": "Every N hours",
+      "onMinute": "On minute",
+      "atTime": "At time",
+      "onDays": "On days",
+      "noDaysSelected": "Select at least one day.",
+      "onDayOfMonth": "Day of month",
+      "monthlyDayHint": "Days 29–31 are skipped in months that are shorter.",
+      "stepDown": "Decrease",
+      "stepUp": "Increase",
+      "hours": "Hours",
+      "minutes": "Minutes",
+      "cronExpression": "Cron expression",
+      "cronPlaceholder": "min hour day month weekday",
+      "cronHelp": "5-field Unix cron, evaluated in local time.",
+      "skipIfRunning": "Skip if the previous run is still in progress",
+      "skipIfRunningHelp": "About skip if running",
+      "skipIfRunningTooltip": "When this schedule fires while its previous run is still active, skip the new run instead of starting a second one in parallel.\nLeave off to allow overlapping runs.",
+      "captureOutput": "Save run output to history",
+      "captureOutputHelp": "More about saving output",
+      "captureOutputTooltip": "Persist each scheduled run's console output (and output-schema result, if any) to history — viewable on the schedule card's History tab.\nCommands only for now; workflow output is not saved.",
+      "catchUp": "Catch up missed runs",
+      "catchUpHelp": "About catching up",
+      "catchUpTooltip": "Schedules only fire while ProcMix is running. If the app was closed across one or more fire times, this controls whether they are replayed at the next launch.\nOff: missed runs are skipped.",
+      "catchUpOnce": "Run once (a single catch-up run)",
+      "catchUpAll": "Run for every missed occurrence",
+      "useTimeout": "Limit execution time (timeout)",
+      "timeoutSeconds": "Timeout (seconds)",
+      "retryOnError": "Retry on error",
+      "maxRetries": "Number of retries",
+      "enabledOnCreate": "Enabled",
+      "preview": "Next runs",
+      "previewEmpty": "Enter a valid cron expression to preview the next runs.",
+      "invalidCron": "That cron expression is not valid.",
+      "variables": "Variable values",
+      "variablesHint": "Scheduled runs cannot prompt, so values are captured now.",
+      "variablesRequired": "Fill in every required variable (marked *) before saving — a scheduled run cannot prompt for them.",
+      "variableHelp": "About the {{name}} variable",
+      "save": "Save schedule",
+      "cancel": "Cancel",
+      "delete": "Delete",
+      "nameRequired": "Give the schedule a name.",
+      "targetRequired": "Choose what to run.",
+      "missingVariables": "Provide a value for every variable without a default before saving."
+    },
+    "recurrence": {
+      "everyNMinutes": "Every N minutes",
+      "everyNHours": "Every N hours",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "custom": "Custom cron expression"
+    },
+    "weekdays": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    },
+    "status": {
+      "success": "Success",
+      "error": "Failed",
+      "missingVariable": "Missing variable",
+      "skipped": "Skipped (already running)",
+      "cancelled": "Cancelled"
+    },
+    "saveFailed": "Failed to save the schedule.",
+    "loadFailed": "Failed to load schedules.",
+    "newLabel": "Schedule"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Personalize ProcMix to match your workflow.",
+    "appearance": {
+      "title": "Appearance",
+      "themeLight": "Light",
+      "themeDark": "Dark",
+      "themeSystem": "System",
+      "languageLabel": "Language"
+    },
+    "shortcuts": {
+      "title": "Shortcuts",
+      "toggleLabel": "Toggle ProcMix",
+      "toggleDescription": "Show, focus, or hide the ProcMix window from anywhere. Opens the command palette when bringing the window forward.",
+      "paletteHintPrefix": "The in-window command palette also responds to",
+      "paletteHintSuffix": "when the window is focused."
+    },
+    "tray": {
+      "title": "Tray",
+      "primary": "ProcMix minimizes to the system tray when you close the window.",
+      "secondary": "Left-click the tray icon to toggle the window. Right-click for the menu (Show, Hide, Quit). An option to opt out is coming soon."
+    },
+    "admin": {
+      "title": "Administrator privileges",
+      "statusSaved": "Sudo password is saved in your OS keychain.",
+      "statusEmpty": "No sudo password is saved yet.",
+      "setBtn": "Set password…",
+      "changeBtn": "Change password…",
+      "clearBtn": "Clear saved password",
+      "setSuccess": "Administrator password saved",
+      "setError": "Failed to save password",
+      "clearSuccess": "Administrator password cleared",
+      "clearError": "Failed to clear password",
+      "subhint": "Stored securely in your OS keychain. Never written to disk by ProcMix.",
+      "windowsHint": "Not used on Windows — UAC handles elevation when a command is marked Run as administrator."
+    },
+    "data": {
+      "title": "Import / Export",
+      "description": "Save your commands and workflows to a JSON file, or import them from one.",
+      "exportBtn": "Export…",
+      "importBtn": "Import…",
+      "exportSuccess": "Exported {{commands}} commands and {{workflows}} workflows",
+      "exportError": "Failed to export data",
+      "importSuccess": "Imported {{commands}} commands and {{workflows}} workflows",
+      "importRenamed_one": "{{count}} duplicate was kept under a new name.",
+      "importRenamed_other": "{{count}} duplicates were kept under new names.",
+      "importAdminDemoted_one": "{{count}} imported command had \"Run as administrator\" turned off for safety — review the script and re-enable it if you trust it.",
+      "importAdminDemoted_other": "{{count}} imported commands had \"Run as administrator\" turned off for safety — review each script and re-enable it if you trust it.",
+      "importInvalid": "The selected file is not a valid ProcMix export",
+      "importError": "Failed to import data",
+      "subhint": "Imported items always get new ids — importing never overwrites your existing commands or workflows."
+    },
+    "about": {
+      "title": "About",
+      "version": "v0.3.4",
+      "description": "Cross-platform command and workflow automation tool.",
+      "license": "Open source. MIT License.",
+      "copyright": "© 2026 Zenkin Egor Andreevich"
+    }
+  },
+  "selectionDialog": {
+    "commandsGroup": "Commands",
+    "workflowsGroup": "Workflows",
+    "requiredByWorkflow": "(required by a workflow)",
+    "selectionCount": "{{commands}} commands, {{workflows}} workflows selected",
+    "noCommands": "No commands.",
+    "noWorkflows": "No workflows."
+  },
+  "exportDialog": {
+    "title": "Select what to export",
+    "exportBtn": "Export"
+  },
+  "importDialog": {
+    "title": "Select what to import",
+    "importBtn": "Import",
+    "duplicateName": "A command with this name already exists",
+    "duplicateScript": "A command with this script already exists",
+    "duplicateChoiceLabel": "What to do with the duplicate \"{{name}}\"",
+    "choiceRename": "Keep with a new name",
+    "choiceSkip": "Skip"
+  },
+  "shortcutRow": {
+    "recording": "Press a key combination… (Esc to cancel)",
+    "resetTooltip": "Reset to default",
+    "alreadyInUse": "Shortcut \"{{accel}}\" is already in use.",
+    "registerFailed": "Cannot use \"{{accel}}\" — another application may already own it.",
+    "updated": "Shortcut updated to {{accel}}"
+  },
+  "tray": {
+    "show": "Show ProcMix",
+    "hide": "Hide to Tray",
+    "quit": "Quit ProcMix",
+    "tooltip": "ProcMix"
+  },
+  "commandPalette": {
+    "ariaLabel": "Command palette",
+    "placeholder": "Search commands…",
+    "empty": "No commands match your search."
+  },
+  "contextMenu": {
+    "run": "Run",
+    "view": "View",
+    "edit": "Edit",
+    "delete": "Delete",
+    "copyScript": "Copy script",
+    "favoriteAdd": "Add to favorites",
+    "favoriteRemove": "Remove from favorites",
+    "copy": "Copy",
+    "copyAll": "Copy all",
+    "cut": "Cut",
+    "paste": "Paste",
+    "selectAll": "Select all"
+  },
+  "commandForm": {
+    "title": {
+      "create": "New command",
+      "edit": "Edit command"
+    },
+    "tabs": {
+      "main": "Main",
+      "script": "Script",
+      "output": "Output schema",
+      "env": "Environment",
+      "hasErrors": "has errors"
+    },
+    "env": {
+      "title": "Environment variables",
+      "hint": "These KEY=VALUE pairs are injected into the command's environment at run time, overriding any inherited system variables with the same key.",
+      "addRow": "Add variable",
+      "keyPlaceholder": "KEY",
+      "valuePlaceholder": "Value",
+      "keyLabel": "Key",
+      "valueLabel": "Value",
+      "overridesSystem": "Overrides system variable",
+      "overridesSystemValue": "Overrides system variable. Current value: {{value}}",
+      "invalidKey": "Invalid name. Use letters, digits and underscore; must not start with a digit.",
+      "empty": "No environment variables set for this command.",
+      "removeRow": "Remove"
+    },
+    "fields": {
+      "name": "Name",
+      "description": "Description",
+      "script": "Script",
+      "shell": "Shell",
+      "runAsAdmin": "Run as administrator",
+      "timeoutSeconds": "Timeout (seconds)",
+      "tags": "Tags",
+      "category": "Category",
+      "disableHints": "Disable hints (for experts)"
+    },
+    "placeholders": {
+      "name": "e.g. Restart dev server",
+      "description": "Optional — what does this command do?",
+      "script": "Enter the script to run…",
+      "tags": "Add a tag and press Enter",
+      "category": "e.g. Deployment",
+      "timeoutSeconds": "No limit",
+      "categorySelect": "No category",
+      "categoryNew": "New category…"
+    },
+    "actions": {
+      "create": "Create",
+      "save": "Save",
+      "cancel": "Cancel",
+      "run": "Run",
+      "cancelRun": "Cancel run"
+    },
+    "errors": {
+      "nameRequired": "Name is required",
+      "scriptRequired": "Script is required"
+    },
+    "variables": {
+      "title": "Variables",
+      "add": "Add variable",
+      "namePlaceholder": "name",
+      "defaultValuePlaceholder": "default value",
+      "descriptionPlaceholder": "description",
+      "promptAtRuntime": "Prompt at runtime",
+      "sensitive": "Sensitive",
+      "remove": "Remove",
+      "help": "How to use variables",
+      "helpTooltip": "Reference variables in the script, args, working directory, or env values with ${name}.\n\nSyntax:\n  ${name}            — substituted from the value at runtime or from the default.\n  ${name:default}    — inline default; used if no value is provided.\n  ${name:}           — defaults to the empty string.\n  $$                 — a literal $.\n\nName regex: [A-Za-z_][A-Za-z0-9_]*\n\nVariables without a default trigger a prompt before each run.\nMark a variable as Sensitive to mask its value in events and logs.\nValues are NOT shell-quoted — quote \"${var}\" in your script if needed.",
+      "errors": {
+        "invalidName": "Use letters, digits, and underscores; must not start with a digit.",
+        "duplicateName": "Duplicate variable name."
+      }
+    },
+    "outputSchema": {
+      "title": "Output schema",
+      "enable": "Parse output",
+      "parser": "Parser",
+      "parsers": {
+        "raw": "Raw (whole output)",
+        "lines": "Lines",
+        "json": "JSON",
+        "regex": "Regex (named groups)",
+        "keyValue": "Key / value",
+        "table": "Table"
+      },
+      "pattern": "Pattern (named groups)",
+      "delimiter": "Delimiter",
+      "delimiterKeyValuePlaceholder": "leave empty to auto-detect = or :",
+      "delimiterTablePlaceholder": "leave empty to split on spaces",
+      "delimiterTableHint": "Leave empty for output whose columns are separated by spaces (e.g. df, ls, ps). Set a delimiter only for CSV/TSV (e.g. , or \\t).",
+      "hasHeader": "First row is a header",
+      "fields": "Fields",
+      "fieldsHintTable": "Optional. Each field projects one column (by header name or 0-based index) as an array. The whole table is always available as 'rows'.",
+      "fieldsHintLines": "Optional. Each field projects one line by its 0-based index. The whole list is always available as 'lines'.",
+      "fieldName": "field name",
+      "columnPlaceholder": "column name or index",
+      "addField": "Add field",
+      "removeField": "Remove field",
+      "returnField": "Return value",
+      "returnWhole": "Whole result",
+      "sample": "Sample output (for preview)",
+      "samplePlaceholder": "Run the command to auto-fill, or paste sample stdout here…",
+      "saveSample": "Save this sample with the command",
+      "saveSampleWarning": "Make sure the sample contains no sensitive data.",
+      "preview": "Preview extraction",
+      "previewTitle": "Preview",
+      "previewing": "updating…",
+      "previewEmpty": "Add sample output to see the result.",
+      "copyPreview": "Copy",
+      "previewCopied": "Preview copied",
+      "connectorSource": "Console output",
+      "connectorLabel": "output of previous step",
+      "intermediateValue": "Intermediate value",
+      "pipelineStep": "Parser",
+      "addStep": "+ Parser",
+      "stepMoveUp": "Move up",
+      "stepMoveDown": "Move down",
+      "stepRemove": "Remove step",
+      "pipelineMode": "Pipeline (chain parsers)"
+    },
+    "scriptHelp": {
+      "help": "Show flags for this utility",
+      "notFound": "Utility \"{{name}}\" not found",
+      "truncated": "Output truncated"
+    },
+    "timeout": {
+      "increment": "Increase timeout",
+      "decrement": "Decrease timeout"
+    },
+    "category": {
+      "addNewTitle": "New category",
+      "addNewPlaceholder": "Category name",
+      "addNewConfirm": "Add",
+      "addNewCancel": "Cancel"
+    },
+    "shellUnavailableSuffix": "(not available)",
+    "warnings": {
+      "noShellsDetected": "No supported shells were detected on this system. The command may not run as-is.",
+      "windowsAdmin": "Windows will show a UAC prompt. Live output capture is limited.",
+      "adminPasswordWillAsk": "You'll be asked for your administrator password on the first run."
+    },
+    "hints": {
+      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script. Admin mode is required and can't be disabled until you remove the escalation prefix."
+    },
+    "tooltips": {
+      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script — admin mode is required."
+    },
+    "scriptEditor": {
+      "insertVariable": "Insert variable"
+    },
+    "output": {
+      "title": "Output",
+      "clear": "Clear",
+      "placeholder": "Click Run to test the script.",
+      "exitCode": "exit {{code}}",
+      "duration": "{{ms}} ms",
+      "timedOutLine": "Execution stopped: timed out after {{seconds}} s.",
+      "status": {
+        "idle": "Idle",
+        "running": "Running…",
+        "finished": "Finished",
+        "failed": "Failed",
+        "cancelled": "Cancelled",
+        "timedOut": "Timed out"
+      }
+    },
+    "tags": {
+      "remove": "Remove tag {{tag}}"
+    }
+  },
+  "commandView": {
+    "noTimeout": "No limit",
+    "timeoutValue_one": "{{count}} second",
+    "timeoutValue_other": "{{count}} seconds",
+    "noVariables": "No variables",
+    "defaultValue": "Default: {{value}}",
+    "sensitiveValue": "Sensitive — value hidden"
+  },
+  "seeds": {
+    "listHomeDir": {
+      "name": "List home directory",
+      "description": "Show a detailed listing of files in your home directory."
+    },
+    "showDate": {
+      "name": "Show date",
+      "description": "Print the current date and time."
+    },
+    "diskUsage": {
+      "name": "Disk usage",
+      "description": "Show disk space usage in human-readable form."
+    }
+  },
+  "adminPassword": {
+    "title": "Administrator password",
+    "subtitle": "Stored securely in your OS keychain",
+    "label": "Sudo password",
+    "submit": "Save & continue",
+    "continue": "Continue",
+    "continueHint": "Use the password for this run only — do not save it",
+    "cancel": "Cancel",
+    "show": "Show password",
+    "hide": "Hide password"
+  },
+  "runCommand": {
+    "adminPasswordSaveFailed": "Failed to save administrator password",
+    "adminPasswordRejected": "Wrong administrator password — please try again",
+    "inlineEscalationHint": "This command runs sudo internally but isn't elevated. Move sudo to the start of the script, or enable “Run as administrator”."
+  },
+  "variablePrompt": {
+    "title": "Provide variables",
+    "submit": "Run",
+    "cancel": "Cancel"
+  },
+  "outputPanel": {
+    "ariaLabel": "Command output",
+    "resizeLabel": "Resize terminal",
+    "defaultTitle": "Output",
+    "defaultShell": "shell",
+    "noSelection": "No execution selected.",
+    "waiting": "Waiting for output…",
+    "cancelTitle": "Cancel running execution",
+    "rerun": "Re-run",
+    "rerunTitle": "Run this command again",
+    "variablesTitle": "Variables",
+    "clearTitle": "Clear all executions",
+    "closeTitle": "Hide panel",
+    "exitCode": "exit {{code}}",
+    "timedOutLine": "⏱ Process cancelled: the timeout elapsed before the command finished.",
+    "workflowStep": "▸ {{step}}",
+    "workflowStepScript": "  $ {{script}}",
+    "workflowStepExit": "  exit {{code}}",
+    "timedOut": "Timed out",
+    "tabs": {
+      "output": "Output",
+      "result": "Result"
+    },
+    "result": {
+      "returnValue": "Return value",
+      "fields": "Fields",
+      "error": "Extraction failed: {{message}}"
+    },
+    "status": {
+      "pending": "Pending",
+      "running": "Running",
+      "success": "Success",
+      "error": "Error",
+      "cancelled": "Cancelled"
+    }
+  },
+  "processCapture": {
+    "title": "Recorder",
+    "subtitle": "Record commands launched by other apps and turn them into ProcMix commands.",
+    "start": "Start recording",
+    "stop": "Stop recording",
+    "recording": "Recording…",
+    "clear": "Clear",
+    "selectAll": "Select all",
+    "selectNone": "Select none",
+    "selectedCount": "{{count}} selected",
+    "saveAsCommand": "Save as command",
+    "saveAsCommand_plural": "Save as commands",
+    "saveAsWorkflow": "Save as workflow",
+    "savedCommands": "Saved {{count}} command",
+    "savedCommands_plural": "Saved {{count}} commands",
+    "savedWorkflow": "Saved workflow \"{{name}}\"",
+    "defaultWorkflowName": "Recorded workflow",
+    "empty": "No commands captured yet. Press Start, then use another app — the commands it launches will appear here.",
+    "emptyRecording": "Recording. Use another app to capture the commands it launches.",
+    "unsupported": "Process recording is not yet implemented on this operating system. It is currently available on Windows only — support for Linux and macOS is planned.",
+    "unsupportedBadge": "Windows only",
+    "startFailed": "Failed to start recording",
+    "column": {
+      "image": "Program",
+      "commandLine": "Command line"
+    },
+    "consent": {
+      "title": "Enable Process Capture?",
+      "message": "ProcMix will observe processes started on this computer while recording is on, and show their command lines so you can turn them into commands. Command lines may contain passwords or tokens — these are masked before display and are never saved unless you choose to save a command. The raw capture log is kept in memory only and is never written to disk.",
+      "accept": "Enable recording",
+      "decline": "Not now"
+    }
+  },
+  "history": {
+    "title": "History",
+    "subtitle": "Recent actions performed on your commands.",
+    "loading": "Loading history…",
+    "noEvents": "No history yet.",
+    "noResults": "No events match your filters.",
+    "pageLabel": "Page {{page}} of {{pages}}",
+    "clearAll": "Clear history",
+    "clearConfirm": "Delete all history entries? This cannot be undone.",
+    "clearConfirmTitle": "Clear all history?",
+    "clearFailed": "Failed to clear history",
+    "showFilters": "Filters",
+    "hideFilters": "Hide filters",
+    "activeFiltersCount": "{{count}} active",
+    "filterByType": "Type",
+    "filterByName": "Command name",
+    "filterByDateFrom": "From",
+    "filterByDateTo": "To",
+    "filterNameQueryPlaceholder": "Search by command name…",
+    "resetFilters": "Reset filters",
+    "undoBtn": "Undo",
+    "undoSuccess": "Edit reverted",
+    "undoFailed": "Failed to revert edit",
+    "undoMissing": "Cannot revert: original event not found",
+    "restoreBtn": "Restore",
+    "restoreSuccess": "Command restored",
+    "restoreFailed": "Failed to restore command",
+    "restoreMissing": "Cannot restore: original event not found",
+    "recordFailed": "Failed to record history event",
+    "kindLabels": {
+      "commandCreated": "Create",
+      "commandEdited": "Edit",
+      "commandDeleted": "Delete",
+      "commandRun": "Run",
+      "commandRestored": "Restore",
+      "commandReverted": "Undo edit",
+      "workflowCreated": "Create",
+      "workflowEdited": "Edit",
+      "workflowDeleted": "Delete",
+      "workflowRun": "Run",
+      "scheduledRun": "Run"
+    },
+    "kinds": {
+      "commandCreated": "Created command \"{{name}}\"",
+      "commandEdited": "Edited command \"{{name}}\"",
+      "commandDeleted": "Deleted command \"{{name}}\"",
+      "commandRun": "Ran command \"{{name}}\"",
+      "commandRestored": "Restored command \"{{name}}\"",
+      "commandReverted": "Reverted edit of command \"{{name}}\"",
+      "workflowCreated": "Created workflow \"{{name}}\"",
+      "workflowEdited": "Edited workflow \"{{name}}\"",
+      "workflowDeleted": "Deleted workflow \"{{name}}\"",
+      "workflowRun": "Ran workflow \"{{name}}\"",
+      "scheduledRun": "Scheduled run of \"{{name}}\""
+    },
+    "runStatus": {
+      "running": "Running…",
+      "succeeded": "Exit 0",
+      "failed": "Exit {{code}}",
+      "cancelled": "Cancelled",
+      "timedOut": "Timed out"
+    },
+    "filterFailedOnly": "Errors"
+  },
+  "deleteBlocked": {
+    "title": "Cannot delete",
+    "message": "\"{{name}}\" is used by other objects. Remove all dependencies first:",
+    "hint": "Delete or update the listed objects, then try again.",
+    "kind": {
+      "workflow": "Workflow",
+      "schedule": "Schedule"
+    }
+  },
+  "envManager": {
+    "title": "Environment",
+    "subtitle": "Read-only view of the current process environment variables with best-effort source detection. Switch to the Root tab to inspect the environment as seen by commands run with administrator privileges.",
+    "showValue": "Show value",
+    "hideValue": "Hide value",
+    "searchPlaceholder": "Filter by name or value…",
+    "noResults": "No variables match the filter.",
+    "noVars": "No environment variables.",
+    "colKey": "Variable",
+    "colValue": "Value",
+    "colSource": "Source",
+    "sourceUnknown": "source unknown",
+    "viewModeLabel": "View mode",
+    "viewList": "List",
+    "viewCategory": "By category",
+    "categoryUnknown": "Source unknown",
+    "sourceMultiple": "{{count}} files",
+    "tabUser": "User",
+    "tabRoot": "Root",
+    "userLoadFailed": "Failed to load environment variables.",
+    "rootNoPassword": "To view the root environment, an administrator password is required.",
+    "rootEnterPassword": "Enter admin password…",
+    "rootError": "Error loading root environment: {{message}}",
+    "refresh": "Refresh",
+    "fileUnreadable": "{{path}}: {{error}}",
+    "sourcesTitle": "Scanned source files ({{count}})",
+    "sourcesNoKeys": "no assignments found",
+    "sourcesKeyCount": "{{count}} variables",
+    "conflictSystemDetailed": "Overrides system value: {{value}}",
+    "conflictFileDetailed": "Overrides {{value}} from {{file}}",
+    "writeEntryError": "Failed to save entry: {{msg}}",
+    "deleteEntryError": "Failed to delete entry: {{msg}}",
+    "varModal": {
+      "title": "Variable",
+      "open": "View variable",
+      "key": "Key",
+      "value": "Value",
+      "file": "File",
+      "editValue": "Edit value",
+      "overridesSystem": "Overrides system variable",
+      "overridesFile": "Overrides variable from earlier file",
+      "overrideValue": "Existing value",
+      "overrideFile": "From file"
+    },
+    "files": {
+      "emptyValue": "(empty)",
+      "clickToEdit": "Click to edit",
+      "deleteEntry": "Delete entry"
+    }
+  }
+}

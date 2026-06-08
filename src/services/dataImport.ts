@@ -1,0 +1,213 @@
+// Apply a validated `ProcMixExport` to the live stores.
+//
+// Every imported command and workflow is given a FRESH id (the store
+// generates it) so importing never overwrites an existing entry — even
+// re-importing the same file just produces duplicates. Because command
+// ids change, a workflow node that referenced an imported command must be
+// re-pointed at that command's NEW id. We therefore import commands first,
+// build an `oldCommandId → newCommandId` map, then remap workflow nodes
+// before creating them.
+//
+// Both creates go through the history-aware `commandActions` /
+// `workflowActions` wrappers, so each imported entry is logged as a
+// `commandCreated` / `workflowCreated` event, exactly like a manual create.
+
+import { createCommand } from "./commandActions";
+import { createWorkflow } from "./workflowActions";
+import type {
+  ExportedCommand,
+  ExportedWorkflow,
+  ProcMixExport,
+} from "../utils/dataTransfer";
+import type { ImportSelection } from "../utils/importSelection";
+import type { Command, WorkflowNode } from "../types";
+
+// `ImportSelection` is computed by the pure `resolveImportSelection` policy in
+// `utils/importSelection`; re-exported here so callers that apply the import
+// keep a single import site.
+export type { ImportSelection };
+
+export interface ImportResult {
+  /** How many commands were created as new entries. */
+  commands: number;
+  /** How many name-duplicates were imported under a new, unique name. */
+  renamed: number;
+  workflows: number;
+  /**
+   * How many imported commands had `runAsAdmin: true` in the source file and
+   * were demoted to `false` on import (M2 — security audit). Import is
+   * untrusted input: a shared/malicious file must never install a command
+   * that is one click away from an elevated run. The user re-enables the flag
+   * per command after reviewing the script. The Settings status surfaces this
+   * count so the demotion is never silent.
+   */
+  demotedAdmin: number;
+}
+
+/**
+ * Per-install state keys that the export strips but which a hand-edited or
+ * older-version file might still carry. The importer drops them defensively
+ * — the store re-stamps id/timestamps/runCount and we force `favorite:
+ * false` — so a stray field can never leak into the new record.
+ */
+type CarriedState = Partial<
+  Pick<
+    Command,
+    "id" | "favorite" | "runCount" | "lastRunAt" | "createdAt" | "updatedAt"
+  >
+>;
+
+/**
+ * Build the `createCommand` input from an imported command: drop the `id`
+ * (the store mints a fresh one), the i18n-key fields reserved for built-in
+ * seeds (so an import can never inject translation keys), and any per-install
+ * state fields a non-conforming file might still carry. `favorite` is reset
+ * to false — it is local state the user sets, not part of the definition.
+ *
+ * SECURITY (M2): `runAsAdmin` is forced to `false`. Import is untrusted input,
+ * so a command must never arrive pre-armed for elevated execution. The second
+ * tuple element reports whether the source had it set, so the caller can count
+ * the demotions and tell the user.
+ */
+function toCommandInput(
+  cmd: ExportedCommand,
+  nameOverride?: string,
+): [Parameters<typeof createCommand>[0], { wasAdmin: boolean }] {
+  const {
+    id: _id,
+    favorite: _favorite,
+    runCount: _runCount,
+    lastRunAt: _lastRunAt,
+    createdAt: _createdAt,
+    updatedAt: _updatedAt,
+    nameKey: _nameKey,
+    descriptionKey: _descriptionKey,
+    ...rest
+  } = cmd as ExportedCommand & CarriedState;
+  const wasAdmin = rest.runAsAdmin === true;
+  return [
+    {
+      ...rest,
+      // A name-duplicate the user kept is created under a fresh unique name.
+      name: nameOverride ?? rest.name,
+      favorite: false,
+      runAsAdmin: false,
+    },
+    { wasAdmin },
+  ];
+}
+
+/**
+ * Remap a workflow node's `commandId` through the old→new command id map.
+ * A node whose referenced command was NOT part of the import (absent from
+ * the map) keeps its original id — it simply becomes an unbound node the
+ * user can re-point later, rather than crashing the import.
+ */
+function remapNode(
+  node: WorkflowNode,
+  idMap: ReadonlyMap<string, string>,
+): WorkflowNode {
+  if (node.commandId === undefined) return node;
+  const mapped = idMap.get(node.commandId);
+  if (mapped === undefined) return node;
+  return { ...node, commandId: mapped };
+}
+
+/**
+ * Build the `createWorkflow` input from an imported workflow: drop the
+ * store-materialised fields and re-point every node at the freshly
+ * imported command ids.
+ */
+function toWorkflowInput(
+  wf: ExportedWorkflow,
+  idMap: ReadonlyMap<string, string>,
+): Parameters<typeof createWorkflow>[0] {
+  const {
+    id: _id,
+    favorite: _favorite,
+    runCount: _runCount,
+    lastRunAt: _lastRunAt,
+    createdAt: _createdAt,
+    updatedAt: _updatedAt,
+    ...rest
+  } = wf as ExportedWorkflow & CarriedState;
+  return {
+    ...rest,
+    favorite: false,
+    nodes: rest.nodes.map((n: WorkflowNode) => remapNode(n, idMap)),
+  };
+}
+
+/**
+ * Resolve the selection for an import. When `selection` is omitted, the whole
+ * envelope is imported as new copies (legacy behaviour); callers that ran the
+ * Import dialog pass the user's explicit subset + rename resolution.
+ */
+function resolveSelection(
+  parsed: ProcMixExport,
+  selection?: ImportSelection,
+): {
+  commands: ExportedCommand[];
+  workflows: ExportedWorkflow[];
+  rename: ReadonlyMap<string, string>;
+} {
+  if (selection === undefined) {
+    return {
+      commands: [...parsed.commands],
+      workflows: [...parsed.workflows],
+      rename: new Map(),
+    };
+  }
+  return {
+    commands: parsed.commands.filter((c) => selection.commandIds.has(c.id)),
+    workflows: parsed.workflows.filter((w) => selection.workflowIds.has(w.id)),
+    rename: selection.rename,
+  };
+}
+
+/**
+ * Persist the chosen commands and workflows from a validated export.
+ *
+ * Every imported command is created FRESH (a new id) — importing never
+ * overwrites an existing entry, so a shared file can't clobber a command a
+ * workflow depends on. A name-duplicate the user chose to keep is created
+ * under the unique name the dialog resolved (`selection.rename`). Workflow
+ * nodes are then remapped through the old→new id map before the workflows are
+ * created.
+ *
+ * Returns counts (created / renamed / workflows / admin demotions) for the
+ * Settings status plaque.
+ */
+export function applyImport(
+  parsed: ProcMixExport,
+  selection?: ImportSelection,
+): ImportResult {
+  const { commands, workflows, rename } = resolveSelection(parsed, selection);
+
+  const commandIdMap = new Map<string, string>();
+  let created = 0;
+  let renamed = 0;
+  let demotedAdmin = 0;
+
+  for (const cmd of commands) {
+    const newName = rename.get(cmd.id);
+    const [input, { wasAdmin }] = toCommandInput(cmd, newName);
+    if (wasAdmin) demotedAdmin += 1;
+
+    const record = createCommand(input);
+    commandIdMap.set(cmd.id, record.id);
+    created += 1;
+    if (newName !== undefined) renamed += 1;
+  }
+
+  for (const wf of workflows) {
+    createWorkflow(toWorkflowInput(wf, commandIdMap));
+  }
+
+  return {
+    commands: created,
+    renamed,
+    workflows: workflows.length,
+    demotedAdmin,
+  };
+}

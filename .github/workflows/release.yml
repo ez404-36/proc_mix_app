@@ -1,0 +1,234 @@
+name: Release (installers)
+
+# Builds the ProcMix installers:
+#   - Windows NSIS `-setup.exe` on a native Windows runner. WiX/MSI is
+#     intentionally not produced (per-user NSIS only).
+#   - Linux `.deb` package AND portable `.AppImage` on Ubuntu 22.04 — the
+#     oldest base providing WebKitGTK 4.1, for broad glibc compatibility.
+#
+# Triggers:
+#   - Pushing a tag like `v0.1.0` builds the installers and attaches them to a
+#     GitHub Release for that tag.
+#   - Manual `workflow_dispatch` builds the installers and uploads them as
+#     workflow artifacts (no Release is created).
+#
+# Windows code signing is OPTIONAL and activates only when the signing secrets
+# are present (see docs/windows-installer.md). Without them the installer still
+# builds, just unsigned.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Fast gate: lint + typecheck + tests before the slow bundle step so a
+  # broken build fails in minutes instead of after the full Rust release
+  # compile.
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Tauri's Linux build requires WebKitGTK and GTK development headers.
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test (frontend)
+        run: npm test
+
+      - name: Clippy (Rust)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test (Rust)
+        working-directory: src-tauri
+        run: cargo test
+
+  build-windows:
+    needs: check
+    runs-on: windows-latest
+    env:
+      # Surfaced as an env var so the conditional signing step can be gated
+      # in an `if:` expression (secrets are not available in `if:` directly).
+      HAS_SIGNING_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # Authenticode signing is OPTIONAL. It activates only when both the
+      # WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD secrets are set.
+      # This step imports the .pfx into the runner's CurrentUser cert store
+      # and patches `bundle.windows.certificateThumbprint` into the Tauri
+      # config so `tauri build` signs the app + installer. Without the secret
+      # the committed config has no thumbprint and the build stays unsigned.
+      # See docs/windows-installer.md.
+      - name: Import signing certificate
+        id: sign
+        if: ${{ env.HAS_SIGNING_CERT == 'true' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          New-Item -ItemType Directory -Force -Path certificate | Out-Null
+          Set-Content -Path certificate/tempCert.txt -Value $env:WINDOWS_CERTIFICATE
+          certutil -decode certificate/tempCert.txt certificate/certificate.pfx
+          Remove-Item -Path certificate/tempCert.txt
+          $pwd = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath certificate/certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pwd
+          $thumbprint = $cert.Thumbprint
+          $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $conf.bundle.windows | Add-Member -NotePropertyName certificateThumbprint -NotePropertyValue $thumbprint -Force
+          $conf.bundle.windows | Add-Member -NotePropertyName digestAlgorithm -NotePropertyValue 'sha256' -Force
+          $conf.bundle.windows | Add-Member -NotePropertyName timestampUrl -NotePropertyValue 'http://timestamp.digicert.com' -Force
+          $conf | ConvertTo-Json -Depth 32 | Set-Content src-tauri/tauri.conf.json
+          Write-Output "Signing enabled with thumbprint $thumbprint"
+
+      - name: Build Windows installer (NSIS)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Only emit the per-user NSIS installer; skip MSI/WiX.
+          args: --bundles nsis
+          # On tag pushes, create/attach to a draft GitHub Release. Empty for
+          # workflow_dispatch runs (no tag ref) -> installer is uploaded as a
+          # workflow artifact instead.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: ${{ github.ref_type == 'tag' && format('ProcMix {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: false
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: procmix-windows-nsis
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+  build-linux:
+    needs: check
+    # Build on the oldest supported base (Ubuntu 22.04) so the resulting
+    # artifacts link against an older glibc and run on a wider range of
+    # distributions. 22.04 also provides WebKitGTK 4.1 from the standard
+    # repositories. Both the .deb and the AppImage are produced from the same
+    # compiled binary in this single job, so AppImage adds bundling time but
+    # not a second Rust compile.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Build-time headers for WebKitGTK, GTK, the Ayatana tray indicator and
+      # librsvg (icon rendering). The .deb runtime `Depends:` are auto-detected
+      # by the bundler; the AppImage bundles these libraries into the image.
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Linux installers (deb + AppImage)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # linuxdeploy (used by the AppImage bundler) needs FUSE at build time;
+          # this lets it extract its AppImage tooling without a FUSE mount on
+          # the runner.
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        with:
+          # Emit the Debian package and the portable AppImage; skip RPM.
+          args: --bundles deb,appimage
+          # On tag pushes, attach to the same draft GitHub Release as the
+          # Windows job. Empty for workflow_dispatch runs (no tag ref).
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: ${{ github.ref_type == 'tag' && format('ProcMix {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: false
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: procmix-linux-deb
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: procmix-linux-appimage
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error

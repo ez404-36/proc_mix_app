@@ -1,0 +1,5800 @@
+:root,
+[data-theme="light"] {
+  --color-primary: #2563eb;
+  --color-secondary: #10b981;
+  /* App-owned "run" accent (green). Distinct from `--color-secondary`, which
+     Arco Design also defines (as a translucent grey) — relying on that name
+     let Arco's value win and tinted our Run buttons / start node grey. */
+  --app-color-run: #10b981;
+  /* App-owned "edit" accent (orange/amber). Used by the History action-icon
+     column to tint the edit / undo-edit pencil. No Arco name collision. */
+  --app-color-edit: #f59e0b;
+  --color-danger: #ef4444;
+  --color-bg: #ffffff;
+  --color-surface: #f8fafc;
+  --color-text: #0f172a;
+  --color-text-muted: #64748b;
+  --color-border: #e2e8f0;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+
+  /* Accent / success / subtle surfaces — light variant.
+     The accent (used for active tabs / badges) is a brighter blue than the
+     primary; subtle backgrounds are slightly off the base bg. */
+  --color-accent: #4f8cf7;
+  --color-accent-subtle: rgba(79, 140, 247, 0.12);
+  --color-success: #16a34a;
+  --color-bg-subtle: #f1f5f9;
+  --color-surface-hover: rgba(15, 23, 42, 0.05);
+  /* Monospace stack is theme-independent; declared once here, dark inherits. */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Console / output surfaces — light variant.
+     The output panel and inline command-form output use these instead of
+     hardcoded dark colors so they follow the active theme. */
+  --console-bg: #ffffff;
+  --console-header-bg: #f1f5f9;
+  --console-script-bg: #f8fafc;
+  --console-border: #e2e8f0;
+  --console-text: #0f172a;
+  --console-text-muted: #64748b;
+  --console-placeholder: #94a3b8;
+  --console-stdout: #0f172a;
+  --console-stderr: #b91c1c;
+  --console-recent-bg: #ffffff;
+  --console-recent-border: #cbd5e1;
+  --console-recent-text: #334155;
+  --console-recent-active-bg: #dbeafe;
+  --console-recent-active-border: #2563eb;
+  --console-recent-active-text: #1e3a8a;
+  --console-recent-dot: #94a3b8;
+  --console-btn-bg: #ffffff;
+  --console-btn-border: #cbd5e1;
+  --console-btn-text: #0f172a;
+  --console-btn-hover-border: #2563eb;
+  --console-shadow: 0 -8px 24px rgba(15, 23, 42, 0.08);
+
+  /* Status badge text — darker shades on light backgrounds */
+  --console-status-running: #1d4ed8;
+  --console-status-success: #047857;
+  --console-status-error: #b91c1c;
+  --console-status-neutral: #475569;
+}
+
+[data-theme="dark"] {
+  --color-primary: #2563eb;
+  --color-secondary: #10b981;
+  --app-color-run: #10b981;
+  --app-color-edit: #f59e0b;
+  --color-danger: #ef4444;
+  --color-bg: #0f172a;
+  --color-surface: #1e293b;
+  --color-text: #f8fafc;
+  --color-text-muted: #94a3b8;
+  --color-border: #334155;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+
+  /* Accent / success / subtle surfaces — dark variant (lighter on dark bg).
+     --font-mono is theme-independent and inherited from the light block. */
+  --color-accent: #60a5fa;
+  --color-accent-subtle: rgba(96, 165, 250, 0.18);
+  --color-success: #4ade80;
+  --color-bg-subtle: #162133;
+  --color-surface-hover: rgba(255, 255, 255, 0.07);
+
+  --console-bg: #0b1220;
+  --console-header-bg: #111827;
+  --console-script-bg: #0e172a;
+  --console-border: #1f2937;
+  --console-text: #e2e8f0;
+  --console-text-muted: #94a3b8;
+  --console-placeholder: #64748b;
+  --console-stdout: #e2e8f0;
+  --console-stderr: #fca5a5;
+  --console-recent-bg: #1e293b;
+  --console-recent-border: #334155;
+  --console-recent-text: #cbd5e1;
+  --console-recent-active-bg: #1e3a8a;
+  --console-recent-active-border: #3b82f6;
+  --console-recent-active-text: #ffffff;
+  --console-recent-dot: #64748b;
+  --console-btn-bg: #1e293b;
+  --console-btn-border: #334155;
+  --console-btn-text: #e2e8f0;
+  --console-btn-hover-border: #60a5fa;
+  --console-shadow: 0 -8px 24px rgba(0, 0, 0, 0.25);
+
+  --console-status-running: #93c5fd;
+  --console-status-success: #6ee7b7;
+  --console-status-error: #fca5a5;
+  --console-status-neutral: #cbd5e1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Suppress accidental text selection on UI chrome; keep it enabled where
+   real text content lives (inputs, editable areas, the output log, and any
+   element opted in via the `.selectable` helper). */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.selectable,
+.output-panel__body,
+.output-panel__script-body,
+.output-line,
+.command-form__output-body,
+.command-form__output-line,
+.env-snapshot-table__td,
+.env-manager__sources-path {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#root {
+  height: 100%;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  color: inherit;
+}
+
+/* App layout */
+.app-shell {
+  display: flex;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.app-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px;
+  gap: 4px;
+  transition:
+    width 0.2s ease,
+    padding 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar {
+    transition: none;
+  }
+}
+
+.app-sidebar__brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-primary);
+  padding: 8px 12px 16px;
+}
+
+.app-sidebar__brand-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-sidebar__collapse-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.app-sidebar__collapse-toggle:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.app-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.app-sidebar__nav-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.app-sidebar__nav-button:hover {
+  background: var(--color-bg);
+}
+
+.app-sidebar__nav-button.is-active {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.app-sidebar__tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.app-sidebar__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.app-sidebar__hint {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: 0 8px;
+}
+
+/* Keep the key combo on one line so the trailing label wraps as its own
+   column. `white-space: nowrap` prevents the keys from breaking, and
+   `flex-shrink: 0` stops them from being squeezed. */
+.app-sidebar__hint-keys {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* The label sits in its own flex column to the right of the keys. When it
+   wraps, the second word stays under the first word (indented after the keys),
+   not back at the row's left edge. */
+.app-sidebar__hint-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-sidebar__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 8px 0;
+  margin-top: 4px;
+  border-top: 1px solid var(--color-border);
+  font-size: 12px;
+}
+
+.app-sidebar__meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.app-sidebar__meta-label {
+  color: var(--color-text-muted);
+}
+
+.app-sidebar__meta-value {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* Collapsed sidebar: an icons-only rail. Labels, brand text, and the
+   palette hint are removed from the DOM (see App.tsx); the remaining
+   icon buttons keep their hover `title` tooltips. */
+.app-sidebar--collapsed {
+  width: 64px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.app-sidebar--collapsed .app-sidebar__brand {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.app-sidebar--collapsed .app-sidebar__nav-button {
+  justify-content: center;
+  gap: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.app-sidebar--collapsed .app-sidebar__footer .btn {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+  text-align: center;
+}
+
+.app-main {
+  flex: 1;
+  overflow: auto;
+  padding: 32px 40px;
+}
+
+.view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 16px;
+}
+
+.view-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 9px;
+  background: var(--color-accent);
+  color: var(--color-bg, #fff);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.btn--has-badge {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.view-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.view-subtitle {
+  color: var(--color-text-muted);
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.view-section {
+  margin-bottom: 28px;
+}
+
+.view-section__title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin: 0 0 12px;
+}
+
+/* Command list */
+.command-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.list-tile {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+.list-tile__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  /* Grow so the actions row is pushed to the bottom of the card; combined
+   * with the grid's default row stretch this aligns every run button. */
+  flex: 1 1 auto;
+}
+
+.list-tile__title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.list-tile__desc {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.list-tile__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.shell-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.tag-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* Category badge on a list tile — a filled accent pill to set it
+ * apart from the outlined tag chips. */
+.category-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  color: #fff;
+}
+
+/* Clickable tag-filter chips in the Library toolbar. Reuses the
+ * `.tag-chip` look but adds a button affordance + active state. */
+.library-filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.tag-chip--filter {
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+
+.tag-chip--filter:hover {
+  border-color: var(--color-primary);
+}
+
+.tag-chip--filter.is-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.library-filter-clear {
+  font-size: 12px;
+  padding: 2px 10px;
+}
+
+.list-tile__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+/* Button icons are flex items inside the `inline-flex` button. Without this
+ * they inherit the default `flex-shrink: 1` and get squeezed narrower than
+ * their intrinsic width when the label is long (e.g. a 16x16 RunIcon rendered
+ * ~12.8px wide in the "Run now" schedule button). Pin every button glyph —
+ * whether a bare `<svg>` or one wrapped in a `*-icon` span — so it always
+ * renders at its declared size. */
+.btn > svg,
+.btn > span > svg {
+  flex-shrink: 0;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+}
+
+/* Disabled buttons (e.g. Run before the workflow has any step) read as
+ * inactive: dimmed, no hover affordance, not-allowed cursor. A single global
+ * rule covers every `.btn` variant — previously only `.command-form .btn`
+ * had a disabled style, so a disabled toolbar button looked fully active. */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+/* Filled-green "Run" button for the command / workflow list cards on Home
+   and Library. A solid counterpart to the outlined `command-form__action--run`
+   used in the editor / preview footers, so a list card's primary action reads
+   as "go" at a glance. The leading play icon inherits the white text color. */
+.btn--run {
+  background: var(--app-color-run);
+  border-color: var(--app-color-run);
+  color: #ffffff;
+}
+
+.btn--run:hover:not(:disabled) {
+  background: #0e9f6e;
+  border-color: #0e9f6e;
+}
+
+/* Outlined "Edit" button for workflow list cards: a non-filled counterpart to
+   the solid `btn--run`. Mirrors the CommandForm outlined action buttons — a
+   primary-colored border + matching icon, but the LABEL keeps the button's
+   neutral text color; only on hover does a light primary wash tint everything
+   in the same hue. */
+.btn--edit {
+  border-color: var(--color-primary);
+}
+
+/* The pencil icon keeps its own (primary) hue regardless of the neutral
+   label color, same as `command-form__action-icon--run`. */
+.btn--edit-icon {
+  display: inline-flex;
+  color: var(--color-primary);
+}
+
+.btn--edit:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+}
+
+/* "View" (read-only preview) button on list cards — same outlined treatment
+   as `.btn--edit` but using the neutral border/muted hue so it reads as a
+   secondary action next to the primary Run button. */
+.btn--view {
+  border-color: var(--color-border);
+}
+
+.btn--view-icon {
+  display: inline-flex;
+  color: var(--color-text-muted);
+}
+
+.btn--view:hover:not(:disabled) {
+  border-color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-text-muted) 10%, transparent);
+}
+
+/* Outlined "Cancel" button: a non-filled, danger-hued counterpart to the
+   solid `btn--danger`. Mirrors `.btn--edit` — a danger-colored border + matching
+   icon, but the LABEL keeps the button's neutral text color; only on hover does a
+   light danger wash tint everything in the same hue. */
+.btn--cancel {
+  border-color: var(--color-danger);
+}
+
+/* The cross icon keeps its own (danger) hue regardless of the neutral
+   label color, same as `.btn--edit-icon`. */
+.btn--cancel-icon {
+  display: inline-flex;
+  color: var(--color-danger);
+}
+
+.btn--cancel:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+.btn--icon {
+  padding: 6px 8px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.empty-state {
+  padding: 24px;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* Library */
+.library-tabs-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.library-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.library-tab {
+  padding: 8px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.library-tab:hover {
+  color: var(--color-text);
+}
+
+.library-tab.is-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.library-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 20px;
+  /* Wrap onto a second line when the row is too narrow for search + controls
+   * + create button. Without this the fixed-width controls overflow and the
+   * icon buttons visually overlap (notably in table mode on narrow panels). */
+  flex-wrap: wrap;
+}
+
+/* Toolbar sizing: the search field grows to fill leftover space but is capped
+ * so it never crowds the sort/view controls + create button on its right.
+ * `min-width: 0` lets it shrink below its content width when the row is tight.
+ * Scoped to `.library-toolbar` so the global `.input`/`.btn` rules (used by
+ * the Workflows toolbar and forms) stay untouched. */
+.library-toolbar .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 420px;
+}
+
+.library-toolbar .dropdown {
+  flex: 0 0 auto;
+  max-width: 180px;
+}
+
+/* The sort + view-mode controls must never compress — keeping their natural
+ * width is what stops the icon buttons overlapping when the row is narrow. */
+.library-toolbar .list-controls {
+  flex: 0 0 auto;
+}
+
+.library-toolbar .btn--primary {
+  flex: 0 0 auto;
+  padding: 10px 20px;
+  font-size: 14px;
+  /* Keep the create button pinned to the right edge of its line, even after
+   * the toolbar wraps. */
+  margin-left: auto;
+}
+
+/* Icon-only create button: the "+" New action is rendered as a compact icon
+ * button so it never crowds the sort/view controls. Restore the tight
+ * `.btn--icon` padding that the toolbar's `.btn--primary` rule above would
+ * otherwise widen. */
+.library-toolbar .btn--primary.btn--icon {
+  padding: 6px 10px;
+}
+
+.input {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 14px;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+/* Invalid-input state (paired with `aria-invalid` in the markup): a danger
+   border, and a matching danger focus ring that overrides the primary one so
+   focusing an errored field stays red rather than reverting to blue. */
+.input--error {
+  border-color: var(--color-danger);
+}
+
+.input--error:focus {
+  border-color: var(--color-danger);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15);
+}
+
+/* Editor placeholder canvas */
+.editor-canvas {
+  border: 2px dashed var(--color-border);
+  border-radius: 12px;
+  min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  font-size: 14px;
+}
+
+/* Settings */
+.settings-group {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Tighter button/control row (8px) — overrides the default 12px gap. */
+.settings-group--tight {
+  gap: 8px;
+}
+
+/* Vertically centre the row's items (e.g. a label beside controls). */
+.settings-group--center {
+  align-items: center;
+}
+
+/* Extra top spacing above a group when it follows another row. */
+.settings-group--spaced-top {
+  margin-top: 12px;
+}
+
+/* Top spacing for a tighter group that trails another row (8px). */
+.settings-group--spaced-top-sm {
+  margin-top: 8px;
+}
+
+/* Left-aligned info block built on `.empty-state` (the base centres text). */
+.settings-info {
+  text-align: left;
+}
+
+/* A single line of body copy inside a `.settings-info` block. */
+.settings-info__line {
+  margin-bottom: 4px;
+}
+
+/* Lead paragraph of a `.settings-info` block: slightly larger, more spacing. */
+.settings-info__lead {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+/* Body text at the default 13px (no bottom margin) inside settings blocks. */
+.settings-info__body {
+  font-size: 13px;
+}
+
+/* Small muted caption / sub-hint. `--spaced` adds top spacing when it trails
+   an action row. */
+.settings-caption {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.settings-caption--spaced {
+  margin-top: 10px;
+}
+
+/* Inline label sitting to the left of a control row (e.g. "Language:"). */
+.settings-inline-label {
+  margin-right: 8px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.theme-option {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.theme-option.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* Command palette */
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 1000;
+}
+
+.palette {
+  width: 600px;
+  max-width: calc(100% - 32px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.palette__input {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 15px;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  outline: none;
+}
+
+.palette__list {
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.palette__item {
+  padding: 10px 12px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.palette__item:hover {
+  background: var(--color-bg);
+}
+
+.palette__item.is-active {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.palette__item.is-active .palette__item-desc {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.palette__item-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.palette__item-desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.palette__empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.favorite-toggle {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.favorite-toggle.is-on {
+  color: var(--color-danger);
+}
+
+.favorite-toggle:hover {
+  background: var(--color-bg);
+}
+
+/* Output panel */
+.output-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  /* Height is set inline from `panelHeight` (drag-resizable) and clamped in the
+     store to `[MIN_PANEL_HEIGHT, viewport - 80]`. `min-height` is a static
+     safety floor for the no-JS / initial render. */
+  min-height: 220px;
+  background: var(--console-bg);
+  color: var(--console-text);
+  border-top: 1px solid var(--console-border);
+  box-shadow: var(--console-shadow);
+}
+
+/* Thin drag handle along the panel's top edge. Sits above the border so the
+   whole top line reads as grabbable; widens its hit area with padding via the
+   `::before`. Keyboard-focusable (Arrow Up/Down resize) with a visible ring. */
+.output-panel__resize {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: ns-resize;
+  touch-action: none;
+  z-index: 1;
+}
+
+.output-panel__resize:hover,
+.output-panel__resize:focus-visible {
+  background: var(--console-btn-hover-border);
+  outline: none;
+}
+
+.output-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--console-header-bg);
+  border-bottom: 1px solid var(--console-border);
+  flex-shrink: 0;
+}
+
+.output-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.output-panel__title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--console-text);
+}
+
+.output-panel__status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.output-panel__status--running {
+  background: rgba(37, 99, 235, 0.2);
+  color: var(--console-status-running);
+}
+
+.output-panel__status--success {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--console-status-success);
+}
+
+.output-panel__status--error {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--console-status-error);
+}
+
+.output-panel__status--cancelled {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--console-status-neutral);
+}
+
+.output-panel__status--pending {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--console-status-neutral);
+}
+
+/* Timeout: amber, overriding the red `--error` colour (the badge carries
+ * both classes; this rule wins by source order). */
+.output-panel__status--timedOut {
+  background: rgba(234, 179, 8, 0.2);
+  color: rgb(202, 138, 4);
+}
+
+/* Status/loader icon shown next to the status badge in the output panel
+   header. Sits inline-flex so it aligns vertically with the pill-shaped
+   badge regardless of font baseline. `currentColor` lets each variant
+   control its own hue via the parent class. Mirrors the inline
+   command-form output icon. */
+.output-panel__status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.output-panel__status-icon--running {
+  color: var(--console-status-running);
+  animation: output-panel-spin 0.9s linear infinite;
+}
+
+.output-panel__status-icon--success {
+  color: var(--console-status-success);
+}
+
+.output-panel__status-icon--error {
+  color: var(--console-status-error);
+}
+
+@keyframes output-panel-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Respect users who prefer reduced motion — keep the icon visible but
+   stop the rotation (the badge text still conveys "running"). */
+@media (prefers-reduced-motion: reduce) {
+  .output-panel__status-icon--running {
+    animation: none;
+  }
+}
+
+.output-panel__meta {
+  font-size: 12px;
+  color: var(--console-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.output-panel__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.output-panel__actions .btn {
+  background: var(--console-btn-bg);
+  border-color: var(--console-btn-border);
+  color: var(--console-btn-text);
+}
+
+.output-panel__actions .btn:hover {
+  border-color: var(--console-btn-hover-border);
+}
+
+/* The terminal toolbar reuses the CommandView action convention (icon + label,
+   all buttons outlined with the icon color matching the border). The generic
+   `.output-panel__actions .btn` rule above out-specifies the
+   `command-form__action--*` outlined accents, so restore them here at matching
+   specificity. */
+.output-panel__actions .command-form__action--run {
+  border-color: var(--color-success);
+}
+
+.output-panel__actions .command-form__action--cancel {
+  border-color: var(--color-danger, #dc2626);
+}
+
+/* Neutral-grey "Close" button — same treatment as the `.btn--view` button on
+   list tiles (muted border + muted icon), restored over the generic console
+   border rule. */
+.output-panel__actions .btn--view {
+  border-color: var(--color-border);
+}
+
+.output-panel__script {
+  padding: 8px 14px;
+  background: var(--console-script-bg);
+  border-bottom: 1px solid var(--console-border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 30vh;
+  overflow: auto;
+  flex-shrink: 0;
+}
+
+.output-panel__script-shell {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--console-text-muted);
+}
+
+.output-panel__script-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--console-text);
+}
+
+.output-panel__variables {
+  margin: 0;
+  padding: 8px 14px;
+  background: var(--console-script-bg);
+  border-bottom: 1px solid var(--console-border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 22vh;
+  overflow: auto;
+  flex-shrink: 0;
+}
+
+.output-panel__variables-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--console-text-muted);
+  margin: 0;
+}
+
+.output-panel__variable {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  word-break: break-all;
+}
+
+.output-panel__variable-name {
+  color: var(--console-text-muted);
+  flex-shrink: 0;
+}
+
+.output-panel__variable-name::after {
+  content: "=";
+  margin-left: 4px;
+  color: var(--console-text-muted);
+}
+
+.output-panel__variable-value {
+  color: var(--console-text);
+  white-space: pre-wrap;
+}
+
+.output-panel__variable-value--sensitive {
+  font-style: italic;
+  color: var(--console-text-muted);
+}
+
+.output-panel__env-key {
+  color: var(--app-color-edit);
+}
+
+.output-panel__env-key::after {
+  color: var(--console-text-muted);
+}
+
+.output-panel__body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 10px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: var(--console-bg);
+}
+
+.output-panel__placeholder {
+  color: var(--console-placeholder);
+  font-style: italic;
+}
+
+/* Tab bar toggling the raw Output log vs. the structured Result view.
+   Shown only when the active execution carries an extracted result. */
+.output-panel__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 14px 0;
+  background: var(--console-bg);
+  border-bottom: 1px solid var(--console-border);
+}
+
+.output-panel__tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: 7px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.output-panel__tab.is-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+/* Structured result view: pretty-printed return value + field map. */
+.output-panel__result-section {
+  margin-bottom: 12px;
+}
+
+.output-panel__result-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.output-panel__result-json {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--console-stdout);
+}
+
+.output-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.output-line--stdout {
+  color: var(--console-stdout);
+}
+
+.output-line--stderr {
+  color: var(--console-stderr);
+}
+
+/* App-injected workflow step separators (the `meta` stream). Rendered as a
+   subtle, bold divider so each step's header/exit trailer stands out from
+   the real stdout/stderr lines without competing with them. */
+.output-line--meta {
+  margin-top: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--console-border);
+  color: var(--color-text-muted);
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.output-line--meta:first-child {
+  margin-top: 0;
+  border-top: none;
+}
+
+/* App-injected "timed out" notice. Visually distinct from a plain
+ * stderr line (amber, bold, with a left accent bar) so it reads as a
+ * deliberate explanation of WHY the run stopped rather than program
+ * output. Matches the amber timeout tone used by the status badges. */
+.output-line--timeout {
+  margin-top: 8px;
+  padding: 4px 8px;
+  border-left: 3px solid rgb(202, 138, 4);
+  background: rgba(234, 179, 8, 0.12);
+  color: rgb(202, 138, 4);
+  font-weight: 600;
+}
+
+.output-panel__recents {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  overflow-x: auto;
+  background: var(--console-header-bg);
+  border-top: 1px solid var(--console-border);
+  flex-shrink: 0;
+}
+
+.output-panel__recent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--console-recent-border);
+  background: var(--console-recent-bg);
+  color: var(--console-recent-text);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.output-panel__recent:hover {
+  border-color: var(--console-btn-hover-border);
+}
+
+.output-panel__recent.is-active {
+  background: var(--console-recent-active-bg);
+  border-color: var(--console-recent-active-border);
+  color: var(--console-recent-active-text);
+}
+
+.output-panel__recent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--console-recent-dot);
+}
+
+.output-panel__recent-dot--running {
+  background: #3b82f6;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.7);
+}
+
+.output-panel__recent-dot--success {
+  background: #10b981;
+}
+
+.output-panel__recent-dot--error {
+  background: #ef4444;
+}
+
+.output-panel__recent-dot--cancelled {
+  background: #94a3b8;
+}
+
+.output-panel__recent-dot--pending {
+  background: #94a3b8;
+}
+
+.output-panel__recent-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Shortcut settings */
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.shortcut-row__info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.shortcut-row__label {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.shortcut-row__desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.shortcut-row__combo {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 180px;
+  justify-content: center;
+}
+
+.shortcut-row__recording {
+  font-size: 12px;
+  color: var(--color-primary);
+  font-style: italic;
+}
+
+.shortcut-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.shortcut-list__hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: 4px 4px 0;
+}
+
+.shortcut-list__plus {
+  margin: 0 4px;
+  color: var(--color-text-muted);
+}
+
+/* Custom context menu (replaces the native WebKit menu) */
+.context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 200px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 4px 0;
+  font-size: 13px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.context-menu-item:hover:not(.disabled),
+.context-menu-item.active:not(.disabled) {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.context-menu-item.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.context-menu-item.danger {
+  color: var(--color-danger);
+}
+
+.context-menu-item__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.context-menu-item__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.context-menu-shortcut {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  flex-shrink: 0;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px 0;
+}
+
+/* Submenu chevron: a small right-pointing glyph on items that have
+ * nested entries. Uses the muted text color so it doesn't compete
+ * with the label. The has-submenu modifier reserves space on the
+ * right edge so the chevron sits flush. */
+.context-menu-chevron {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.context-menu-item.has-submenu.active .context-menu-chevron,
+.context-menu-item.has-submenu:hover .context-menu-chevron {
+  color: var(--color-text);
+}
+
+/* Child submenu panel — same visual style as the root menu plus
+ * a slightly heavier shadow so its z-stacking is obvious. The
+ * `.context-menu` base class already sets `position: fixed` and
+ * `z-index: 9999`. We bump the z-index ONE step above the root so
+ * the submenu paints over its parent (and over any sibling
+ * portals at 9999, e.g. a tooltip). */
+.context-menu--submenu {
+  z-index: 10001;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+}
+
+/* Command form (create/edit dialog) */
+.command-form__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  z-index: 1100;
+}
+
+.command-form {
+  /* Widened from the original 560px single-column width to host the
+     two-column layout (metadata/settings | script/output). Still clamps
+     to the viewport on small screens via `max-width`. `container-type`
+     makes the modal a query container so `.command-form__columns` can
+     collapse based on the MODAL's width, not the viewport's. */
+  width: min(960px, calc(100% - 32px));
+  max-width: calc(100% - 32px);
+  max-height: calc(100vh - 20vh);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: command-form;
+}
+
+/* Full-screen command editor view. The same `CommandForm` markup is reused
+   here as a plain in-page form (no backdrop/portal). These overrides undo
+   the modal box geometry so the form fills the view column and scrolls with
+   it. The base `.command-form` rule above is kept intact because the app's
+   confirm/meta/export dialogs reuse those classes as their modal box. */
+.command-editor-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.command-editor-view .command-form {
+  width: 100%;
+  max-width: 1100px;
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* No floating-card chrome inside the page — the view provides the frame. */
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* Full-screen schedule editor view (the `scheduler-editor` route). Mirrors
+   the command-editor page: a sticky-ish header with Cancel/Save actions and a
+   scrollable, width-constrained form column below. The form was previously a
+   modal, so its fields use the generic `.form-field` chrome and need no extra
+   box geometry — only the page frame and field-spacing rules here. */
+.schedule-editor-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.schedule-form__header {
+  flex-shrink: 0;
+}
+
+.schedule-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.schedule-form__target {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Per-type recurrence parameter sub-form revealed below the type dropdown. */
+.schedule-form__recurrence-params {
+  margin-top: 10px;
+}
+
+.schedule-form__param {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schedule-form__param-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.schedule-form__param-hint {
+  flex-basis: 100%;
+}
+
+/* Generic form-field chrome (used by the scheduler form). Mirrors the
+   command-form field/label so labels read identically across forms:
+   a small uppercase muted caption stacked above its control. */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Required-field marker + emphasis, matching the command form's treatment:
+   a red asterisk to the left and a heavier, full-strength label. */
+.form-field__required {
+  color: var(--color-danger, #dc2626);
+  margin-right: 4px;
+  font-weight: 700;
+}
+
+.form-field__label--required {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+/* Explanatory hint shown beneath a form field — same muted, small-type
+   treatment as `.command-form__hint`, but with a normal top margin so it
+   sits comfortably under the field's input. */
+.form-hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+  margin: 4px 0 0;
+}
+
+/* Narrow numeric-stepper / time inputs so they don't stretch the full form
+   width. The stepper is [−] [input] [+]; cap the whole control's width. */
+.schedule-form__stepper {
+  max-width: 150px;
+}
+
+/* Time picker: two separately-labelled steppers (Hours / Minutes) side by
+   side. Each is a `.form-field` with its own caption above the stepper. */
+.schedule-form__time {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.schedule-form__time-field {
+  gap: 6px;
+  /* Let the column shrink within the flex row instead of overflowing. */
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+/* Hours / minutes only ever hold two digits (HH / MM), so their steppers can
+   be narrower than the generic 150px cap. Layout is [input] [+ / −]: the
+   stacked button column is just ~24px wide, leaving room for the HH/MM input. */
+.schedule-form__time-field .schedule-form__stepper {
+  width: 88px;
+}
+
+/* A sub-field revealed under a checkbox (timeout / retry count), indented to
+   read as a child of the toggle above it. */
+.schedule-form__sub-field {
+  padding-left: 26px;
+  gap: 6px;
+}
+
+/* Schedule preview modal: a definition list of the schedule's properties.
+   Children of `.command-form` get no padding from the container, so the
+   details body supplies its own edge padding (matching the export/confirm
+   variants); otherwise the rows sit flush against the modal edges. */
+/* Tab strip in the schedule view (Parameters / History). Mirrors the
+   OutputPanel tab bar's accent-underline treatment. */
+.schedule-view__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 20px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.schedule-view__tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: 7px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.schedule-view__tab.is-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+/* History tab body: a scrollable list of past scheduled runs. */
+.schedule-history {
+  padding: 16px 20px 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.schedule-history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-history__entry {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--color-bg);
+}
+
+/* The whole entry is one disclosure: the head row is the clickable summary,
+   the captured output / result / "no output" note lives in the body. */
+.schedule-history__disclosure {
+  display: block;
+}
+
+.schedule-history__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+/* Native disclosure marker: hide the default triangle and draw our own that
+   rotates when the entry is open, matching the app's chevron affordance. */
+.schedule-history__head::-webkit-details-marker {
+  display: none;
+}
+
+.schedule-history__head::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent var(--color-text-muted);
+  transition: transform 0.15s ease;
+}
+
+.schedule-history__disclosure[open] .schedule-history__head::before {
+  transform: rotate(90deg);
+}
+
+.schedule-history__time {
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.schedule-history__meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.schedule-history__body {
+  margin-top: 8px;
+}
+
+.schedule-history__section + .schedule-history__section {
+  margin-top: 8px;
+}
+
+.schedule-history__section-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+/* Output / Result switcher, shown when a run captured BOTH. Mirrors the
+   console OutputPanel's tab strip (underline indicator on the active tab). */
+.schedule-history__tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.schedule-history__tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.schedule-history__tab.is-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.schedule-history__console {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--console-bg);
+  border: 1px solid var(--console-border);
+  color: var(--console-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.schedule-history__line {
+  display: block;
+}
+
+.schedule-history__line--stdout {
+  color: var(--console-stdout);
+}
+
+.schedule-history__line--stderr {
+  color: var(--console-stderr);
+}
+
+.schedule-history__line--meta {
+  color: var(--console-text-muted);
+  font-style: italic;
+}
+
+/* Muted, non-interactive note for a run with no captured output (capture
+   disabled, no output produced, or a run recorded before the capture
+   feature existed). Sits inside the expanded body, on the modal surface. */
+.schedule-history__no-output {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.schedule-view__details {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 20px 0;
+}
+
+.schedule-view__row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.schedule-view__row dt {
+  flex: 0 0 38%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.schedule-view__row dd {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* A value that carries an inline badge (target kind after the name, run
+   status after the last-run date). Keeps the badge beside the value and lets
+   it wrap as a unit on narrow widths. */
+.schedule-view__value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Enabled/disabled toggle in the card head. Inline so the checkbox and its
+   label stay on one line instead of wrapping to two; `white-space: nowrap`
+   keeps the label intact and `flex-shrink: 0` stops the card from squeezing
+   it onto a second row. */
+.list-schedule-card__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Run metadata in the card (next run / last run / run count). Stacked so the
+   three lines don't run together as inline text. */
+.list-schedule-card__runs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* Enabled / disabled pill shown in the schedule preview meta row. */
+.list-schedule-card__state {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.list-schedule-card__state--on {
+  color: var(--color-success);
+}
+
+/* Row that places the "runs while open" hint and the "+ Schedule" button
+   side by side at the top of the scheduler list. */
+.scheduler-hint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+/* "Schedules only run while the app is open" hint inside the row — no extra
+   bottom margin needed since the row itself provides spacing. */
+.scheduler-runs-hint {
+  margin-bottom: 0;
+}
+
+/* A variable's label row: its name (optionally starred) plus an inline
+   help-tooltip icon describing the variable. */
+.schedule-form__variable-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Grouped "Schedule" section: a titled box holding the When picker and the
+   Next-runs preview side by side. */
+.schedule-form__section {
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.schedule-form__section-title {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+/* "Advanced" section: a vertical stack of checkbox toggles + their reveals,
+   spaced so each toggle group reads as its own row. */
+.schedule-form__section--stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.schedule-form__columns {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.schedule-form__column {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.schedule-form__weekdays {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.schedule-form__weekdays .btn.is-active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.schedule-form__preview {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Checkbox + label: a gap between the box and its text so they don't touch.
+ * `.form-checkbox-row` pairs a checkbox with a trailing help-tooltip icon. */
+.form-checkbox,
+.form-radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Catch-up: the once/all radio group reveals below the checkbox and is
+   indented so it reads as a sub-option of "catch up missed triggers". */
+.schedule-form__catch-up {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schedule-form__catch-up-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 26px;
+}
+
+.command-form__header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.command-form__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.command-form__body {
+  /* `flex: 1 1 auto` + `min-height: 0` is what actually makes the body
+   * the scrolling viewport inside the flex column. Without `min-height: 0`
+   * a flex item's `min-content` defaults to its intrinsic size, so the
+   * body grows past `.command-form`'s `max-height` and gets clipped by
+   * the parent's `overflow: hidden` — taking the inline LiveRunOutput
+   * (and on tall content, the footer) off-screen. `min-height: 0`
+   * lets the body shrink to its allotted space and triggers
+   * `overflow: auto` correctly. */
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px 20px;
+  overflow: auto;
+}
+
+/* Tab strip splitting the form into Main / Script / Output. Reuses the
+   underline-tab pattern from `.library-tabs`. Sits between the topbar and
+   the scrolling body. */
+.command-form__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.command-form__tab {
+  position: relative;
+  padding: 9px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.command-form__tab:hover {
+  color: var(--color-text);
+}
+
+.command-form__tab.is-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+/* Red dot marking a tab whose fields fail validation (shown after Save).
+   Inline so it sits just right of the tab label. */
+.command-form__tab-badge {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--color-danger, #dc2626);
+  vertical-align: middle;
+}
+
+/* Save button while the form is invalid: dimmed to read as "not ready",
+   but still clickable so the click reveals errors and switches tabs. */
+.command-form__action--invalid {
+  opacity: 0.6;
+}
+
+/* One-column tab panel. Replaces the former two-column grid: each tab now
+   stacks its fields vertically. `min-width: 0` keeps the script editor and
+   long variable rows from forcing horizontal overflow. */
+.command-form__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* `hidden` panels must not participate in layout. `display: none` also
+   removes them from the a11y tree, which is the desired tab behavior. */
+.command-form__panel[hidden] {
+  display: none;
+}
+
+.command-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.command-form__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Required-field marker: a classic red asterisk to the LEFT of the label
+   text. `aria-hidden` on the glyph keeps it out of the accessibility tree
+   (the input carries `aria-required` instead). The small right margin
+   separates it from the label without affecting the label's letter
+   spacing. */
+.command-form__required {
+  color: var(--color-danger, #dc2626);
+  margin-right: 4px;
+  font-weight: 700;
+}
+
+/* Required-field labels stand out with a heavier weight and full-strength
+   text color. Driven by an explicit modifier class on the label (rather
+   than `:has()`) for predictable support across the app's WebView
+   targets. */
+.command-form__label--required {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.command-form__script {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 140px;
+}
+
+/* Description is a multi-line textarea (not monospace — it's prose, not
+   a script). Allow only vertical resize so it can't break the column
+   layout horizontally. */
+.command-form__description {
+  resize: vertical;
+  min-height: 60px;
+  line-height: 1.5;
+}
+
+/* Extraction preview: a read-only monospace textarea showing the parsed
+   JSON. `readOnly` (not `disabled`) keeps the text selectable and the
+   normal input styling; vertical resize only. */
+.command-form__output-schema-preview-json {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 160px;
+  white-space: pre;
+  cursor: text;
+  overscroll-behavior: contain;
+}
+
+/* ---------- Number stepper ----------
+ * A flex row of [−] [input] [+]. We hide the browser's native number
+ * spinner (which doesn't match the app's button language) and provide
+ * our own ghost-button steppers on either side. The text input keeps
+ * `type="number"` so direct typing and validation still work; only the
+ * default spin arrows are suppressed.
+ *
+ * `.number-stepper*` is the shared form used by the reusable NumberStepper
+ * component (scheduler form, etc.); `.command-form__timeout*` aliases it for
+ * the command-form timeout field, whose "empty = no limit" semantics keep
+ * its own markup but share this geometry. */
+.command-form__timeout,
+.number-stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.command-form__timeout-input,
+.number-stepper__input {
+  flex: 1 1 auto;
+  /* A flex item's default `min-width: auto` keeps the input from shrinking
+     below its intrinsic (size-based) width, which overflows a narrow stepper
+     and pushes adjacent columns. `min-width: 0` lets it shrink to fit while
+     `flex: 1 1 auto` still lets it grow into the space between the steppers. */
+  min-width: 0;
+  text-align: center;
+  /* Hide the native spinner arrows. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.command-form__timeout-input::-webkit-outer-spin-button,
+.command-form__timeout-input::-webkit-inner-spin-button,
+.number-stepper__input::-webkit-outer-spin-button,
+.number-stepper__input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* The +/− steppers stacked vertically to the right of the input (+ on top).
+   The pair together spans the input's height; each button is half-height and
+   narrower than the standalone 34px square. */
+.number-stepper__buttons {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.number-stepper__buttons .number-stepper__step {
+  width: 24px;
+  min-width: 24px;
+  height: auto;
+  min-height: 0;
+  flex: 1 1 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* Square stepper buttons sized to the input height so the row reads as a
+ * single control. Reuses `.btn`/`.btn--ghost` for hover/disabled states;
+ * these overrides just fix the geometry and the glyph size. */
+.command-form__timeout-step,
+.number-stepper__step {
+  flex: 0 0 auto;
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 600;
+  /* `.btn` is inline-flex with `gap`/default `justify-content: flex-start`,
+     which left-/right-biases the lone `−`/`+` glyph. Center it both axes so
+     both stepper buttons read identically. */
+  justify-content: center;
+  gap: 0;
+  text-align: center;
+}
+
+/* "Disable hints (for experts)" toggle: nudge it just under the Script
+ * label and give it a touch of breathing room above the editor. Reuses
+ * the shared `.command-form__field--inline` checkbox+label layout. */
+.command-form__disable-hints {
+  margin: 2px 0 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* Inline "new category" editor: text input grows, confirm/cancel sit at
+ * the end. Mirrors the timeout row's flex layout. */
+.command-form__category-add {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.command-form__category-add-input {
+  flex: 1 1 auto;
+}
+
+/* ---------- ScriptEditor (overlay-highlight textarea) ----------
+ * The editor is a stacking container: a `<pre>` overlay paints the
+ * coloured ${var} highlights; the textarea sits on top with
+ * transparent text so the user's caret and selection are native
+ * but the visible characters come from the overlay.
+ *
+ * CRITICAL: textarea and overlay MUST share *exactly* the same
+ * box model and font metrics, or characters won't line up. Every
+ * property below is duplicated between the two elements: padding,
+ * border, font, line-height, white-space, word-break. If you
+ * change one, change the other. */
+.command-form__script-editor {
+  position: relative;
+  width: 100%;
+  /* Min-height matches `.command-form__script` so the container
+   * has a sensible default before the textarea is sized. */
+  min-height: 140px;
+}
+
+/* Overlay sits behind the textarea (z-index 0 vs 1). `aria-hidden`
+ * keeps it out of the accessibility tree — the textarea is the
+ * authoritative input. Pointer events are disabled so right-click
+ * and selection land on the textarea. */
+.command-form__script-editor-overlay {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  /* Must mirror the textarea exactly: */
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* `color: transparent` is a safety net for plain-text segments —
+   * the textarea draws the real text on top. Highlighted variable
+   * spans override this with explicit colors below. */
+  color: var(--color-text);
+  background: transparent;
+}
+
+/* Textarea is rendered transparent so the overlay's painted
+ * characters are what the user sees. The native caret is kept
+ * visible via `caret-color`. Background is also transparent so the
+ * overlay's highlight backgrounds show through. */
+.command-form__script-editor-input {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  background: transparent;
+  /* `color: transparent` hides the textarea's own text rendering;
+   * the overlay below paints the visible glyphs. `caret-color`
+   * keeps the cursor visible. Selection still works natively —
+   * selected text uses the browser's selection background, which
+   * sits ABOVE the overlay in the textarea, so the highlight
+   * colour is replaced while selected. That's a deliberate trade-
+   * off: native selection behaviour > perfect highlight overlay. */
+  color: transparent;
+  caret-color: var(--color-text);
+  resize: vertical;
+  min-height: 140px;
+  /* Selection colour kept readable: use the theme's selection
+   * tokens if defined; otherwise rely on the browser default. */
+}
+
+.command-form__script-editor-input::selection {
+  /* Browser default may use a low-contrast tint on transparent
+   * text; bumping to a brand-aware shade keeps the selection
+   * visible. The text under selection is rendered by the browser
+   * here (not the overlay) because the overlay can't reproduce
+   * native selection geometry. */
+  background: rgba(37, 99, 235, 0.35);
+  color: var(--color-text);
+}
+
+/* Highlighted variable token: declared in the Variables section.
+ * Uses the brand primary so the eye picks it out among shell
+ * syntax (which the textarea/overlay does not colour itself). */
+.command-form__script-editor-var--known {
+  color: var(--color-primary);
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 3px;
+  /* Subtle outline keeps the token visible even when the
+   * background tint is too low for the user's theme contrast. */
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.25);
+}
+
+/* Unknown reference: matches `${...}` syntax but the name is not
+ * declared on the command. Highlighted in the danger colour so
+ * the user notices the typo before saving. */
+.command-form__script-editor-var--unknown {
+  color: var(--color-danger);
+  background: rgba(220, 38, 38, 0.08);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.3);
+}
+
+.command-form__error {
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+/* Top action bar: title on the left, Run / Cancel / Save on the right.
+   A fixed-height sibling above the scrolling body, so the actions stay
+   beside the title at the top of the full-screen editor. */
+.command-form__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 4px 16px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 4px;
+}
+
+.command-form__topbar-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-form__topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Action buttons carry a leading icon + label. Flex keeps the icon
+   vertically centered with the text and adds a small gap. */
+.command-form__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.command-form__action svg {
+  display: block;
+}
+
+/* Classic green "play" arrow on the Run button regardless of the button's
+   own (neutral) text color. */
+.command-form__action-icon--run {
+  display: inline-flex;
+  color: var(--color-success);
+}
+
+/* Classic red "cancel" cross on the Cancel button (and the cancel-run
+   state of the Run button), independent of the button's text color. */
+.command-form__action-icon--cancel {
+  display: inline-flex;
+  color: var(--color-danger, #dc2626);
+}
+
+/* Outlined action buttons: give the (non-filled) Run and Cancel buttons a
+   border matching their icon color. Save is `btn--primary` (filled), so it
+   keeps the primary styling. The colored border holds on hover too,
+   overriding the base `.btn:hover` primary-border rule. */
+.command-form__action--run {
+  border-color: var(--color-success);
+}
+
+.command-form__action--cancel,
+.command-form__action--delete {
+  border-color: var(--color-danger, #dc2626);
+}
+
+/* Hover highlight for the non-filled action buttons: keep the accent
+   border and tint the background + text in the same hue. `color-mix`
+   gives a light wash of the accent over the surface so the button lights
+   up without becoming fully solid (that's the Save button's job). */
+.command-form__action--run:hover:not(:disabled) {
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.command-form__action--cancel:hover:not(:disabled),
+.command-form__action--delete:hover:not(:disabled) {
+  border-color: var(--color-danger, #dc2626);
+  background: color-mix(in srgb, var(--color-danger, #dc2626) 12%, transparent);
+  color: var(--color-danger, #dc2626);
+}
+
+.command-form .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Output-schema header: keeps the "Output schema" label and the
+ * "Parse output" toggle on a single row. The toggle is a standard
+ * `.command-form__field--inline` checkbox+label; the label and toggle
+ * are left-packed with a small gap so the toggle sits close to the
+ * "Output schema" label rather than floating off to the right. */
+.command-form__output-schema-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+/* Vertical spacing between the schema's fields (parser, pattern,
+   delimiter, header toggle, fields block, return value, sample). Mirrors
+   the 14px field gap used by `.command-form__col` so the schema reads as
+   a continuation of the form rather than a cramped sub-block. */
+.command-form__output-schema-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+/* Pipeline flow: vertical chain of nodes connected by arrows. Each
+   flow-item contains a connector (line + arrow) above a node (step card,
+   add-button, or result block). The connector is rendered first so the
+   arrow points INTO the node below it. */
+.command-form__output-schema-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.command-form__output-schema-flow-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Arrow connector between pipeline nodes. The icon uses `currentColor`
+   so it inherits the muted text colour. An optional label (shown between
+   two parser steps) floats to the right of the arrow. */
+.command-form__output-schema-connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0;
+  color: var(--app-color-run);
+  width: 100%;
+}
+
+.command-form__output-schema-connector-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--app-bg, var(--color-bg-panel));
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  align-self: flex-end;
+  margin-right: 8px;
+  max-width: 55%;
+  text-align: center;
+}
+
+.command-form__output-schema-connector-intermediate {
+  width: 100%;
+  align-self: stretch;
+  margin-bottom: 8px;
+}
+
+.command-form__output-schema-preview-json--success {
+  border-color: var(--app-color-run);
+}
+
+.command-form__output-schema-preview-json--error {
+  border-color: var(--color-danger);
+}
+
+.command-form__output-schema-connector-label--source {
+  align-self: center;
+  margin-right: 0;
+  width: 70%;
+  font-size: 13px;
+  padding: 6px 14px;
+  color: var(--color-text);
+  font-weight: 500;
+  text-align: center;
+  border-color: var(--app-color-run);
+}
+
+/* Parser step card: bordered box containing the step header + all its
+   config inputs. Full width so it aligns with the connector above it. */
+.command-form__output-schema-step {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--color-bg-panel, transparent);
+}
+
+.command-form__output-schema-step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.command-form__output-schema-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Final result node — same bordered style as a step card. */
+.command-form__output-schema-result {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--color-bg-panel, transparent);
+}
+
+/* Details/summary used for the collapsible Fields block inside the result node. */
+.command-form__output-schema-fields-detail > summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.command-form__output-schema-fields-detail > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The Fields sub-block (label + row list + "Add field") stacks its own
+   parts with a tighter gap. */
+.command-form__output-schema-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Reset the browser's default `<ul>` margin/padding so the list doesn't
+   add ~16px of vertical space (which, when there are no field rows,
+   shows up as a big gap between the "Fields" label and "Add field").
+   When empty the list collapses to zero height. */
+.command-form__output-schema-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.command-form__output-schema-field-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Preview pane (right column): a header row with the "Preview" label on
+ * the left and the Copy button on the right, above the rendered JSON /
+ * error / empty-state. */
+.command-form__output-schema-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.command-form__output-schema-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Sample-output textarea: JS auto-grows it to fit content up to 3× the
+   base height, then it scrolls (see the layout effect in
+   OutputSchemaEditor). Disable the manual resize handle since the height
+   is managed; `block` avoids the inline-baseline gap under the box. */
+.command-form__output-schema-sample {
+  resize: none;
+  display: block;
+  /* `.input` sets `flex: 1`; in the column-flex field that lets flexbox
+     override the JS-set height. Pin it so the inline height wins. */
+  flex: none;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Subtle "updating…" status shown beside the Preview title while the
+   debounced auto-preview is running. */
+.command-form__output-schema-preview-status {
+  margin-left: 8px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+}
+
+/* Placeholder shown before the user runs a preview. */
+.command-form__output-schema-preview-empty {
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+/* Inline-field variant: lays checkbox + label on a single row so the
+ * admin checkbox doesn't visually float in a column-flex stack. */
+.command-form__field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.command-form__field--inline input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+/* A disabled checkbox (e.g. the locked admin toggle) keeps the
+ * not-allowed affordance — its `:disabled` state overrides the
+ * pointer cursor above. */
+.command-form__field--inline input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+
+/* Tag chip editor (CommandForm). A flex container that looks like the
+ * `.input` field, holding chips followed by a borderless text field that
+ * grows to fill the row. Clicking anywhere focuses the inner input via the
+ * label wrapper. */
+.tag-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.tag-input:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.tag-input__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 4px 2px 10px;
+  border-radius: 999px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.tag-input__chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tag-input__chip-remove:hover {
+  color: var(--color-danger);
+}
+
+.tag-input__field {
+  flex: 1;
+  min-width: 120px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 14px;
+  padding: 2px;
+}
+
+/* Locked-state styling for the admin checkbox: visually softened so
+ * users understand the value isn't editable, but the label remains
+ * readable. Pairs with `disabled` on the input itself for keyboard
+ * & screen-reader correctness. */
+.command-form__field--locked {
+  cursor: not-allowed;
+}
+.command-form__field--locked > span {
+  color: var(--color-text-muted);
+}
+
+/* Small explanatory hint shown under the admin checkbox. Distinct
+ * from .command-form__warning which is for blocking advisories. */
+.command-form__hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: -8px;
+}
+
+/* ---------- Variables section ----------
+ * Layout goal: each row puts the editable fields on one line and pins
+ * the trash button to the far right; the inline error sits on its own
+ * row underneath. The row uses CSS grid so columns line up between
+ * rows even when the optional "default value" input is hidden (the
+ * grid track collapses to 0 width via `min-content` rather than
+ * leaving an empty slot — see the row class). */
+
+/* Header row: label on the left, an icon-only help button immediately
+ * to its right that surfaces the cheat-sheet via native browser
+ * tooltip. The button is sized smaller than `.btn--icon` defaults so
+ * it doesn't visually compete with the uppercase label. */
+.command-form__variables-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Shared help-tooltip affordance (see components/HelpTooltip). Used by the
+ * command-form variables cheat-sheet and the scheduler form's skip-if-running
+ * hint. The trigger is a small ghost icon-button; the popover is portalled to
+ * document.body and positioned via JS. */
+.help-tooltip__trigger {
+  padding: 2px;
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  color: var(--color-text-muted);
+  border-radius: 50%;
+}
+
+.help-tooltip__trigger:hover {
+  color: var(--color-primary);
+}
+
+/* Custom help popover (replaces native `title` so we control the
+ * dismiss lifetime — native tooltips auto-hide after a few seconds).
+ * Portal-mounted to document.body via `position: fixed`, then
+ * positioned by JS using the trigger's bounding rect.
+ *
+ * z-index lives ABOVE the context-menu submenu (10001) and every
+ * other UI surface — the popover is the topmost element. Using a
+ * dark opaque background (instead of `var(--color-surface)` which
+ * is light in light theme) so the text is readable against any
+ * underlying content and the popover never appears to "leak" the
+ * blurred backdrop of the modal below. The colour is the same
+ * dark slate used for `--color-bg` in dark theme — picked once
+ * here for visual stability across themes (tooltips are
+ * conventionally dark regardless of app theme). */
+.help-tooltip__popover {
+  z-index: 10002;
+  max-width: min(520px, calc(100vw - 16px));
+  padding: 10px 12px;
+  background: #0f172a;
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.5;
+  /* `pre-line` makes \n in the i18n string produce real line breaks
+   * without preserving tabs/multiple spaces — exactly what the cheat-
+   * sheet body needs. */
+  white-space: pre-line;
+  overflow: auto;
+  /* `pointer-events: auto` is the default but stating it explicitly
+   * documents the intent: the popover must receive mouseenter so the
+   * close timer can be cancelled when the cursor moves onto it. */
+  pointer-events: auto;
+}
+
+/* ---------------------------------------------------------------------
+ * Script flag-hint affordance: the leading utility in the script field
+ * is highlighted in the editor overlay and hovering it reveals a popover
+ * with the utility's --help / man output (or a "not found" note).
+ * ------------------------------------------------------------------- */
+
+/* The highlighted leading-utility token in the script editor overlay.
+ * The overlay as a whole has `pointer-events: none`, so this span opts
+ * back IN to receive the hover that opens the help popover. `cursor:
+ * help` signals it's interactive. */
+.command-form__script-editor-utility {
+  pointer-events: auto;
+  cursor: help;
+  border-radius: 3px;
+}
+
+/* Pending: lookup not yet resolved — no colour so the token doesn't
+ * flash green/red before the answer arrives (it reads as plain text,
+ * just hoverable). */
+.command-form__script-editor-utility--pending {
+  /* inherit the default text colour; nothing to override */
+}
+
+/* Found: recognised utility. Green tint + underline so the user sees the
+ * command is known and hoverable. */
+.command-form__script-editor-utility--found {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.25);
+}
+
+/* Missing: utility not found. Danger colour so the user immediately sees
+ * they typed a command that doesn't exist. */
+.command-form__script-editor-utility--missing {
+  color: var(--color-danger);
+  background: rgba(220, 38, 38, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.3);
+}
+
+/* Popover shown on hover over the highlighted utility. Dark opaque
+ * background regardless of app theme (readable over any backdrop,
+ * conventionally dark), portalled to body and positioned by JS. */
+.command-form__script-help-popover {
+  z-index: 10002;
+  max-width: min(620px, calc(100vw - 16px));
+  padding: 10px 12px;
+  /* Dark opaque background regardless of app theme — same rationale and
+   * colour as the variables popover (readable over any backdrop,
+   * conventionally dark). */
+  background: #0f172a;
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+  pointer-events: auto;
+}
+
+/* The --help / man body. `<pre>` preserves the original whitespace of
+ * CLI help output (aligned option columns), with wrapping so long lines
+ * don't force horizontal scroll. Monospace makes the columns line up. */
+.command-form__script-help-body {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* "Output truncated" note shown when the backend clipped the help text
+ * at its byte cap. Muted + small so it reads as a footnote. */
+.command-form__script-help-truncated {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.command-form__variables {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.command-form__variables-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+/* The single editable row inside `.command-form__variables-row`. The
+ * trash button sits at the end and is pushed flush right by
+ * `margin-left: auto` on the button itself. */
+.command-form__variables-row-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-form__variables-name {
+  flex: 0 1 160px;
+  min-width: 120px;
+}
+
+.command-form__variables-default {
+  flex: 0 1 160px;
+  min-width: 120px;
+}
+
+.command-form__variables-description {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+
+/* Stack the two checkboxes (prompt-at-runtime, sensitive) so they
+ * don't compete with the text inputs for horizontal real estate. */
+.command-form__variables-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+/* Pin the remove button to the right edge of the row. Icon-only:
+ * the button shows just the trash SVG, sized to match `.btn--icon`. */
+.command-form__variables-remove {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+}
+
+.command-form__variables-remove:hover {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* Administrator password prompt — narrower than CommandForm because
+ * it only has one field. Inherits all other styles from .command-form. */
+.admin-password-prompt {
+  width: 420px;
+}
+
+.admin-password-prompt__subtitle {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* Wrapper holds the input and the reveal toggle. Position is relative
+ * so the toggle button (absolutely positioned) overlays the input's
+ * right edge without affecting layout width. */
+.admin-password-prompt__input-wrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Extra right padding so typed characters don't slide under the
+ * reveal button. 40px = button width (32) + 8px breathing room. */
+.admin-password-prompt__input {
+  padding-right: 40px;
+  /* Use a monospace font for password fields. Proportional glyphs
+   * (the default for type=text on most platforms) make the field
+   * look unaligned when the user toggles to revealed mode, and
+   * bullets in some fonts are vertically off-centre. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.05em;
+}
+
+/* Reveal toggle: ghost button overlaid on the input's right side.
+ * The hit target is the full button (32×32), but only the SVG
+ * shows visually. Hover lightens the icon; focus shows a ring so
+ * keyboard users can find it. */
+.admin-password-prompt__reveal {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.admin-password-prompt__reveal:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+.admin-password-prompt__reveal:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* Custom dropdown (styled replacement for native <select>) */
+.dropdown {
+  display: inline-flex;
+  width: 100%;
+}
+
+.dropdown__trigger {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: left;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.dropdown__trigger:hover:not(:disabled) {
+  border-color: var(--color-primary);
+}
+
+.dropdown__trigger:focus,
+.dropdown__trigger[aria-expanded="true"] {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.dropdown__trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dropdown__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown__chevron {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.dropdown__popup {
+  position: fixed;
+  z-index: 1200;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 4px 0;
+  font-size: 14px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dropdown__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.dropdown__option--active {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.dropdown__option--selected {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.dropdown__option--selected.dropdown__option--active {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.dropdown__option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown__option-check {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--color-primary);
+}
+
+/* Disabled options stay visible (so users can see a stored-but-
+   unavailable value in edit mode) but are clearly non-interactive. */
+.dropdown__option--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.dropdown__option--disabled.dropdown__option--selected {
+  /* Selected + disabled: keep the muted appearance, drop the primary
+     color and bold weight that the regular selected state applies. */
+  color: var(--color-text-muted);
+  font-weight: normal;
+}
+
+.dropdown__option--disabled:hover {
+  background: transparent;
+}
+
+/* Warning hint shown below the shell field when host shell detection
+   returned an empty list. Distinct from `.command-form__error` (which
+   is red) — this is a neutral advisory tint. */
+.command-form__warning {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Inline live-run output panel inside the command form.
+   Visually mirrors the global OutputPanel (dark monospace surface,
+   colored status badge) but is scoped to a single transient run
+   tied to the current form state. The container is collapsible; the
+   header stays visible so the user can re-expand after collapsing. */
+/* Wrapper that holds the LiveRunOutput between the scrolling body and
+ * the footer. `flex: 0 0 auto` pins it to its content height — the
+ * scrolling body shrinks to make room — so the terminal is guaranteed
+ * to stay visible no matter how many fields/hints are above it. The
+ * top border mirrors the footer border so the section reads as a
+ * separate horizontal band. */
+.command-form__output-section {
+  flex: 0 0 auto;
+  padding: 12px 20px 0;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.command-form__output {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 0;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--console-bg);
+}
+
+.command-form__output-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--console-header-bg);
+  color: var(--console-text);
+  border-bottom: 1px solid var(--console-border);
+  font-size: 12px;
+}
+
+.command-form__output-header--collapsed {
+  border-bottom: none;
+}
+
+.command-form__output-status {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.command-form__output-status--idle {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--console-status-neutral);
+}
+
+.command-form__output-status--running {
+  background: rgba(37, 99, 235, 0.2);
+  color: var(--console-status-running);
+}
+
+.command-form__output-status--finished {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--console-status-success);
+}
+
+.command-form__output-status--failed {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--console-status-error);
+}
+
+.command-form__output-status--cancelled {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--console-status-neutral);
+}
+
+/* Timeout: an amber tone distinct from the red of a generic failure so
+ * the user can tell at a glance the run was stopped by its time limit,
+ * not by a non-zero exit code. */
+.command-form__output-status--timedOut {
+  background: rgba(234, 179, 8, 0.2);
+  color: rgb(202, 138, 4);
+}
+
+.command-form__output-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--console-text-muted);
+}
+
+.command-form__output-spacer {
+  flex: 1 1 auto;
+}
+
+.command-form__output-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.command-form__output-actions button {
+  background: var(--console-btn-bg);
+  border: 1px solid var(--console-btn-border);
+  color: var(--console-btn-text);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.command-form__output-actions button:hover:not(:disabled) {
+  border-color: var(--console-btn-hover-border);
+}
+
+.command-form__output-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.command-form__output-body {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--console-bg);
+  color: var(--console-text);
+}
+
+.command-form__output-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.command-form__output-line--stdout {
+  color: var(--console-stdout);
+}
+
+.command-form__output-line--stderr {
+  color: var(--console-stderr);
+}
+
+.command-form__output-empty {
+  color: var(--console-placeholder);
+  font-style: italic;
+  font-size: 12px;
+}
+
+.command-form__output-env {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 4px 0 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.command-form__output-env-label {
+  font-weight: 600;
+  color: var(--app-color-edit);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 4px;
+}
+
+.command-form__output-env-entry {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+}
+
+.command-form__output-env-key {
+  color: var(--app-color-edit);
+  font-weight: 500;
+}
+
+.command-form__output-env-sep {
+  color: var(--color-text-muted);
+}
+
+.command-form__output-env-value {
+  color: var(--console-text);
+}
+
+/* Run / Cancel-run button sits on the left of the footer, separated
+   from the form-level Cancel/Save buttons. */
+/* Status icon shown next to the live-run status badge in the inline
+   output header. Sits inline-flex so it aligns vertically with the
+   pill-shaped badge regardless of font baseline. `currentColor` lets
+   each variant control its own hue via the parent class. */
+.command-form__output-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.command-form__output-icon--running {
+  color: var(--console-status-running);
+  animation: command-form-spin 0.9s linear infinite;
+}
+
+.command-form__output-icon--finished {
+  /* Solid green checkmark — uses the same success hue as the badge */
+  color: var(--console-status-success);
+}
+
+.command-form__output-icon--failed {
+  /* Solid red cross — same error hue as the badge */
+  color: var(--console-status-error);
+}
+
+@keyframes command-form-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Respect users who prefer reduced motion — keep the icon visible but
+   stop the rotation (the badge text still conveys "running"). */
+@media (prefers-reduced-motion: reduce) {
+  .command-form__output-icon--running {
+    animation: none;
+  }
+}
+
+/* ----------------------------------------------------------------
+   History view
+   ---------------------------------------------------------------- */
+
+.history-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 20px;
+}
+
+.history-filter-bar__kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.history-filter-bar__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.history-filter-bar__chip input[type="checkbox"] {
+  appearance: none;
+  width: 0;
+  height: 0;
+  margin: 0;
+}
+
+.history-filter-bar__chip--active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  color: var(--color-text);
+}
+
+.history-filter-bar__dates {
+  display: flex;
+  gap: 8px;
+}
+
+.history-filter-bar__date {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+}
+
+.history-row__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+/* Action-icon column: a colored glyph (not text) identifying the history
+   action — create / edit / delete / run / restore. Icons are 16×16 and draw
+   with `currentColor`, so the hue flows from the `color` set on the modifier
+   below. The translated verb stays on the span as `aria-label`/`title`. */
+.history-row__action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+}
+
+.history-row__action-icon--create {
+  color: var(--color-primary);
+}
+
+.history-row__action-icon--edit {
+  color: var(--app-color-edit);
+}
+
+.history-row__action-icon--delete {
+  color: var(--color-danger);
+}
+
+.history-row__action-icon--run {
+  color: var(--app-color-run);
+}
+
+.history-row__action-icon--restore {
+  color: var(--color-primary);
+}
+
+.history-row__title {
+  font-size: 14px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-row__status {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.history-row__status--succeeded {
+  background: rgba(34, 197, 94, 0.15);
+  color: rgb(22, 163, 74);
+}
+
+.history-row__status--failed {
+  background: rgba(239, 68, 68, 0.15);
+  color: rgb(220, 38, 38);
+}
+
+.history-row__status--cancelled {
+  background: rgba(234, 179, 8, 0.15);
+  color: rgb(202, 138, 4);
+}
+
+.history-row__status--running {
+  background: rgba(59, 130, 246, 0.15);
+  color: rgb(37, 99, 235);
+}
+
+/* Timeout badge: amber, overriding the red `--failed` colour (the row
+ * carries both classes, this rule wins by source order). */
+.history-row__status--timedOut {
+  background: rgba(234, 179, 8, 0.15);
+  color: rgb(202, 138, 4);
+}
+
+/* Scheduler run-outcome badges. These use the `ScheduledRunStatus` values
+ * (success | error | missingVariable | skipped | cancelled), which deliberately
+ * DIFFER from the executor's RunStatus names (success ≠ succeeded, error ≠
+ * failed) — the scheduler distinguishes more cases. Colours are reused from
+ * the RunStatus palette above so the two badge families read consistently. */
+.history-row__status--scheduled-success {
+  background: rgba(34, 197, 94, 0.15);
+  color: rgb(22, 163, 74);
+}
+
+.history-row__status--scheduled-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: rgb(220, 38, 38);
+}
+
+.history-row__status--scheduled-cancelled {
+  background: rgba(234, 179, 8, 0.15);
+  color: rgb(202, 138, 4);
+}
+
+/* "Didn't run because a required variable was missing" — an amber warning,
+ * same hue as cancelled (it's a non-fatal "skipped due to input" outcome). */
+.history-row__status--scheduled-missingVariable {
+  background: rgba(234, 179, 8, 0.15);
+  color: rgb(202, 138, 4);
+}
+
+/* Skipped: neutral/muted — keeps the base grey badge look (explicit so the
+ * modifier is self-documenting rather than relying on the base rule alone). */
+.history-row__status--scheduled-skipped {
+  background: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.history-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.history-row__timestamp {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* Scheduled-run rows are expandable: the whole `.history-row` becomes a
+   vertical container whose `<summary>` reproduces the normal horizontal row
+   (main on the left, meta on the right) and whose body reveals the captured
+   output. The padding moves onto the disclosure so the clickable summary
+   spans the full row. */
+.history-row--scheduled {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
+}
+
+.history-row__disclosure {
+  display: block;
+}
+
+.history-row__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+/* Hide the native triangle; draw our own chevron that rotates when open. */
+.history-row__summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-row__summary::after {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent var(--color-text-muted);
+  transition: transform 0.15s ease;
+}
+
+.history-row__disclosure[open] .history-row__summary::after {
+  transform: rotate(90deg);
+}
+
+/* The shared `ScheduledRunOutput` renders a `.schedule-history__body`; give it
+   the row's horizontal padding and a divider from the summary. */
+.history-row__disclosure .schedule-history__body {
+  margin: 0;
+  padding: 0 16px 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.history-pagination__label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* ---------------------------------------------------------------------------
+ * Visual workflow editor (Phase 5)
+ * ------------------------------------------------------------------------ */
+
+.editor-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.wf-editor {
+  display: flex;
+  flex: 1;
+  min-height: 480px;
+  gap: 12px;
+  position: relative;
+}
+
+.wf-palette {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  overflow-y: auto;
+}
+
+.wf-palette__title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin: 0 0 8px;
+}
+
+.wf-palette__hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0 0 8px;
+}
+
+.wf-palette__btn {
+  width: 100%;
+  margin-bottom: 6px;
+  text-align: left;
+}
+
+.wf-palette__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wf-palette__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: grab;
+  user-select: none;
+}
+
+.wf-palette__item:hover {
+  border-color: var(--color-primary);
+}
+
+.wf-canvas {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--color-surface);
+  /* Positioning context for the absolutely-placed insert-preview overlay. */
+  position: relative;
+}
+
+.wf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wf-toolbar__name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.wf-toolbar__spacer {
+  flex: 1;
+}
+
+.wf-canvas .react-flow {
+  flex: 1;
+}
+
+/* Custom nodes */
+.wf-node {
+  min-width: 120px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  box-shadow: var(--shadow-sm);
+}
+
+.wf-node__kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin-bottom: 2px;
+}
+
+.wf-node__title {
+  font-weight: 600;
+}
+
+.wf-node--start {
+  border-color: var(--app-color-run);
+}
+
+.wf-node--end {
+  border-color: var(--color-danger);
+}
+
+.wf-node--condition {
+  border-color: var(--color-primary);
+}
+
+.wf-node__branches {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.wf-node.is-unbound {
+  border-style: dashed;
+  border-color: var(--color-danger);
+}
+
+.wf-node.is-running {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
+}
+
+.wf-node.is-finished {
+  border-color: var(--app-color-run);
+}
+
+/* The two nodes a dragged command will be inserted BETWEEN: an accent ring
+ * (same visual language as the running-node ring) so it's obvious the new
+ * step lands between exactly these two. Applied via `data.insertNeighbor`
+ * (see `markInsertNeighbors`) only during the drag; cleared on drop/leave. */
+.wf-node.is-insert-neighbor {
+  border-color: var(--app-color-run);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.35);
+}
+
+/* Pale translucent preview of the block being inserted, drawn as an overlay
+ * (NOT a real graph node — it is never persisted) centred on the midpoint
+ * between the two neighbour nodes. Dashed accent border + reduced opacity
+ * signal "this block will drop in here". `pointer-events: none` so it never
+ * intercepts the drag/drop. */
+/* Insertion hint: a "Insert here" label stacked ABOVE the pale preview
+ * block, both centred on the midpoint between the two neighbour nodes. The
+ * label sits on top so the cursor / OS drag-ghost (which follows the pointer
+ * near the midpoint) does not cover it; the translucent block is pushed
+ * below the label. `pointer-events: none` so it never intercepts the drop. */
+.wf-insert-hint {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.wf-insert-hint__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--app-color-run);
+  background: var(--color-bg);
+  padding: 2px 8px;
+  border-radius: 6px;
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+}
+
+.wf-node--insert-preview {
+  opacity: 0.35;
+  border-style: dashed;
+  border-color: var(--app-color-run);
+  background: var(--color-bg-subtle);
+  box-shadow: none;
+}
+
+.wf-edge--taken .react-flow__edge-path {
+  stroke: var(--color-primary);
+  stroke-width: 2.5;
+}
+
+/* Insertion preview: the edge a dragged command will be spliced into. A
+ * dashed, thicker, accented stroke signals "the node will be inserted here".
+ * Applied via a className on the targeted edge during drag-over (see
+ * `markDropTargetEdge`) and cleared on drop / drag-leave. */
+.wf-edge--drop-target .react-flow__edge-path {
+  stroke: var(--app-color-run);
+  stroke-width: 3;
+  stroke-dasharray: 6 4;
+}
+
+/* Directional arrows on node handles. Every handle shows a right-pointing
+ * chevron so the flow direction reads left-to-right at a glance: the left
+ * handle is the INPUT (arrow pointing into the node) and the right handle is
+ * the OUTPUT (arrow pointing out of the node). Start nodes render only an
+ * output handle and End nodes only an input handle, so each automatically
+ * shows the correct single arrow. The chevron is a pseudo-element so it does
+ * not affect the handle's hit area / connection behaviour. */
+.wf-node .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: var(--color-primary);
+  border: none;
+}
+
+.wf-node .react-flow__handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--color-primary);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* Input arrow (left handle): sits to the LEFT of the dot, pointing right
+ * into the node. Output arrow (right handle): sits to the RIGHT of the dot,
+ * also pointing right, out of the node. */
+.wf-node .react-flow__handle-left::after {
+  right: 100%;
+  margin-right: 2px;
+}
+
+.wf-node .react-flow__handle-right::after {
+  left: 100%;
+  margin-left: 2px;
+}
+
+/* Node inspector */
+.wf-inspector {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 240px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  z-index: 5;
+}
+
+.wf-inspector__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.wf-inspector__title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.wf-inspector__close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wf-inspector__field {
+  margin-bottom: 12px;
+}
+
+.wf-inspector__label {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.wf-inspector__hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0 0 12px;
+}
+
+.wf-inspector__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.wf-inspector__delete {
+  flex: 1;
+}
+
+/* Shared button + modal-footer classes the editor relies on */
+.btn--danger {
+  background: var(--color-danger);
+  color: #ffffff;
+  border: 1px solid var(--color-danger);
+}
+
+.btn--danger:hover {
+  filter: brightness(0.95);
+}
+
+/* VariablePrompt is a simple single-column form (one input per variable), so
+   it doesn't need the wide two-column `.command-form` box. Halve the width to
+   ~480px; the shared `.command-form` base is left intact for the editor/confirm
+   dialogs that rely on the wider layout. */
+.variable-prompt {
+  width: min(480px, calc(100% - 32px));
+}
+
+/* VariablePrompt footer: right-aligned action row with a gap between the
+   Cancel/Run buttons and padding off the dialog edges. Mirrors
+   `.command-form__actions`; the top border matches `.command-form__header`'s
+   divider so the footer reads as a distinct band. */
+.command-form__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.command-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+}
+
+/* The workflow "Properties" modal lays its title + fields directly inside
+ * `.command-form` (unlike CommandForm, which wraps them in a padded
+ * `__body`). Pad that content block and space the fields so the form does
+ * not sit flush against the dialog edges. The `__actions` footer keeps its
+ * own padding, so it is excluded here. */
+.command-form--meta {
+  width: min(480px, calc(100% - 32px));
+}
+
+.command-form--meta > .command-form__title {
+  padding: 20px 20px 0;
+}
+
+.command-form--meta > .command-form__field {
+  padding: 0 20px;
+  margin-top: 16px;
+}
+
+/* The confirmation dialog (ConfirmDialog) also lays its title + message
+ * directly inside `.command-form`, so it needs the same edge padding as the
+ * `--meta` variant. A narrower width suits the short body copy. The
+ * `__actions` footer keeps its own padding. */
+.command-form--confirm {
+  width: 420px;
+}
+
+.command-form--confirm > .command-form__title {
+  padding: 20px 20px 0;
+}
+
+.command-form__message {
+  margin: 12px 0 0;
+  padding: 0 20px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+/* BlockedDeleteDialog — list of entities that prevent deletion. */
+.blocked-delete__list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.blocked-delete__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.blocked-delete__name {
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
+.blocked-delete__hint {
+  margin: 12px 0 0;
+  padding: 0 20px;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+/* Customizable export dialog. Lays its checkbox tree + title + actions
+ * directly inside `.command-form` (like the confirm/meta variants), so it
+ * needs the same edge padding on the non-actions children. */
+.command-form--export > .command-form__title {
+  padding: 20px 20px 0;
+}
+
+.export-tree {
+  padding: 16px 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.export-tree__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.export-tree__parent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.export-tree__child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 24px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.export-tree__child input:disabled {
+  cursor: not-allowed;
+}
+
+.export-tree__hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.export-tree__empty {
+  margin: 0 0 0 24px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.export-tree__count {
+  margin: 12px 20px 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* Import dialog: per-row duplicate notice + Overwrite/Skip choice. Shown
+ * inline after a checked command's label (see ImportDialog). */
+.import-tree__dup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.import-tree__dup-label {
+  color: var(--color-danger);
+  font-style: italic;
+}
+
+/* Wrapper around the shared <Dropdown> for a name-duplicate's Rename/Skip
+   choice. The dropdown carries the app's theming + portal popup (the UI
+   convention); here we only size it to the compact tree row. */
+.import-tree__dup-choice {
+  display: inline-flex;
+  width: 180px;
+  flex-shrink: 0;
+}
+
+/* Shrink the shared dropdown trigger to fit this compact inline row (the
+   default 14px / 8-12px padding is sized for full form fields). */
+.import-tree__dup-choice .dropdown__trigger {
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+/* Match the popup + its options to the compact trigger. The popup is
+   portalled to <body>, so it is targeted via its own `popupClassName`
+   (`import-tree__dup-popup`) rather than a descendant of the wrapper. */
+.import-tree__dup-popup {
+  font-size: 12px;
+}
+
+.import-tree__dup-popup .dropdown__option {
+  padding: 4px 8px;
+  gap: 8px;
+}
+
+/* Inline outcome plaque for the Import / Export section: green on success,
+ * red on failure. Replaces the previous transient toast so the result of an
+ * import/export stays visible until the next action. */
+.data-status {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid transparent;
+}
+
+.data-status--success {
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.data-status--error {
+  border-color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+}
+
+/* Read-only workflow preview (WorkflowView). Like the meta/confirm variants
+ * it lays its title + fields directly inside `.command-form`, so it needs the
+ * same edge padding on those children; the `__actions` footer keeps its own. */
+/* The workflow preview modal hosts a read-only canvas, so it is much wider
+ * than the metadata-only forms. Width is responsive: roomy on desktop,
+ * shrinking to the viewport on small windows. */
+.command-form--view {
+  width: 760px;
+  max-width: calc(100vw - 48px);
+}
+
+.workflow-view__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 20px 20px 0;
+}
+
+.workflow-view__header > .command-form__title {
+  margin: 0;
+}
+
+/* Delete icon button in the top-right corner of view modals (CommandView,
+   WorkflowView, ScheduleView). `margin-left: auto` pushes it to the end of
+   the flex row regardless of how many meta chips appear before it. */
+.view-header-delete {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.workflow-view__description {
+  margin: 8px 0 0;
+  padding: 0 20px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* The read-only canvas region: same framed look as the editor's `.wf-canvas`
+ * so a preview reads as "the editor, but locked". A fixed height keeps the
+ * modal a sensible size; the canvas fits the whole graph via `fitView`. */
+.workflow-view__canvas {
+  margin: 16px 20px 0;
+  height: 400px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.workflow-view__canvas .react-flow {
+  width: 100%;
+  height: 100%;
+}
+
+/* Read-only command preview (CommandView). Reuses the `.command-form--view`
+ * width/backdrop and the `.workflow-view__header`/`__description` from above;
+ * the rules below style the read-only field stack (timeout, script,
+ * variables) that lives between the header and the actions footer. */
+.command-view__body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px 0;
+}
+
+.command-view__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.command-view__label {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.command-view__value {
+  margin: 0;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+.command-view__value--muted {
+  color: var(--color-text-muted);
+}
+
+/* The script is shown verbatim in a framed monospace block — same look as the
+ * editor's read-only surfaces. Wraps long lines and scrolls tall scripts. */
+.command-view__script {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.command-view__var-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.command-view__var {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.command-view__var-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-view__var-name {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+.command-view__var-default {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.command-view__var-desc {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+/* "(Windows only)" badge shown inline after the Recorder title — needs
+ * horizontal separation so it doesn't visually merge with the heading. */
+.recorder__badge {
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
+/* ---------------------------------------------------------------------------
+ * List view controls — sort + display-mode toggles shared by the Library and
+ * Scheduler lists (ListControls component). Lives in the toolbar row.
+ * ------------------------------------------------------------------------ */
+
+.list-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.list-controls__sort {
+  min-width: 150px;
+}
+
+/* The mode toggle pair reads as one segmented control: a bordered group with
+ * the divider drawn between the two buttons. */
+.list-controls__modes {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+}
+
+/* Active toggle (direction is stateless; mode + group buttons reflect state)
+ * uses the accent-subtle wash + accent text, matching `.theme-option.is-active`
+ * and the segmented weekday buttons. */
+.list-controls .btn--icon.is-active {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* ---------------------------------------------------------------------------
+ * Pagination — client-side page nav + size selector for the table view
+ * (Pagination component). Distinct from `.history-pagination`, which is the
+ * server-side History pager.
+ * ------------------------------------------------------------------------ */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.pagination__size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination__size-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.pagination__size .dropdown {
+  min-width: 72px;
+}
+
+.pagination__nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pagination__label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* ---------------------------------------------------------------------------
+ * Table view — tabular display of commands / workflows / schedules. A new
+ * class family (no table styling existed before this feature). Column layout
+ * is owned by each view via inline grid-template on the rows.
+ * ------------------------------------------------------------------------ */
+
+.table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.table__row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table__row:last-child {
+  border-bottom: none;
+}
+
+.table__row--body:hover {
+  background: var(--color-surface-hover);
+}
+
+/* Whole-row click opens the read-only view (table mode replaces the per-row
+ * View button with a row click). Interactive cell controls (Run button,
+ * enable toggle) stopPropagation so they don't also trigger the row. */
+.table__row--clickable {
+  cursor: pointer;
+}
+
+.table__head {
+  background: var(--color-surface);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.table__cell {
+  min-width: 0;
+  font-size: 13px;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table__cell--muted {
+  color: var(--color-text-muted);
+}
+
+.table__cell--actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  white-space: normal;
+}
+
+/* ---------------------------------------------------------------------------
+ * List grouping — collapsible category accordion for the Commands list
+ * (grouped mode). Each section is a category "root" with a disclosure header.
+ * ------------------------------------------------------------------------ */
+
+.list-group {
+  margin-bottom: 12px;
+}
+
+.list-group__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.list-group__header:hover {
+  color: var(--color-accent);
+}
+
+/* The chevron icon points right by default; rotate it down when the section
+ * is open. The icon itself is orientation-neutral (see ChevronIcon). */
+.list-group__chevron {
+  display: inline-flex;
+  color: var(--color-text-muted);
+  transition: transform 0.15s;
+}
+
+.list-group__header.is-open .list-group__chevron {
+  transform: rotate(90deg);
+}
+
+.list-group__count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.list-group__body {
+  padding-top: 12px;
+}
+
+/* ─── react-datepicker — themed to match the project design system ─────── */
+
+/* Wrapper: make the input fill its container like a normal .input */
+.react-datepicker-wrapper {
+  display: block;
+  width: 100%;
+}
+
+.react-datepicker__input-container {
+  display: block;
+}
+
+/* The calendar popup */
+.datepicker-calendar.react-datepicker {
+  font-family: inherit;
+  font-size: 0.8125rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+/* Header (month/year row) */
+.datepicker-calendar .react-datepicker__header {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  padding: 10px 10px 6px;
+  border-radius: 0;
+}
+
+.datepicker-calendar .react-datepicker__current-month {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+/* Month/year dropdowns */
+/* Month/year dropdown containers — row in the header */
+.datepicker-calendar .react-datepicker__month-dropdown-container,
+.datepicker-calendar .react-datepicker__year-dropdown-container {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The clickable "read view" trigger button */
+.datepicker-calendar .react-datepicker__month-read-view,
+.datepicker-calendar .react-datepicker__year-read-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 4px 24px 4px 8px;
+  cursor: pointer;
+  position: relative;
+  min-width: 80px;
+}
+
+.datepicker-calendar .react-datepicker__month-read-view:hover,
+.datepicker-calendar .react-datepicker__year-read-view:hover {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hover);
+}
+
+.datepicker-calendar .react-datepicker__month-read-view--down-arrow,
+.datepicker-calendar .react-datepicker__year-read-view--down-arrow {
+  border-color: var(--color-text-muted);
+  top: 50%;
+  transform: translateY(-70%);
+  right: 8px;
+}
+
+/* Scroll-mode dropdown panel */
+.datepicker-calendar .react-datepicker__month-dropdown,
+.datepicker-calendar .react-datepicker__year-dropdown {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px 0;
+  top: 28px;
+}
+
+/* Individual option rows */
+.datepicker-calendar .react-datepicker__month-option,
+.datepicker-calendar .react-datepicker__year-option {
+  padding: 5px 12px;
+  border-radius: 0;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.datepicker-calendar .react-datepicker__month-option:hover,
+.datepicker-calendar .react-datepicker__year-option:hover {
+  background: var(--color-surface-hover);
+}
+
+.datepicker-calendar .react-datepicker__month-option--selected_month,
+.datepicker-calendar .react-datepicker__year-option--selected_year {
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 600;
+}
+
+.datepicker-calendar .react-datepicker__month-option--selected_month:hover,
+.datepicker-calendar .react-datepicker__year-option--selected_year:hover {
+  background: var(--color-primary);
+  opacity: 0.9;
+}
+
+/* Hide the checkmark react-datepicker adds before selected option */
+.datepicker-calendar .react-datepicker__month-option--selected,
+.datepicker-calendar .react-datepicker__year-option--selected {
+  display: none;
+}
+
+/* Day names row */
+.datepicker-calendar .react-datepicker__day-name {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  width: 2rem;
+  line-height: 2rem;
+}
+
+/* Day cells */
+.datepicker-calendar .react-datepicker__day {
+  color: var(--color-text);
+  width: 2rem;
+  line-height: 2rem;
+  border-radius: 4px;
+  margin: 1px;
+}
+
+.datepicker-calendar .react-datepicker__day:hover {
+  background: var(--color-surface-hover);
+  border-radius: 4px;
+}
+
+.datepicker-calendar .react-datepicker__day--selected,
+.datepicker-calendar .react-datepicker__day--keyboard-selected {
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 4px;
+}
+
+.datepicker-calendar .react-datepicker__day--selected:hover,
+.datepicker-calendar .react-datepicker__day--keyboard-selected:hover {
+  background: var(--color-primary);
+  opacity: 0.9;
+}
+
+.datepicker-calendar .react-datepicker__day--today {
+  font-weight: 700;
+}
+
+.datepicker-calendar .react-datepicker__day--outside-month {
+  color: var(--color-text-muted);
+  opacity: 0.5;
+}
+
+.datepicker-calendar .react-datepicker__day--disabled {
+  color: var(--color-text-muted);
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Navigation arrows */
+.datepicker-calendar .react-datepicker__navigation {
+  top: 10px;
+}
+
+.datepicker-calendar .react-datepicker__navigation-icon::before {
+  border-color: var(--color-text-muted);
+}
+
+.datepicker-calendar .react-datepicker__navigation:hover .react-datepicker__navigation-icon::before {
+  border-color: var(--color-text);
+}
+
+/* Triangle pointer — hide it, we use border instead */
+.datepicker-calendar .react-datepicker__triangle {
+  display: none;
+}
+
+/* Clear button inside the input */
+.react-datepicker__close-icon::after {
+  background: var(--color-text-muted);
+  color: var(--color-bg);
+  font-size: 0.75rem;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 50%;
+}
+
+.react-datepicker__close-icon:hover::after {
+  background: var(--color-danger, #dc2626);
+}
+
+/* ==========================================================================
+   CommandForm — Env tab
+   ========================================================================== */
+
+.command-form__env-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.command-form__env-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.command-form__env-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.command-form__env-key {
+  flex: 0 0 180px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.command-form__env-value {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.input--warning {
+  border-color: var(--app-color-edit);
+}
+
+.input--warning:focus {
+  border-color: var(--app-color-edit);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-color-edit) 20%, transparent);
+}
+
+.command-form__env-override-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--app-color-edit);
+  line-height: 1.4;
+}
+
+.command-form__env-remove {
+  flex: none;
+}
+
+.command-form__env-empty {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0 0 8px;
+}
+
+/* ==========================================================================
+   EnvManager view
+   ========================================================================== */
+
+.env-manager__section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.env-manager__section-header--row {
+  justify-content: space-between;
+}
+
+.env-manager__collapse-toggle {
+  appearance: none;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 0;
+  color: var(--color-text);
+}
+
+.env-manager__section-title {
+  margin: 0;
+}
+
+.env-manager__count {
+  font-weight: 400;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.env-manager__search-bar {
+  margin-bottom: 10px;
+}
+
+.env-manager__var-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.env-manager__var-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  min-height: 32px;
+}
+
+.env-manager__var-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.env-manager__var-row--readonly {
+  cursor: default;
+}
+
+.env-manager__var-key {
+  flex: 0 0 220px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-manager__var-value {
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-manager__var-value--system {
+  color: var(--color-text-muted);
+}
+
+/* Editable value looks like a button but is styled as plain text */
+.env-manager__var-value--editable {
+  appearance: none;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.env-manager__var-value--editable:hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-text);
+}
+
+.env-manager__var-value--empty {
+  font-style: italic;
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+.env-manager__reveal-btn {
+  flex: none;
+  font-size: 12px;
+}
+
+.env-manager__conflict-badge {
+  flex: none;
+  color: var(--app-color-edit);
+  font-size: 14px;
+  cursor: default;
+}
+
+.env-manager__delete-entry {
+  flex: none;
+  opacity: 0;
+}
+
+.env-manager__var-row:hover .env-manager__delete-entry {
+  opacity: 1;
+}
+
+.env-manager__file-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.env-manager__file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.env-manager__file-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text);
+  flex: 0 0 auto;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-manager__file-path {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.env-manager__file-error {
+  padding: 10px 12px;
+  color: var(--color-danger);
+  font-size: 13px;
+  margin: 0;
+}
+
+.env-manager__file-empty {
+  padding: 10px 12px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* View button — visible on row hover, flush-left before the key */
+.env-manager__view-btn {
+  flex: none;
+  opacity: 0;
+  color: var(--color-text-muted);
+  transition: opacity 0.1s;
+}
+
+.env-manager__var-row:hover .env-manager__view-btn {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   EnvVarModal — variable detail / edit modal
+   --------------------------------------------------------------------------- */
+
+/* Narrow modal: inherits .command-form--meta width (420px) via that modifier.
+   The extra class just lets us target it without coupling to --meta. */
+.env-var-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 16px 20px 8px;
+}
+
+.env-var-modal__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.env-var-modal__row:last-child {
+  border-bottom: none;
+}
+
+.env-var-modal__label {
+  flex: 0 0 52px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  padding-top: 3px;
+}
+
+.env-var-modal__value {
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-text);
+  word-break: break-all;
+  min-width: 0;
+}
+
+.env-var-modal__value--key {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.env-var-modal__value--path {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+
+.env-var-modal__value--empty {
+  font-style: italic;
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+/* Value + pencil button sit in a flex group */
+.env-var-modal__value-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.env-var-modal__pencil {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.env-var-modal__pencil:hover {
+  color: var(--color-text);
+}
+
+/* Edit input fills the value-group */
+.env-var-modal__edit-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.env-var-modal__save-btn {
+  flex: none;
+}
+
+/* Override block — shown inside the modal when a file entry shadows a system
+   var or an earlier file's value. Sits below the regular Key / Value / File
+   rows and is visually distinguished with a top divider and a tinted title. */
+.env-var-modal__override {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.env-var-modal__override-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-danger);
+  padding: 0 0 6px;
+  letter-spacing: 0.02em;
+}
+
+/* Override rows reuse the .env-var-modal__row layout but without the divider
+   between them — they read as a grouped sub-block under the title. */
+.env-var-modal__row--override {
+  border-bottom: none;
+  padding: 4px 0;
+}
+
+/* ---------------------------------------------------------------------------
+   env-manager__tabs — User / Root scope switcher in the Environment view
+   --------------------------------------------------------------------------- */
+
+.env-manager__tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 16px;
+}
+
+.env-manager__tab {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.env-manager__tab:hover {
+  color: var(--color-text);
+}
+
+.env-manager__tab.is-active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-primary);
+}
+
+.env-manager__tab-count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+/* Root tab "gate" — password prompt or error with retry button */
+.env-manager__root-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px 0;
+}
+
+.env-manager__root-gate-hint {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.env-manager__root-error {
+  color: var(--color-danger);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* Per-file unreadable hints above the table */
+.env-manager__file-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.env-manager__file-hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   env-snapshot-table — read-only env variable table with source column
+   --------------------------------------------------------------------------- */
+
+.env-snapshot-table {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Toolbar: search input + refresh button side by side */
+.env-snapshot-table__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.env-snapshot-table__toolbar .btn--icon.is-active {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.env-snapshot-table__search-input {
+  flex: 0 0 570px;
+  max-width: 570px;
+  min-width: 0;
+}
+
+.env-snapshot-table__refresh {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.env-snapshot-table__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.env-snapshot-table__th {
+  padding: 5px 10px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.env-snapshot-table__th--key   { width: 22%; }
+.env-snapshot-table__th--value { width: 38%; }
+.env-snapshot-table__th--source{ width: 40%; }
+
+.env-snapshot-table__row:hover {
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+}
+
+.env-snapshot-table__td {
+  padding: 4px 10px;
+  vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 40%, transparent);
+}
+
+.env-snapshot-table__td--key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.env-snapshot-table__td--value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+
+.env-snapshot-table__td--source {
+  font-size: 12px;
+  vertical-align: top;
+  padding-top: 6px;
+}
+
+/* Value cell: value + reveal toggle sit inline */
+.env-snapshot-table__td--value {
+  display: table-cell; /* override flex if needed */
+}
+
+.env-snapshot-table__value {
+  font-family: var(--font-mono);
+}
+
+.env-snapshot-table__reveal {
+  margin-left: 4px;
+  font-size: 11px;
+  vertical-align: middle;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.env-snapshot-table__row:hover .env-snapshot-table__reveal {
+  opacity: 1;
+}
+
+.env-snapshot-table__source {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  word-break: break-all;
+  font-family: var(--font-mono);
+}
+
+.env-snapshot-table__source--unknown {
+  color: var(--color-text-muted);
+  opacity: 0.55;
+  font-style: italic;
+}
+
+/* Source chain for variables with 2+ files: vertical list with ↓ connectors */
+.env-snapshot-table__source-chain {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.env-snapshot-table__source-chain-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.env-snapshot-table__source-chain-arrow {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  line-height: 1;
+  padding: 1px 0 1px 2px;
+  opacity: 0.6;
+}
+
+/* Collapsible scanned-source-files list (below the table) */
+.env-manager__sources {
+  margin-top: 16px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
+}
+
+.env-manager__sources-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: 0;
+}
+
+.env-manager__sources-toggle:hover {
+  color: var(--color-text);
+}
+
+.env-manager__sources-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.env-manager__sources-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.env-manager__sources-path {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  min-width: 0;
+}
+
+.env-manager__sources-keys {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Category view
+   --------------------------------------------------------------------------- */
+
+.env-snapshot-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.env-snapshot-category {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.env-snapshot-category__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--color-bg-subtle);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.env-snapshot-category__header:hover {
+  background: var(--color-surface-hover);
+}
+
+.env-snapshot-category__arrow {
+  font-size: 9px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.env-snapshot-category__title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-snapshot-category__title--unknown {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.env-snapshot-category__count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Category table — no border on top since header is already bordered */
+.env-snapshot-category__table {
+  border-top: 1px solid var(--color-border);
+}
+
+/* In category view, value column takes up the remaining width (no source col) */
+.env-snapshot-category__value-col {
+  width: auto;
+}

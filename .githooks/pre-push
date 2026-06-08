@@ -1,0 +1,19 @@
+#!/bin/sh
+#
+# pre-push hook: run frontend and backend test suites before allowing a push.
+# Configure once with:  git config core.hooksPath .githooks
+#
+# Skip with:  git push --no-verify  (use sparingly)
+
+set -e
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+echo "pre-push: running frontend tests (vitest)..."
+npm run test
+
+echo "pre-push: running backend tests (cargo test)..."
+cargo test --manifest-path src-tauri/Cargo.toml
+
+echo "pre-push: all tests passed."

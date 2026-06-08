@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ProcMix Dev",
+  "identifier": "app.procmix.desktop.dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ProcMix (dev)"
+      }
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1e293b"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="stream1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#ef4444"/>
+    </linearGradient>
+    <linearGradient id="stream2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#10b981"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="stream3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="merge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background: rounded square -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Three input nodes -->
+  <circle cx="232" cy="288" r="68" fill="url(#stream1)"/>
+  <circle cx="232" cy="512" r="68" fill="url(#stream2)"/>
+  <circle cx="232" cy="736" r="68" fill="url(#stream3)"/>
+
+  <!-- Streams converging into mixer -->
+  <path d="M 300 288 Q 480 288 540 512" stroke="url(#stream1)" stroke-width="44" fill="none" stroke-linecap="round"/>
+  <path d="M 300 512 L 540 512" stroke="url(#stream2)" stroke-width="44" fill="none" stroke-linecap="round"/>
+  <path d="M 300 736 Q 480 736 540 512" stroke="url(#stream3)" stroke-width="44" fill="none" stroke-linecap="round"/>
+
+  <!-- Mixer hub -->
+  <circle cx="608" cy="512" r="100" fill="url(#merge)"/>
+  <circle cx="608" cy="512" r="100" fill="none" stroke="#fff7ed" stroke-width="8" opacity="0.4"/>
+
+  <!-- Output stream -->
+  <path d="M 708 512 L 880 512" stroke="url(#merge)" stroke-width="56" fill="none" stroke-linecap="round"/>
+
+  <!-- Output arrow head -->
+  <path d="M 820 460 L 900 512 L 820 564 Z" fill="url(#merge)"/>
+</svg>
