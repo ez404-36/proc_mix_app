@@ -6,6 +6,10 @@ name: Release (installers)
 #   - Linux `.deb` package AND portable `.AppImage` on Ubuntu 22.04 — the
 #     oldest base providing WebKitGTK 4.1, for broad glibc compatibility.
 #
+# Each bundle is signed with the Tauri updater keypair (TAURI_SIGNING_PRIVATE_KEY)
+# and a `latest.json` manifest is attached to the GitHub Release so the in-app
+# updater can discover new versions.
+#
 # Triggers:
 #   - Pushing a tag like `v0.1.0` builds the installers and attaches them to a
 #     GitHub Release for that tag.
@@ -142,6 +146,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # Only emit the per-user NSIS installer; skip MSI/WiX.
           args: --bundles nsis
@@ -152,6 +158,7 @@ jobs:
           releaseName: ${{ github.ref_type == 'tag' && format('ProcMix {0}', github.ref_name) || '' }}
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -205,6 +212,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # linuxdeploy (used by the AppImage bundler) needs FUSE at build time;
           # this lets it extract its AppImage tooling without a FUSE mount on
           # the runner.
@@ -218,6 +227,7 @@ jobs:
           releaseName: ${{ github.ref_type == 'tag' && format('ProcMix {0}', github.ref_name) || '' }}
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true
 
       - name: Upload deb artifact
         uses: actions/upload-artifact@v4

@@ -1,7 +1,7 @@
 {
   "name": "procmix",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "ProcMix - cross-platform automation tool",
   "productName": "ProcMix",
   "author": "Zenkin Egor Andreevich",
@@ -27,6 +27,8 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-global-shortcut": "^2.3.1",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "i18next": "^26.3.0",
     "i18next-browser-languagedetector": "^8.2.1",
     "react": "^19.1.0",

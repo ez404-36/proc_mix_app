@@ -26,6 +26,8 @@ import { CommandPalette } from "./components/CommandPalette";
 import { EnvManager } from "./components/EnvManager";
 import { OutputPanel } from "./components/OutputPanel";
 import { ContextMenuProvider } from "./components/ContextMenu";
+import { UpdateDialog } from "./components/UpdateDialog";
+import { useUpdateStore } from "./stores/updateStore";
 import { useExecutionBridge } from "./hooks/useExecutionBridge";
 import { useWorkflowBridge } from "./hooks/useWorkflowBridge";
 import { useGlobalShortcut } from "./hooks/useGlobalShortcut";
@@ -117,12 +119,24 @@ function App(): ReactElement {
   const appVersion = useAppVersion();
   const { theme, setTheme } = useTheme();
 
+  const updateInfo = useUpdateStore((s) => s.info);
+  const updateDismissed = useUpdateStore((s) => s.dismissed);
+  const updateModalOpen = useUpdateStore((s) => s.isModalOpen);
+  const openUpdateModal = useUpdateStore((s) => s.openModal);
+  const closeUpdateModal = useUpdateStore((s) => s.closeModal);
+  const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
+
   useExecutionBridge();
   useWorkflowBridge();
   useGlobalShortcut();
   useI18nBridge();
   useSeedBootstrap();
   useTrayLocalization();
+
+  useEffect(() => {
+    const timer = setTimeout(() => void checkForUpdate(), 5000);
+    return () => clearTimeout(timer);
+  }, [checkForUpdate]);
 
   // Global Ctrl/Cmd+K handler.
   useEffect(() => {
@@ -252,6 +266,15 @@ function App(): ReactElement {
                   </span>
                 </div>
               )}
+              {!sidebarCollapsed && updateInfo && !updateDismissed && (
+                <button
+                  type="button"
+                  className="app-sidebar__update"
+                  onClick={openUpdateModal}
+                >
+                  {t("nav.updateAvailable")}
+                </button>
+              )}
             </div>
           </aside>
           <main className="app-main">{renderView(currentView)}</main>
@@ -271,6 +294,10 @@ function App(): ReactElement {
             once so `promptForWorkingDir` (used by commandRunner.ts) has a
             handler registered. */}
         <WorkingDirPrompt />
+        <UpdateDialog
+          open={updateModalOpen}
+          onClose={closeUpdateModal}
+        />
       </ContextMenuProvider>
     </ConfigProvider>
   );

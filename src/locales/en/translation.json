@@ -30,7 +30,20 @@
     "openConsoleTitle": "Open the application console",
     "collapse": "Collapse menu",
     "expand": "Expand menu",
-    "versionLabel": "Version"
+    "versionLabel": "Version",
+    "updateAvailable": "Update available"
+  },
+  "update": {
+    "title": "Update Available",
+    "releaseNotes": "What's new",
+    "allChanges": "See all changes on GitHub",
+    "updateNow": "Update now",
+    "later": "Later",
+    "checking": "Checking…",
+    "downloading": "Downloading… {{percent}}%",
+    "installing": "Installing…",
+    "error": "Update failed",
+    "retry": "Retry"
   },
   "home": {
     "title": "Home",
@@ -362,9 +375,16 @@
       "importError": "Failed to import data",
       "subhint": "Imported items always get new ids — importing never overwrites your existing commands or workflows."
     },
+    "updates": {
+      "title": "Updates",
+      "checkBtn": "Check for updates",
+      "checking": "Checking…",
+      "upToDate": "You are using the latest version of the application.",
+      "checkError": "Failed to check for updates"
+    },
     "about": {
       "title": "About",
-      "version": "v0.4.0",
+      "version": "v0.5.0",
       "description": "Cross-platform command and workflow automation tool.",
       "license": "Open source. MIT License.",
       "copyright": "© 2026 Zenkin Egor Andreevich"

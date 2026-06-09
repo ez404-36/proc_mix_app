@@ -1,0 +1,18 @@
+name: Notify website (revalidate download page)
+
+# When a GitHub Release is published (draft → public), tell the website to
+# flush its cached release data so the download page picks up the new assets.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  revalidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger website revalidation
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.REVALIDATE_SECRET }}" \
+            https://procmix.app/api/revalidate

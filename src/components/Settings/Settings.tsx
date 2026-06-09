@@ -4,6 +4,7 @@ import { Message } from "@arco-design/web-react";
 import { useTheme } from "../../hooks/useTheme";
 import { useCommandStore } from "../../stores/commandStore";
 import { DEFAULT_TOGGLE_SHORTCUT, useUIStore } from "../../stores/uiStore";
+import { useUpdateStore, type CheckResult } from "../../stores/updateStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import type { Command, Theme, Workflow } from "../../types";
 import {
@@ -149,6 +150,23 @@ export function Settings(): ReactElement {
   // Outcomes surface as an inline plaque in the data section (green success /
   // red error) rather than a transient toast, so the result stays visible.
   // --------------------------------------------------------------
+  // --------------------------------------------------------------
+  // Update check (manual trigger from Settings).
+  // --------------------------------------------------------------
+  const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
+  const openUpdateModal = useUpdateStore((s) => s.openModal);
+  const updatePhase = useUpdateStore((s) => s.phase);
+  const [updateCheckResult, setUpdateCheckResult] = useState<CheckResult | null>(null);
+
+  const handleCheckForUpdate = useCallback(async (): Promise<void> => {
+    setUpdateCheckResult(null);
+    const result = await checkForUpdate();
+    setUpdateCheckResult(result);
+    if (result.status === "available") {
+      openUpdateModal();
+    }
+  }, [checkForUpdate, openUpdateModal]);
+
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importParsed, setImportParsed] = useState<ProcMixExport | null>(null);
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null);
@@ -430,6 +448,36 @@ export function Settings(): ReactElement {
           <div className="settings-caption settings-caption--spaced">
             {t("settings.data.subhint")}
           </div>
+        </div>
+      </section>
+
+      <section className="view-section">
+        <h2 className="view-section__title">
+          {t("settings.updates.title")}
+        </h2>
+        <div className="empty-state settings-info">
+          <div className="settings-group settings-group--tight">
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={updatePhase !== "idle"}
+              onClick={() => void handleCheckForUpdate()}
+            >
+              {updatePhase === "checking"
+                ? t("settings.updates.checking")
+                : t("settings.updates.checkBtn")}
+            </button>
+          </div>
+          {updateCheckResult?.status === "up-to-date" && (
+            <div className="data-status data-status--success" role="status">
+              {t("settings.updates.upToDate")}
+            </div>
+          )}
+          {updateCheckResult?.status === "error" && (
+            <div className="data-status data-status--error" role="status">
+              {t("settings.updates.checkError")}: {updateCheckResult.message}
+            </div>
+          )}
         </div>
       </section>
 

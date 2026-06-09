@@ -4,7 +4,9 @@
 
 <h1>ProcMix</h1>
 
-<p>Cross-platform automation tool — build and run workflows from the desktop,<br/>without cloud dependencies or subscriptions.</p>
+<p>Run scripts and automate tasks — no command line needed</p>
+
+<p>ProcMix gives you a graphical interface for managing commands, workflows, and schedules. No memorising flags — just press a button.</p>
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-black?style=flat-square)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-black?style=flat-square&logo=tauri)](https://tauri.app)
@@ -21,42 +23,64 @@
 <tr>
 <td width="50%" valign="top">
 
+**Command palette and hotkeys**<br/>
+Instant fuzzy search over your commands and customizable global hotkeys to launch from anywhere.
+
+</td>
+<td width="50%" valign="top">
+
+**Variables and substitution**<br/>
+Substitute values with `${name}` and `${name:default}`. Sensitive variables are masked as *** in logs and events.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Run as administrator**<br/>
+Privilege elevation through the system keychain on Linux/macOS and through UAC on Windows — without storing the password in plain text.
+
+</td>
+<td width="50%" valign="top">
+
+**Output schema**<br/>
+Describe your command's output format and ProcMix will parse raw text into structured JSON. For example, lines from `df -h` become an array of objects with filesystem, size, used, and available fields.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
 **Visual workflow editor**<br/>
-Drag-and-drop interface inspired by Apple Shortcuts. Chain commands into multi-step workflows without writing glue code.
+Build command chains from drag-and-drop nodes with branching by exit code. Preview and live execution progress right on the canvas.
 
 </td>
 <td width="50%" valign="top">
 
-**Rust execution engine**<br/>
-Commands run in a native Rust executor — fast, low overhead, no Node.js subprocess chains.
+**Scheduler**<br/>
+Run commands and workflows automatically on a schedule.
 
 </td>
 </tr>
 <tr>
-<td width="50%" valign="top">
-
-**Fully local**<br/>
-All data stays on your device. No account required, no telemetry, no sync to external servers.
-
-</td>
-<td width="50%" valign="top">
-
-**Plugin system**<br/>
-Extend with built-in or community plugins. Each plugin exposes typed command blocks reusable in any workflow.
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-**Command palette & hotkeys**<br/>
-Global hotkeys and a keyboard-first command palette to trigger any workflow without leaving your current app.
-
-</td>
 <td width="50%" valign="top">
 
 **Cross-platform**<br/>
-Runs on Windows, macOS, and Linux from a single codebase via Tauri 2.0.
+A single interface on Windows and Linux. macOS support is coming soon.
+
+</td>
+<td width="50%" valign="top">
+
+**Local storage, import/export**<br/>
+All data is stored locally — privacy by default. Move commands and workflows between machines via import and export.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Plugin system**<br/>
+Extend functionality with JavaScript/TypeScript plugins or native modules written in Rust.
 
 </td>
 </tr>

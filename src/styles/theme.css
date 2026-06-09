@@ -6098,3 +6098,107 @@ select {
 .command-form--flag-builder {
   max-width: 720px;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Update indicator (sidebar) + Update dialog                        */
+/* ------------------------------------------------------------------ */
+
+.app-sidebar__update {
+  all: unset;
+  display: block;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--app-color-run);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.app-sidebar__update:hover {
+  background: var(--color-hover);
+}
+
+.command-form--update {
+  width: min(560px, calc(100% - 32px));
+}
+
+.command-form--update > .command-form__title {
+  padding: 20px 20px 0;
+}
+
+.update-dialog__version {
+  padding: 8px 20px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.update-dialog__notes {
+  margin: 12px 0 0;
+  padding: 0 20px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.update-dialog__notes-heading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin: 0 0 6px;
+}
+
+.update-dialog__notes-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: inherit;
+}
+
+.update-dialog__link {
+  all: unset;
+  display: inline-block;
+  padding: 4px 20px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--app-color-run);
+  cursor: pointer;
+}
+.update-dialog__link:hover {
+  text-decoration: underline;
+}
+
+.update-dialog__progress {
+  padding: 12px 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.update-dialog__progress-bar {
+  height: 6px;
+  background: var(--color-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.update-dialog__progress-fill {
+  height: 100%;
+  background: var(--app-color-run);
+  border-radius: 3px;
+  transition: width 0.2s;
+}
+
+.update-dialog__progress-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.update-dialog__error {
+  margin: 8px 0 0;
+  padding: 0 20px;
+  font-size: 13px;
+  color: var(--color-danger);
+  line-height: 1.4;
+}
