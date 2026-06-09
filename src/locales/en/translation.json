@@ -364,7 +364,7 @@
     },
     "about": {
       "title": "About",
-      "version": "v0.3.4",
+      "version": "v0.4.0",
       "description": "Cross-platform command and workflow automation tool.",
       "license": "Open source. MIT License.",
       "copyright": "© 2026 Zenkin Egor Andreevich"
@@ -458,7 +458,9 @@
       "timeoutSeconds": "Timeout (seconds)",
       "tags": "Tags",
       "category": "Category",
-      "disableHints": "Disable hints (for experts)"
+      "disableHints": "Disable hints (for experts)",
+      "workingDir": "Working directory",
+      "promptWorkingDir": "Prompt for working directory at runtime"
     },
     "placeholders": {
       "name": "e.g. Restart dev server",
@@ -468,7 +470,8 @@
       "category": "e.g. Deployment",
       "timeoutSeconds": "No limit",
       "categorySelect": "No category",
-      "categoryNew": "New category…"
+      "categoryNew": "New category…",
+      "workingDir": "Default (home directory)"
     },
     "actions": {
       "create": "Create",
@@ -634,6 +637,14 @@
   },
   "variablePrompt": {
     "title": "Provide variables",
+    "submit": "Run",
+    "cancel": "Cancel"
+  },
+  "workingDirPrompt": {
+    "title": "Working directory",
+    "label": "Directory",
+    "hint": "Leave empty to use the default (home directory).",
+    "placeholder": "e.g. /home/user/project",
     "submit": "Run",
     "cancel": "Cancel"
   },
@@ -828,5 +839,32 @@
       "clickToEdit": "Click to edit",
       "deleteEntry": "Delete entry"
     }
+  },
+  "scriptFirstCreator": {
+    "title": "New command",
+    "inputLabel": "Enter your command:",
+    "inputPlaceholder": "e.g. tar -czvf archive.tar.gz /path",
+    "actionDirect": "Continue",
+    "actionBuild": "Build from flags →",
+    "actionBuildExperimental": "(experimental)",
+    "building": "Parsing flags…",
+    "buildError": "Failed to parse flags. You can continue with the script as-is.",
+    "builderTitle": "Build command",
+    "requiredArgsSection": "Arguments",
+    "flagsSection": "Flags",
+    "addFlagPlaceholder": "Select flag…",
+    "addFlagButton": "Add flag",
+    "flagValuePlaceholder": "value",
+    "previewLabel": "Preview:",
+    "doneButton": "Done",
+    "backButton": "← Back",
+    "noFlagsFound": "No flags detected. You can continue with the script as-is.",
+    "flagValueRequired": "Value required for {{flag}}",
+    "removeFlag": "Remove {{flag}}",
+    "positionalArgsSection": "Arguments",
+    "positionalArgsPlaceholder": "e.g. /path/to/file /destination",
+    "dismissBuilder": "Close flag builder",
+    "useShortFlag": "short form",
+    "flagSearchPlaceholder": "Search flag…"
   }
 }

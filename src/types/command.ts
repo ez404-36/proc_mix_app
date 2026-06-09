@@ -78,6 +78,13 @@ export interface Command {
   shell?: Shell;
   args?: string[];
   workingDir?: string;
+  /**
+   * When true, the runner prompts the user for a working directory before
+   * each run, pre-filling the stored `workingDir` value (if any) as the
+   * default. Behaves like `VariableSpec.defaultValue === undefined` — a
+   * prompt is always shown even when `workingDir` is set.
+   */
+  promptWorkingDir?: boolean;
   env?: Record<string, string>;
   tags: string[];
   categoryId?: string;
@@ -129,6 +136,47 @@ export interface Command {
    * {@link OutputSchema}.
    */
   outputSchema?: OutputSchema;
+}
+
+/**
+ * A single CLI flag extracted from `--help` output by the `parse_utility_flags`
+ * Tauri command. Mirrors `core::flag_parser::ParsedFlag` (camelCase).
+ */
+export interface ParsedFlag {
+  /** All aliases for this flag, e.g. `["-v", "--verbose"]`. */
+  flags: string[];
+  /** `true` when the flag accepts a value (e.g. `--output <FILE>`). */
+  takesValue: boolean;
+  /** The value placeholder hint, e.g. `"FILE"`, `"DIR"`, `"N"`. Empty when `takesValue` is `false`. */
+  valueHint: string;
+  /** One-line description extracted from the help text. */
+  description: string;
+  /** `true` for positional arguments explicitly marked as required. */
+  required: boolean;
+}
+
+/**
+ * A positional (non-flag) argument extracted from a `Usage:` line.
+ * Mirrors `core::flag_parser::ParsedArg` (camelCase).
+ */
+export interface ParsedArg {
+  /** Argument name, e.g. `"SOURCE"`, `"DEST"`, `"FILE"`. */
+  name: string;
+  /** Short description, if available. */
+  description: string;
+  /** `true` when the argument appeared as `<ARG>` (required) vs `[ARG]` (optional). */
+  required: boolean;
+}
+
+/**
+ * Structured CLI metadata returned by the `parse_utility_flags` Tauri command.
+ * Mirrors `core::flag_parser::ParsedCli` (camelCase).
+ */
+export interface ParsedCli {
+  /** Positional arguments in the order they appear in the usage line. */
+  positionalArgs: ParsedArg[];
+  /** All detected flags / options. */
+  flags: ParsedFlag[];
 }
 
 export interface CommandCategory {
@@ -200,10 +248,16 @@ export type View =
  * `Command.id` to edit, or `null` when creating. We store the id (not the
  * whole command) so the editor view always resolves the freshest version
  * from the store — mirrors the `editorWorkflowId` contract for workflows.
+ *
+ * `initialScript` may be set when navigating into create mode from the
+ * script-first creator flow (ScriptFirstCreator). When present, the form
+ * is pre-filled with this value. Ignored in edit mode.
  */
 export interface CommandEditorTarget {
   mode: "create" | "edit";
   commandId: string | null;
+  /** Pre-fill the Script field when entering create mode via ScriptFirstCreator. */
+  initialScript?: string;
 }
 
 /** Active tab within the Library view: commands or workflows. */

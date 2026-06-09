@@ -54,4 +54,8 @@ export interface FormState {
   outputSchema: import('./outputSchema').OutputSchema | undefined;
   /** Per-command environment variable overrides (KEY=VALUE rows). */
   envRows: EnvRow[];
+  /** Working directory for the command. Empty string means use the default (home dir). */
+  workingDir: string;
+  /** When true, the runner will prompt the user for the working directory before each run. */
+  promptWorkingDir: boolean;
 }

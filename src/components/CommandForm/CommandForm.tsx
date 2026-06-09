@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 import type {
   Command,
   OutputSchema,
+  ParsedCli,
   Shell,
   VariableSpec,
 } from "../../types";
@@ -38,6 +39,7 @@ import type { DropdownOption } from "../Dropdown";
 import { OutputSchemaEditor } from "./OutputSchemaEditor";
 import { ScriptEditor } from "./ScriptEditor";
 import { LiveRunOutput } from "./LiveRunOutput";
+import { FlagBuilder } from "./FlagBuilder";
 import type {
   UtilityHighlight,
   UtilityHighlightStatus,
@@ -66,6 +68,7 @@ import {
   getCachedProcessEnv,
   getProcessEnv,
 } from "../../services/environmentService";
+import { parseUtilityFlags } from "../../services/utilityHelp";
 import { useEnvManagerStore } from "../../stores/envManagerStore";
 
 export interface CommandFormProps {
@@ -110,6 +113,12 @@ export interface CommandFormProps {
    * commands by the caller. Optional; defaults to none.
    */
   categorySuggestions?: ReadonlyArray<string>;
+  /**
+   * Pre-filled script for create mode, supplied by the ScriptFirstCreator
+   * flow. Ignored in edit mode. When set, the Script tab field is
+   * populated on first render with this value so the user can refine it.
+   */
+  initialScript?: string;
 }
 
 /**
@@ -137,6 +146,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     onDirtyChange,
     runTarget = "embedded",
     categorySuggestions = [],
+    initialScript,
   } = props;
   const { t } = useTranslation();
   // History-aware wrappers — see services/commandActions.ts. The
@@ -164,15 +174,23 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   // id (or "create" for the create path) so re-opening the same edit target
   // resets the form rather than retaining stale typing from a previous open.
   const initial = useMemo(
-    () => buildInitialState(command, mode, t, platform, availableShells),
+    () => buildInitialState(command, mode, t, platform, availableShells, initialScript),
     // `t` deliberately not in deps: changing language while the form is open
     // should not overwrite what the user has typed.
+    // `initialScript` is intentionally omitted: it's the one-shot seed value
+    // for create mode and must not re-initialize the form if a parent re-renders
+    // with a different value after the user has already started typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [command?.id, mode],
   );
 
   const [form, setForm] = useState<FormState>(initial);
   const [showErrors, setShowErrors] = useState<boolean>(false);
+
+  // Flag builder: open/closed state + parsed CLI data fetched on demand.
+  const [flagBuilderOpen, setFlagBuilderOpen] = useState<boolean>(false);
+  const [flagBuilderData, setFlagBuilderData] = useState<ParsedCli | null>(null);
+  const [flagBuilderLoading, setFlagBuilderLoading] = useState<boolean>(false);
 
   // Dirty tracking for the host's unsaved-changes guard. We compare a
   // STABLE projection of the form against its initial snapshot, excluding
@@ -392,6 +410,9 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
         outputSchema: form.outputSchema,
         // Explicit field so clearing all env rows drops Command.env.
         env: envRowsToRecord(form.envRows),
+        // Explicit field so clearing the working dir resets it to the default.
+        workingDir: form.workingDir.trim() !== "" ? form.workingDir.trim() : undefined,
+        promptWorkingDir: form.promptWorkingDir || undefined,
       };
       if (command.nameKey !== undefined) patch.nameKey = undefined;
       if (command.descriptionKey !== undefined) {
@@ -420,6 +441,8 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
           ? { outputSchema: form.outputSchema }
           : {}),
         ...(envValue !== undefined ? { env: envValue } : {}),
+        ...(form.workingDir.trim() !== "" ? { workingDir: form.workingDir.trim() } : {}),
+        ...(form.promptWorkingDir ? { promptWorkingDir: true } : {}),
       });
     }
     // If a live-run is still active when the user saves, cancel it so
@@ -448,6 +471,8 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     form.timeoutSeconds,
     form.outputSchema,
     form.envRows,
+    form.workingDir,
+    form.promptWorkingDir,
     errors,
     hasErrors,
     hasVariableErrors,
@@ -668,6 +693,65 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
           : "not-found";
     return { start: utilityRange.start, end: utilityRange.end, status };
   }, [utilityRange, resolvedHelp]);
+
+  // Flag builder: fetch parsed CLI on demand, then open the inline section.
+  const handleOpenFlagBuilder = useCallback((): void => {
+    if (!utilityRange) return;
+    setFlagBuilderLoading(true);
+    void parseUtilityFlags(utilityRange.name).then((parsed) => {
+      setFlagBuilderData(parsed);
+      setFlagBuilderOpen(true);
+      setFlagBuilderLoading(false);
+    }).catch(() => {
+      setFlagBuilderLoading(false);
+    });
+  }, [utilityRange]);
+
+  // Fetch ParsedCli as soon as the utility is recognised (proactive — so flag
+  // highlights appear without the user opening the builder). Re-fetches when
+  // the utility name changes. Tracks the last *fetched* name so a status
+  // transition loading→found for the same name doesn't trigger a second fetch.
+  //
+  // `flagBuilderOpen` is intentionally NOT in the dep array: opening/closing
+  // the builder must not re-trigger this effect. The builder open/close path
+  // is handled separately in handleOpenFlagBuilder / handleFlagBuilderDismiss.
+  const fetchedUtilityRef = useRef<string | null>(null);
+  const flagBuilderOpenRef = useRef(flagBuilderOpen);
+  flagBuilderOpenRef.current = flagBuilderOpen;
+  useEffect(() => {
+    const name = utilityRange?.name ?? null;
+    const isFound = resolvedHelp?.status === "found";
+
+    if (!name || !isFound) {
+      fetchedUtilityRef.current = null;
+      setFlagBuilderData(null);
+      if (flagBuilderOpenRef.current) setFlagBuilderOpen(false);
+      return;
+    }
+
+    if (fetchedUtilityRef.current === name) return;
+    fetchedUtilityRef.current = name;
+
+    void parseUtilityFlags(name).then((parsed) => {
+      setFlagBuilderData(parsed);
+    }).catch(() => {
+      fetchedUtilityRef.current = null;
+      setFlagBuilderData(null);
+      if (flagBuilderOpenRef.current) setFlagBuilderOpen(false);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [utilityRange?.name, resolvedHelp?.status]);
+
+  const handleFlagBuilderChange = useCallback((script: string): void => {
+    setForm((s) => ({ ...s, script }));
+  }, []);
+
+  const handleFlagBuilderDismiss = useCallback((): void => {
+    setFlagBuilderOpen(false);
+    // Do NOT clear flagBuilderData — it is still used for flag highlighting
+    // in the ScriptEditor overlay even when the builder panel is closed.
+  }, []);
+
   // ---------------------------------------------------------------
   // Variable-row mutation handlers. Each operates on the row at
   // `index` (the row identity is the array position). The handlers
@@ -1324,6 +1408,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
               }
               utilityHighlight={utilityHighlight}
               utilityHelp={resolvedHelp}
+              parsedFlags={flagBuilderData?.flags ?? null}
             />
             {showErrors && errors.script ? (
               <span
@@ -1334,6 +1419,59 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
                 {errors.script}
               </span>
             ) : null}
+
+            {resolvedHelp?.status === "found" && !flagBuilderOpen ? (
+              <div className="command-form__build-flags-wrap">
+                <span className="command-form__build-flags-experimental">
+                  {t("scriptFirstCreator.actionBuildExperimental")}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn--ghost command-form__build-flags"
+                  onClick={handleOpenFlagBuilder}
+                  disabled={flagBuilderLoading}
+                >
+                  {flagBuilderLoading
+                    ? t("scriptFirstCreator.building")
+                    : t("scriptFirstCreator.actionBuild")}
+                </button>
+              </div>
+            ) : null}
+
+            {flagBuilderOpen && flagBuilderData !== null ? (
+              <FlagBuilder
+                script={form.script}
+                parsed={flagBuilderData}
+                onChange={handleFlagBuilderChange}
+                onDismiss={handleFlagBuilderDismiss}
+              />
+            ) : null}
+          </div>
+
+          <div className="command-form__field">
+            <span className="command-form__label">
+              {t("commandForm.fields.workingDir")}
+            </span>
+            <input
+              type="text"
+              className="input command-form__working-dir-input"
+              value={form.workingDir}
+              onChange={(e) =>
+                setForm((s) => ({ ...s, workingDir: e.target.value }))
+              }
+              placeholder={t("commandForm.placeholders.workingDir")}
+              aria-label={t("commandForm.fields.workingDir")}
+            />
+            <label className="command-form__field command-form__field--inline">
+              <input
+                type="checkbox"
+                checked={form.promptWorkingDir}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, promptWorkingDir: e.target.checked }))
+                }
+              />
+              <span>{t("commandForm.fields.promptWorkingDir")}</span>
+            </label>
           </div>
 
           {/*
@@ -1432,24 +1570,22 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
                             errorMessage ? errorId : undefined
                           }
                         />
-                        {row.promptAtRuntime ? null : (
-                          <input
-                            type="text"
-                            className="input command-form__variables-default"
-                            value={row.defaultValue}
-                            onChange={(e) =>
-                              updateVariableRow(index, {
-                                defaultValue: e.target.value,
-                              })
-                            }
-                            placeholder={t(
-                              "commandForm.variables.defaultValuePlaceholder",
-                            )}
-                            aria-label={t(
-                              "commandForm.variables.defaultValuePlaceholder",
-                            )}
-                          />
-                        )}
+                        <input
+                          type="text"
+                          className="input command-form__variables-default"
+                          value={row.defaultValue}
+                          onChange={(e) =>
+                            updateVariableRow(index, {
+                              defaultValue: e.target.value,
+                            })
+                          }
+                          placeholder={t(
+                            "commandForm.variables.defaultValuePlaceholder",
+                          )}
+                          aria-label={t(
+                            "commandForm.variables.defaultValuePlaceholder",
+                          )}
+                        />
                         <input
                           type="text"
                           className="input command-form__variables-description"

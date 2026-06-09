@@ -90,6 +90,7 @@ export function CommandEditor(): ReactElement | null {
         onDirtyChange={setCommandEditorDirty}
         runTarget="global"
         categorySuggestions={allCategories}
+        initialScript={target.mode === "create" ? target.initialScript : undefined}
       />
 
       <ConfirmDialog

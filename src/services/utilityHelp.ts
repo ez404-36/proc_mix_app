@@ -14,7 +14,7 @@
 // treat them as "not found" for display purposes.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { UtilityHelp } from "../types";
+import type { ParsedCli, UtilityHelp } from "../types";
 
 /**
  * Fetch best-effort CLI help for `utility`.
@@ -32,4 +32,23 @@ export async function fetchUtilityHelp(
   utility: string,
 ): Promise<UtilityHelp> {
   return invoke<UtilityHelp>("fetch_utility_help", { utility });
+}
+
+/**
+ * Parse structured flag / positional-argument metadata from a utility's
+ * `--help` output. Uses the heuristic `parse_utility_flags` Tauri command
+ * which internally runs the same probes as `fetchUtilityHelp`.
+ *
+ * Returns a `ParsedCli` with empty arrays when the utility is not found or
+ * the help text cannot be parsed — callers treat an empty result as
+ * "no pre-fill available".
+ *
+ * The `utility` argument MUST already be a validated utility name (obtained
+ * via `parseUtilityName`); the Rust handler re-validates regardless.
+ *
+ * @param utility bare utility name, e.g. `"tar"`.
+ * @returns the structured CLI metadata. Rejects only on internal backend error.
+ */
+export async function parseUtilityFlags(utility: string): Promise<ParsedCli> {
+  return invoke<ParsedCli>("parse_utility_flags", { utility });
 }

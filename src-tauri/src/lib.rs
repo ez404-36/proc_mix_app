@@ -126,6 +126,7 @@ pub fn run() {
             commands::get_platform,
             commands::get_available_shells,
             commands::fetch_utility_help,
+            commands::parse_utility_flags,
             commands::preview_extraction,
             commands::list_commands,
             commands::upsert_command,

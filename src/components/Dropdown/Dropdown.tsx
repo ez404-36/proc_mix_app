@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import type {
+  ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent,
   ReactElement,
 } from "react";
@@ -16,6 +17,11 @@ import { createPortal } from "react-dom";
 export interface DropdownOption {
   value: string;
   label: string;
+  /**
+   * Optional one-line description shown as a subtitle below the label in the
+   * popup. Useful for flag options where a brief hint helps the user choose.
+   */
+  description?: string;
   /**
    * When true, the option is rendered but cannot be selected: keyboard
    * navigation skips over it and click is a no-op. Used to keep a
@@ -42,6 +48,15 @@ export interface DropdownProps {
   popupClassName?: string;
   /** Optional id for the trigger; useful for label `htmlFor`. */
   id?: string;
+  /**
+   * When true, a search input is rendered at the top of the popup.
+   * Options are filtered in real time as the user types; the query matches
+   * against both `label` and `description` (case-insensitive).
+   * Disabled options are always hidden from search results.
+   */
+  searchable?: boolean;
+  /** Placeholder text for the search input (only used when searchable=true). */
+  searchPlaceholder?: string;
 }
 
 interface PopupPosition {
@@ -68,6 +83,8 @@ const VIEWPORT_PADDING = 8;
  *   - Open popup: ArrowDown / ArrowUp move the active highlight, Enter /
  *     Space commit the highlighted option, Escape closes without changes,
  *     Tab closes (focus moves normally to the next focusable element).
+ *   - When searchable: typing characters moves focus to the search input
+ *     automatically; ArrowDown / ArrowUp move between filtered options.
  *
  * Accessibility:
  *   - Trigger button gets `aria-haspopup="listbox"` and `aria-expanded`.
@@ -90,15 +107,19 @@ export function Dropdown(props: DropdownProps): ReactElement {
     className,
     popupClassName,
     id,
+    searchable = false,
+    searchPlaceholder = "Search…",
   } = props;
 
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   const [open, setOpen] = useState<boolean>(false);
   const [activeIndex, setActiveIndex] = useState<number>(-1);
   const [position, setPosition] = useState<PopupPosition | null>(null);
+  const [query, setQuery] = useState<string>("");
 
   // Stable id namespace so trigger/option ids reference each other.
   const baseId = useId();
@@ -114,37 +135,54 @@ export function Dropdown(props: DropdownProps): ReactElement {
     return found?.label ?? value;
   }, [options, value]);
 
+  // Filtered options: when searchable and query is non-empty, filter by label
+  // and description. Disabled options are always excluded from search results
+  // so the user can't accidentally navigate to the sentinel placeholder.
+  const filteredOptions = useMemo((): ReadonlyArray<DropdownOption> => {
+    if (!searchable || query.trim() === "") return options;
+    const lower = query.toLowerCase();
+    return options.filter((opt) => {
+      if (opt.disabled) return false;
+      if (opt.label.toLowerCase().includes(lower)) return true;
+      if (opt.description && opt.description.toLowerCase().includes(lower)) return true;
+      return false;
+    });
+  }, [searchable, query, options]);
+
+  // When filtered options change, reset active index to the first item.
+  useEffect(() => {
+    if (open) setActiveIndex(filteredOptions.length > 0 ? 0 : -1);
+  }, [filteredOptions, open]);
+
   /**
-   * First selectable (non-disabled) option index, or -1 if every option
-   * is disabled. Used as the fallback highlight on open when the
-   * currently-selected value is itself disabled.
+   * First selectable (non-disabled) option index within filteredOptions,
+   * or -1 if every option is disabled.
    */
   const firstEnabledIndex = useMemo(() => {
-    for (let i = 0; i < options.length; i++) {
-      const opt = options[i];
+    for (let i = 0; i < filteredOptions.length; i++) {
+      const opt = filteredOptions[i];
       if (opt && !opt.disabled) return i;
     }
     return -1;
-  }, [options]);
+  }, [filteredOptions]);
 
   /**
-   * Walks the options list to find the next enabled index starting
-   * from `from + step`, wrapping around. Returns -1 only when every
-   * option is disabled.
+   * Walks filteredOptions to find the next enabled index starting
+   * from `from + step`, wrapping around.
    */
   const nextEnabledIndex = useCallback(
     (from: number, step: 1 | -1): number => {
-      const len = options.length;
+      const len = filteredOptions.length;
       if (len === 0) return -1;
       let cursor = from;
       for (let i = 0; i < len; i++) {
         cursor = (cursor + step + len) % len;
-        const opt = options[cursor];
+        const opt = filteredOptions[cursor];
         if (opt && !opt.disabled) return cursor;
       }
       return -1;
     },
-    [options],
+    [filteredOptions],
   );
 
   const computePosition = useCallback((): PopupPosition | null => {
@@ -152,8 +190,6 @@ export function Dropdown(props: DropdownProps): ReactElement {
     if (!trigger) return null;
     const rect = trigger.getBoundingClientRect();
     const vh = window.innerHeight;
-    // Popup is sized after first paint; we cap to the smaller of (remaining
-    // space below) and (remaining space above) so it always fits the viewport.
     const spaceBelow = vh - rect.bottom - VIEWPORT_PADDING;
     const spaceAbove = rect.top - VIEWPORT_PADDING;
     const flipped = spaceBelow < 160 && spaceAbove > spaceBelow;
@@ -172,12 +208,8 @@ export function Dropdown(props: DropdownProps): ReactElement {
     if (disabled) return;
     const pos = computePosition();
     if (pos) setPosition(pos);
+    setQuery("");
     setOpen(true);
-    // Start with the currently-selected option highlighted if it is
-    // selectable; otherwise fall back to the first enabled option. If
-    // every option is disabled (degenerate case — no shells available
-    // but the form still rendered the dropdown), there is nothing to
-    // highlight and we leave activeIndex at -1.
     const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : null;
     if (selectedOption && !selectedOption.disabled) {
       setActiveIndex(selectedIndex);
@@ -189,27 +221,33 @@ export function Dropdown(props: DropdownProps): ReactElement {
   const closePopup = useCallback((restoreFocus: boolean): void => {
     setOpen(false);
     setActiveIndex(-1);
+    setQuery("");
     if (restoreFocus) triggerRef.current?.focus();
   }, []);
 
+  // Focus the search input when the popup opens (searchable mode only).
+  useEffect(() => {
+    if (open && searchable) {
+      // Defer slightly so the portal renders before we try to focus.
+      const id = window.setTimeout(() => {
+        searchRef.current?.focus();
+      }, 0);
+      return () => window.clearTimeout(id);
+    }
+  }, [open, searchable]);
+
   const commit = useCallback(
     (idx: number): void => {
-      const next = options[idx];
+      const next = filteredOptions[idx];
       if (!next) {
         closePopup(true);
         return;
       }
-      // Disabled options are visible but not selectable; treat the
-      // commit as a no-op so keyboard Enter on a disabled row (which
-      // shouldn't reach here because nav skips disabled) and any
-      // accidental click both fall through silently.
-      if (next.disabled) {
-        return;
-      }
+      if (next.disabled) return;
       if (next.value !== value) onChange(next.value);
       closePopup(true);
     },
-    [closePopup, onChange, options, value],
+    [closePopup, onChange, filteredOptions, value],
   );
 
   // Recompute the popup position once it has rendered so the flip decision
@@ -244,8 +282,6 @@ export function Dropdown(props: DropdownProps): ReactElement {
       if (!target) return;
       if (popupRef.current && popupRef.current.contains(target)) return;
       if (triggerRef.current && triggerRef.current.contains(target)) return;
-      // Click outside both trigger and popup: close without restoring focus
-      // (the click already moved focus to wherever the user clicked).
       closePopup(false);
     };
 
@@ -254,11 +290,7 @@ export function Dropdown(props: DropdownProps): ReactElement {
       if (next) setPosition(next);
     };
 
-    // Closing on scroll keeps the popup from drifting away from the trigger
-    // (we don't reposition on scroll because most parent scrolls indicate
-    // the user is moving on).
     const handleScroll = (event: Event): void => {
-      // Ignore scrolls that happen inside the popup itself.
       const target = event.target as Node | null;
       if (popupRef.current && target && popupRef.current.contains(target)) {
         return;
@@ -300,16 +332,11 @@ export function Dropdown(props: DropdownProps): ReactElement {
       }
       return;
     }
-    // Open: route navigation/commit/close keys. Disabled options are
-    // skipped — nextEnabledIndex wraps around and returns -1 only when
-    // every option is disabled.
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setActiveIndex((idx) => {
-        if (options.length === 0) return -1;
-        // Starting from -1 (no current highlight) we want the first
-        // enabled, so seed at the last index so step=+1 wraps to 0.
-        const from = idx < 0 ? options.length - 1 : idx;
+        if (filteredOptions.length === 0) return -1;
+        const from = idx < 0 ? filteredOptions.length - 1 : idx;
         return nextEnabledIndex(from, 1);
       });
       return;
@@ -317,7 +344,7 @@ export function Dropdown(props: DropdownProps): ReactElement {
     if (event.key === "ArrowUp") {
       event.preventDefault();
       setActiveIndex((idx) => {
-        if (options.length === 0) return -1;
+        if (filteredOptions.length === 0) return -1;
         const from = idx < 0 ? 0 : idx;
         return nextEnabledIndex(from, -1);
       });
@@ -325,14 +352,12 @@ export function Dropdown(props: DropdownProps): ReactElement {
     }
     if (event.key === "Home") {
       event.preventDefault();
-      if (options.length > 0) setActiveIndex(firstEnabledIndex);
+      if (filteredOptions.length > 0) setActiveIndex(firstEnabledIndex);
       return;
     }
     if (event.key === "End") {
       event.preventDefault();
-      if (options.length > 0) {
-        // Walk backwards from index 0 (with wrap) to find the last
-        // enabled option in the list.
+      if (filteredOptions.length > 0) {
         setActiveIndex(nextEnabledIndex(0, -1));
       }
       return;
@@ -348,8 +373,44 @@ export function Dropdown(props: DropdownProps): ReactElement {
       return;
     }
     if (event.key === "Tab") {
-      // Let the browser handle Tab — we just close the popup so the user
-      // can move on to the next focusable element naturally.
+      closePopup(false);
+      return;
+    }
+  };
+
+  // Keyboard handler for the search input.
+  const handleSearchKeyDown = (
+    event: ReactKeyboardEvent<HTMLInputElement>,
+  ): void => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((idx) => {
+        if (filteredOptions.length === 0) return -1;
+        const from = idx < 0 ? filteredOptions.length - 1 : idx;
+        return nextEnabledIndex(from, 1);
+      });
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((idx) => {
+        if (filteredOptions.length === 0) return -1;
+        const from = idx < 0 ? 0 : idx;
+        return nextEnabledIndex(from, -1);
+      });
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (activeIndex >= 0) commit(activeIndex);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePopup(true);
+      return;
+    }
+    if (event.key === "Tab") {
       closePopup(false);
       return;
     }
@@ -409,10 +470,33 @@ export function Dropdown(props: DropdownProps): ReactElement {
         onMouseDown={(e) => {
           // Prevent the trigger from losing focus when clicking inside the
           // popup (keeps aria-activedescendant pointing at the right option).
-          e.preventDefault();
+          // Exception: the search input must be able to receive focus.
+          const target = e.target as HTMLElement;
+          if (target.tagName !== "INPUT") e.preventDefault();
         }}
       >
-        {options.map((opt, idx) => {
+        {searchable ? (
+          <div className="dropdown__search">
+            <input
+              ref={searchRef}
+              type="text"
+              className="input dropdown__search-input"
+              value={query}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                setQuery(e.target.value);
+              }}
+              onKeyDown={handleSearchKeyDown}
+              placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+        ) : null}
+        {filteredOptions.length === 0 && searchable ? (
+          <div className="dropdown__search-empty">—</div>
+        ) : null}
+        {filteredOptions.map((opt, idx) => {
           const isSelected = opt.value === value;
           const isActive = idx === activeIndex;
           const isDisabled = opt.disabled === true;
@@ -433,8 +517,6 @@ export function Dropdown(props: DropdownProps): ReactElement {
               aria-selected={isSelected}
               aria-disabled={isDisabled ? true : undefined}
               onMouseEnter={() => {
-                // Skip highlight on disabled options so the keyboard
-                // and mouse cursors agree on what is selectable.
                 if (!isDisabled) setActiveIndex(idx);
               }}
               onClick={() => {
@@ -442,6 +524,11 @@ export function Dropdown(props: DropdownProps): ReactElement {
               }}
             >
               <span className="dropdown__option-label">{opt.label}</span>
+              {opt.description ? (
+                <span className="dropdown__option-description">
+                  {opt.description}
+                </span>
+              ) : null}
               {isSelected && !isDisabled ? (
                 <span className="dropdown__option-check" aria-hidden="true">
                   ✓

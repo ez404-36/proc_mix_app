@@ -2582,6 +2582,17 @@ select {
   color: var(--color-danger);
 }
 
+.command-form__build-flags-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-form__build-flags-experimental {
+  font-size: 11px;
+  color: var(--app-color-edit);
+}
+
 /* Top action bar: title on the left, Run / Cancel / Save on the right.
    A fixed-height sibling above the scrolling body, so the actions stay
    beside the title at the top of the full-screen editor. */
@@ -3144,6 +3155,42 @@ select {
   word-break: break-word;
 }
 
+/* Flag token in the overlay: subtle dotted underline so the user sees
+ * the token is hoverable without clashing with the utility highlight colour.
+ * `pointer-events: none` keeps the overlay transparent to mouse events —
+ * the textarea on top handles all interaction (hit-tested in JS). */
+.command-form__script-editor-flag {
+  cursor: default;
+}
+
+.command-form__script-editor-flag--found {
+  color: var(--app-color-run);
+}
+
+.command-form__script-editor-flag--not-found {
+  color: var(--color-danger);
+}
+
+/* Flag description popover. Reuses the shared .command-form__script-help-popover
+ * base styles; this modifier only overrides layout for the flag content. */
+.command-form__script-flag-popover {
+  max-width: min(360px, calc(100vw - 16px));
+}
+
+.command-form__script-flag-label {
+  margin: 0 0 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-color-edit);
+}
+
+.command-form__script-flag-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* "Output truncated" note shown when the backend clipped the help text
  * at its byte cap. Muted + small so it reads as a footnote. */
 .command-form__script-help-truncated {
@@ -3350,7 +3397,7 @@ select {
 .dropdown__popup {
   position: fixed;
   z-index: 1200;
-  max-height: 280px;
+  max-height: 320px;
   overflow-y: auto;
   background: var(--color-surface);
   color: var(--color-text);
@@ -3367,7 +3414,8 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   padding: 6px 12px;
   cursor: pointer;
   color: var(--color-text);
@@ -3394,10 +3442,42 @@ select {
   white-space: nowrap;
 }
 
+.dropdown__option-description {
+  flex: 0 0 100%;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
 .dropdown__option-check {
   flex-shrink: 0;
   font-size: 12px;
   color: var(--color-primary);
+}
+
+.dropdown__search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 8px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dropdown__search-input {
+  width: 100%;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.dropdown__search-empty {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  text-align: center;
 }
 
 /* Disabled options stay visible (so users can see a stored-but-
@@ -4298,6 +4378,14 @@ select {
    dialogs that rely on the wider layout. */
 .variable-prompt {
   width: min(480px, calc(100% - 32px));
+}
+
+.working-dir-prompt {
+  width: min(960px, calc(100% - 32px));
+}
+
+.command-form__working-dir-input {
+  width: 336px;
 }
 
 /* VariablePrompt footer: right-aligned action row with a gap between the
@@ -5797,4 +5885,216 @@ select {
 /* In category view, value column takes up the remaining width (no source col) */
 .env-snapshot-category__value-col {
   width: auto;
+}
+
+/* ==========================================================================
+   Script-first creator — ScriptInputStep
+   ========================================================================== */
+
+.script-input-step__panel {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.script-input-step__textarea {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  resize: vertical;
+  min-height: 90px;
+}
+
+.script-input-step__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.script-input-step__action-continue {
+  flex-shrink: 0;
+}
+
+.script-input-step__action-build {
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Flag builder — FlagBuilderStep
+   ========================================================================== */
+
+.flag-builder__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.flag-builder__utility-name {
+  color: var(--color-text-muted);
+  font-weight: normal;
+  font-size: 0.9em;
+}
+
+.flag-builder__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flag-builder__section-title {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+/* Positional args */
+.flag-builder__arg-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flag-builder__arg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flag-builder__arg-name {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.flag-builder__arg-value {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+
+/* Flag rows */
+.flag-builder__flag-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flag-builder__flag-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-subtle);
+}
+
+.flag-builder__flag-label {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-text);
+  min-width: 120px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.flag-builder__flag-value-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 4px;
+}
+
+.flag-builder__flag-value {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  width: 100%;
+}
+
+.flag-builder__flag-remove {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.flag-builder__flag-short-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.flag-builder__flag-remove:hover {
+  color: var(--color-danger);
+}
+
+/* Add-flag dropdown */
+.flag-builder__add-flag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flag-builder__no-flags {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* Preview bar */
+.flag-builder__preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+}
+
+.flag-builder__preview-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.flag-builder__preview {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  background: var(--console-bg, var(--color-bg-subtle));
+  color: var(--console-text, var(--color-text));
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-height: 2.5rem;
+}
+
+/* Actions row */
+.flag-builder__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* command-form variant modifiers for the creator dialogs */
+.command-form--script-input,
+.command-form--flag-builder {
+  max-width: 720px;
 }

@@ -371,7 +371,7 @@
     },
     "about": {
       "title": "О программе",
-      "version": "v0.3.4",
+      "version": "v0.4.0",
       "description": "Кроссплатформенный инструмент автоматизации команд и сценариев.",
       "license": "Открытый исходный код. Лицензия MIT.",
       "copyright": "© 2026 Зенкин Егор Андреевич"
@@ -465,7 +465,9 @@
       "timeoutSeconds": "Таймаут (секунды)",
       "tags": "Теги",
       "category": "Категория",
-      "disableHints": "Отключить подсказки (для опытных)"
+      "disableHints": "Отключить подсказки (для опытных)",
+      "workingDir": "Рабочая директория",
+      "promptWorkingDir": "Запрашивать рабочую директорию при запуске"
     },
     "placeholders": {
       "name": "Например, перезапустить dev-сервер",
@@ -475,7 +477,8 @@
       "category": "Например, Развёртывание",
       "timeoutSeconds": "Без ограничений",
       "categorySelect": "Без категории",
-      "categoryNew": "Новая категория…"
+      "categoryNew": "Новая категория…",
+      "workingDir": "По умолчанию (домашняя директория)"
     },
     "actions": {
       "create": "Создать",
@@ -643,6 +646,14 @@
   },
   "variablePrompt": {
     "title": "Введите значения переменных",
+    "submit": "Запустить",
+    "cancel": "Отмена"
+  },
+  "workingDirPrompt": {
+    "title": "Рабочая директория",
+    "label": "Директория",
+    "hint": "Оставьте пустым, чтобы использовать значение по умолчанию (домашняя директория).",
+    "placeholder": "например, /home/user/project",
     "submit": "Запустить",
     "cancel": "Отмена"
   },
@@ -838,5 +849,32 @@
       "clickToEdit": "Нажмите для редактирования",
       "deleteEntry": "Удалить запись"
     }
+  },
+  "scriptFirstCreator": {
+    "title": "Новая команда",
+    "inputLabel": "Введите команду:",
+    "inputPlaceholder": "например, tar -czvf archive.tar.gz /path",
+    "actionDirect": "Продолжить",
+    "actionBuild": "Собрать из флагов →",
+    "actionBuildExperimental": "(экспериментально)",
+    "building": "Разбор флагов…",
+    "buildError": "Не удалось разобрать флаги. Можно продолжить со скриптом как есть.",
+    "builderTitle": "Составить команду",
+    "requiredArgsSection": "Аргументы",
+    "flagsSection": "Флаги",
+    "addFlagPlaceholder": "Выберите флаг…",
+    "addFlagButton": "Добавить флаг",
+    "flagValuePlaceholder": "значение",
+    "previewLabel": "Предпросмотр:",
+    "doneButton": "Готово",
+    "backButton": "← Назад",
+    "noFlagsFound": "Флаги не обнаружены. Можно продолжить со скриптом как есть.",
+    "flagValueRequired": "Требуется значение для {{flag}}",
+    "removeFlag": "Удалить {{flag}}",
+    "positionalArgsSection": "Аргументы",
+    "positionalArgsPlaceholder": "например: /путь/к/файлу /назначение",
+    "dismissBuilder": "Закрыть конструктор",
+    "useShortFlag": "краткий вариант",
+    "flagSearchPlaceholder": "Поиск флага…"
   }
 }

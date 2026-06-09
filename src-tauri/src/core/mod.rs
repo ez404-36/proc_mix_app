@@ -3,6 +3,7 @@ pub mod env_files;
 pub mod env_sources;
 pub mod executor;
 pub mod extractor;
+pub mod flag_parser;
 pub mod parser;
 pub mod redact;
 pub mod scheduler;

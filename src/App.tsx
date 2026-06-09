@@ -13,6 +13,7 @@ import type { Theme, View } from "./types";
 import type { Language } from "./i18n";
 import { AdminPasswordPrompt } from "./components/AdminPasswordPrompt";
 import { VariablePrompt } from "./components/VariablePrompt";
+import { WorkingDirPrompt } from "./components/WorkingDirPrompt/WorkingDirPrompt";
 import { Home } from "./components/Home";
 import { Library } from "./components/Library";
 import { SchedulerTab, ScheduleEditor } from "./components/Scheduler";
@@ -266,6 +267,10 @@ function App(): ReactElement {
             once so the runtime helper `promptForVariables` (used by the
             executor wrapper in runCommand.ts) has a handler registered. */}
         <VariablePrompt />
+        {/* App-global singleton — see WorkingDirPrompt.tsx. Mounted exactly
+            once so `promptForWorkingDir` (used by commandRunner.ts) has a
+            handler registered. */}
+        <WorkingDirPrompt />
       </ContextMenuProvider>
     </ConfigProvider>
   );

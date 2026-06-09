@@ -27,6 +27,7 @@ import {
 import { isTransient } from "../utils/transientExecutions";
 import { scriptReferencesEscalationTool } from "../utils/utilityName";
 import { promptForVariables } from "../utils/variablePrompt";
+import { promptForWorkingDir } from "../utils/workingDirPrompt";
 
 /**
  * Generate a UUID-like id. Falls back to a timestamped pseudo-random
@@ -259,6 +260,23 @@ export async function triggerCommandRun(
     return null;
   }
 
+  // Working-directory prompt. Only shown when the command has
+  // `promptWorkingDir: true` AND the caller hasn't already supplied a
+  // `workingDir` override via RunOptions. Pre-fills with the stored
+  // `cmd.workingDir` value (or empty string when unset) so the user can
+  // edit an existing path rather than re-type it from scratch.
+  let resolvedWorkingDir = opts?.workingDir;
+  if (cmd.promptWorkingDir && resolvedWorkingDir === undefined) {
+    const prompted = await promptForWorkingDir(cmd.workingDir ?? "");
+    if (prompted === null) {
+      // User cancelled — abort the run silently.
+      return null;
+    }
+    // Empty string means "use the default" — pass undefined so executor
+    // falls back to home dir, matching what an unset workingDir does.
+    resolvedWorkingDir = prompted !== "" ? prompted : undefined;
+  }
+
   // Pre-generate the execution id on the CLIENT (unless the caller
   // supplied one, e.g. the CommandForm live-run / OutputPanel re-run) so
   // we can register the store execution AND insert the history row BEFORE
@@ -373,8 +391,15 @@ export async function triggerCommandRun(
     );
   }
 
+  // Merge the (possibly prompt-resolved) working dir into the options so
+  // `attempt` and any sentinel-retry branch see the same value.
+  const optsWithDir: RunOptions | undefined =
+    resolvedWorkingDir !== opts?.workingDir
+      ? { ...(opts ?? { variableValues: {} }), workingDir: resolvedWorkingDir }
+      : opts;
+
   try {
-    return await attempt(opts);
+    return await attempt(optsWithDir);
   } catch (err) {
     if (isAdminPasswordRequiredError(err)) {
       // First time the user runs an admin-flagged command on a fresh
@@ -397,7 +422,7 @@ export async function triggerCommandRun(
         finalizeAbandonedRun();
         return null;
       }
-      let retryOpts: RunOptions | undefined = opts;
+      let retryOpts: RunOptions | undefined = optsWithDir;
       if (promptResult.remember) {
         try {
           await setAdminPassword(promptResult.password);
@@ -418,8 +443,8 @@ export async function triggerCommandRun(
         // IPC payload as `adminPassword`. The Rust executor prefers
         // this value over the keychain.
         retryOpts = {
-          ...(opts ?? { variableValues: {} }),
-          variableValues: opts?.variableValues ?? {},
+          ...(optsWithDir ?? { variableValues: {} }),
+          variableValues: optsWithDir?.variableValues ?? {},
           adminPassword: promptResult.password,
         };
       }

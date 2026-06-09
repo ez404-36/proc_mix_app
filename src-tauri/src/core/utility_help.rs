@@ -409,6 +409,10 @@ async fn run_probe(utility: &str, args: &[&str]) -> Option<String> {
     let mut command = Command::new(utility);
     command
         .args(args)
+        // Force ASCII/English help text so the parser's "usage:" and flag
+        // detection works regardless of the user's system locale.
+        .env("LANG", "C")
+        .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -424,6 +428,8 @@ async fn run_man(utility: &str) -> Option<String> {
     let mut command = Command::new("man");
     command
         .args(["-P", "cat", "--", utility])
+        .env("LANG", "C")
+        .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

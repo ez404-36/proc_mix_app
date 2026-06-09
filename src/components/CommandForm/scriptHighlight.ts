@@ -4,6 +4,8 @@
  * single component (Fast Refresh requirement).
  */
 
+import type { ParsedFlag } from "../../types";
+
 /** Regex used to split the script into "plain" and "reference"
  *  segments for highlighting. Mirrors the parser's grammar but is
  *  intentionally permissive: it matches `${...}` regardless of
@@ -23,10 +25,14 @@ const HIGHLIGHT_RE = /\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}/g;
 export type UtilityHighlightStatus = "pending" | "found" | "not-found";
 
 export interface HighlightSegment {
-  kind: "text" | "known" | "unknown" | "escape" | "utility";
+  kind: "text" | "known" | "unknown" | "escape" | "utility" | "flag";
   text: string;
   /** Only set on `kind: "utility"` segments. */
   utilityStatus?: UtilityHighlightStatus;
+  /** Only set on `kind: \"flag\"` segments. */
+  parsedFlag?: ParsedFlag;
+  /** Only set on `kind: \"flag\"` segments. */
+  flagStatus?: "found" | "not-found";
 }
 
 /**
@@ -40,26 +46,179 @@ export interface UtilityHighlight {
 }
 
 /**
+ * A flag token range within the script string. Produced by
+ * {@link buildFlagHighlights} and consumed by `applyFlagHighlights`.
+ */
+export interface FlagHighlight {
+  /** Byte offset of the flag token start (inclusive). */
+  start: number;
+  /** Byte offset of the flag token end (exclusive). */
+  end: number;
+  /**
+   * - `"found"`     — token matched a known flag alias → green highlight.
+   * - `"not-found"` — token starts with `-` but matched nothing → red highlight.
+   */
+  flagStatus: "found" | "not-found";
+  /** The resolved ParsedFlag when `flagStatus === "found"`. */
+  flag: ParsedFlag | null;
+}
+
+// ---------------------------------------------------------------------------
+// Flag highlight builder
+// ---------------------------------------------------------------------------
+
+/** Characters that terminate a whitespace-delimited token. */
+const WORD_TERMINATORS = new Set([" ", "\t", "\n", "\r", ";", "&", "|", ">"]);
+
+/**
+ * Split `script` into whitespace-delimited tokens, returning each token's
+ * text and its byte start offset.
+ */
+function scriptTokens(script: string): Array<{ text: string; start: number }> {
+  const tokens: Array<{ text: string; start: number }> = [];
+  let i = 0;
+  const n = script.length;
+  while (i < n) {
+    while (i < n && WORD_TERMINATORS.has(script[i]!)) i += 1;
+    if (i >= n) break;
+    const start = i;
+    while (i < n && !WORD_TERMINATORS.has(script[i]!)) i += 1;
+    tokens.push({ text: script.slice(start, i), start });
+  }
+  return tokens;
+}
+
+/**
+ * Build a sorted, non-overlapping list of {@link FlagHighlight} ranges for
+ * all flag tokens found in `script`.
+ *
+ * Rules:
+ * - The first non-escalation token (the utility name) is always skipped.
+ * - Tokens starting with `-` are tested against every alias of every flag.
+ * - Combined short flags (`-czf`) are matched as a single token associated
+ *   with the first short alias found in the group.
+ * - Value tokens following a value-taking flag are left as plain text.
+ */
+export function buildFlagHighlights(
+  script: string,
+  flags: ReadonlyArray<ParsedFlag>,
+): FlagHighlight[] {
+  if (flags.length === 0) return [];
+
+  const byAlias = new Map<string, ParsedFlag>();
+  for (const flag of flags) {
+    for (const alias of flag.flags) {
+      byAlias.set(alias, flag);
+    }
+  }
+
+  const tokens = scriptTokens(script);
+  if (tokens.length === 0) return [];
+
+  const ESCALATION = new Set(["sudo", "doas", "pkexec"]);
+  let skipCount = 1;
+  if (tokens.length > 0 && ESCALATION.has(tokens[0]!.text)) {
+    skipCount = 2;
+  }
+
+  const highlights: FlagHighlight[] = [];
+  let i = skipCount;
+
+  while (i < tokens.length) {
+    const { text, start } = tokens[i]!;
+    i += 1;
+
+    if (!text.startsWith("-")) continue;
+
+    // Direct match: `-v`, `--verbose`, `--output=value` (strip `=...` suffix).
+    const eqIdx = text.indexOf("=");
+    const bareToken = eqIdx !== -1 ? text.slice(0, eqIdx) : text;
+    const direct = byAlias.get(bareToken);
+    if (direct !== undefined) {
+      highlights.push({ start, end: start + text.length, flagStatus: "found", flag: direct });
+      if (
+        direct.takesValue &&
+        eqIdx === -1 &&
+        i < tokens.length &&
+        !tokens[i]!.text.startsWith("-")
+      ) {
+        i += 1;
+      }
+      continue;
+    }
+
+    // Combined short flags: `-hP`, `-czf` — not `--` prefix, length > 2.
+    // Emit one FlagHighlight per character so each char gets its own span,
+    // its own tooltip, and its own found/not-found colour.
+    if (!text.startsWith("--") && text.length > 2) {
+      const chars = text.slice(1);
+      let anyMatched = false;
+      for (let ci = 0; ci < chars.length; ci++) {
+        const ch = chars[ci]!;
+        // Char offset: skip the leading `-` (offset 1) then the char index.
+        const charStart = start + 1 + ci;
+        const matched = byAlias.get(`-${ch}`);
+        if (matched !== undefined) {
+          anyMatched = true;
+          highlights.push({ start: charStart, end: charStart + 1, flagStatus: "found", flag: matched });
+          // If the last char's flag takes a value, consume the next token.
+          if (
+            ci === chars.length - 1 &&
+            matched.takesValue &&
+            i < tokens.length &&
+            !tokens[i]!.text.startsWith("-")
+          ) {
+            i += 1;
+          }
+        } else {
+          // Unknown char inside a combined group — still highlight as not-found.
+          highlights.push({ start: charStart, end: charStart + 1, flagStatus: "not-found", flag: null });
+          anyMatched = true;
+        }
+      }
+      if (anyMatched) continue;
+    }
+
+    // Unrecognised flag token — highlight as not-found.
+    highlights.push({ start, end: start + text.length, flagStatus: "not-found", flag: null });
+  }
+
+  highlights.sort((a, b) => a.start - b.start);
+  return highlights;
+}
+
+// ---------------------------------------------------------------------------
+// Tokenizer
+// ---------------------------------------------------------------------------
+
+/**
  * Tokenize the script into highlight segments. Pure function — easy
  * to unit-test. The `knownNames` set determines whether a reference
  * is highlighted as "known" (declared) or "unknown" (likely typo).
  *
  * When `utility` is provided, the `[start, end)` slice of the script is
- * emitted as a dedicated `kind: "utility"` segment carrying its status,
- * so the editor can colour the leading command and attach a hover
- * target to it. The utility range is assumed to sit within plain text
- * (a leading command token never overlaps a `${...}` reference); if it
- * somehow intersects a reference the variable segmentation wins and the
- * utility carve-out for that span is skipped.
+ * emitted as a dedicated `kind: "utility"` segment carrying its status.
+ *
+ * When `flagHighlights` is provided, each matched flag range is carved out
+ * of the nearest plain-text segment and emitted as a `kind: "flag"` segment
+ * carrying the associated {@link ParsedFlag}.
  */
 export function tokenizeScript(
   script: string,
   knownNames: ReadonlySet<string>,
   utility?: UtilityHighlight | null,
+  flagHighlights?: ReadonlyArray<FlagHighlight>,
 ): HighlightSegment[] {
   const base = tokenizeReferences(script, knownNames);
-  if (!utility || utility.end <= utility.start) return base;
-  return applyUtilityHighlight(base, script, utility);
+
+  let result = base;
+  if (utility && utility.end > utility.start) {
+    result = applyUtilityHighlight(result, script, utility);
+  }
+  if (flagHighlights && flagHighlights.length > 0) {
+    result = applyFlagHighlights(result, flagHighlights);
+  }
+  return result;
 }
 
 /** Variable/escape segmentation (the original behaviour). */
@@ -69,8 +228,6 @@ function tokenizeReferences(
 ): HighlightSegment[] {
   const segments: HighlightSegment[] = [];
   let lastIndex = 0;
-  // Regexes with /g state must be reset before each scan to avoid
-  // sticky state leaking from a previous call.
   HIGHLIGHT_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = HIGHLIGHT_RE.exec(script)) !== null) {
@@ -83,9 +240,6 @@ function tokenizeReferences(
       segments.push({ kind: "escape", text: "$$" });
     } else {
       const name = match[1];
-      // `name` is captured by the regex group and guaranteed present
-      // for the `${...}` branch, but TS's regex type doesn't know
-      // that. Defensive guard: treat as text if missing.
       if (name === undefined) {
         segments.push({ kind: "text", text: fullMatch });
       } else {
@@ -104,10 +258,7 @@ function tokenizeReferences(
 }
 
 /**
- * Carve the utility range out of whichever PLAIN-text segment contains
- * it, splitting that segment into up-to-three parts (before / utility /
- * after). Non-text segments (variable refs, escapes) are passed through
- * untouched — the utility token never legitimately overlaps one.
+ * Carve the utility range out of whichever PLAIN-text segment contains it.
  */
 function applyUtilityHighlight(
   base: HighlightSegment[],
@@ -115,7 +266,7 @@ function applyUtilityHighlight(
   utility: UtilityHighlight,
 ): HighlightSegment[] {
   const out: HighlightSegment[] = [];
-  let cursor = 0; // absolute offset of the current segment's start
+  let cursor = 0;
   let placed = false;
 
   for (const seg of base) {
@@ -146,9 +297,66 @@ function applyUtilityHighlight(
     placed = true;
   }
 
-  // If the range didn't land inside any text segment (shouldn't happen
-  // for a valid range), fall back to the un-annotated segments so the
-  // editor still renders correctly.
   void script;
   return placed ? out : base;
+}
+
+/**
+ * Carve flag ranges out of plain-text segments in a single left-to-right pass.
+ * Non-text segments (utility, variable, escape) are passed through unchanged.
+ */
+function applyFlagHighlights(
+  base: HighlightSegment[],
+  flagHighlights: ReadonlyArray<FlagHighlight>,
+): HighlightSegment[] {
+  if (flagHighlights.length === 0) return base;
+
+  let cursor = 0;
+  let flagIdx = 0;
+  const out: HighlightSegment[] = [];
+
+  for (const seg of base) {
+    const segStart = cursor;
+    const segEnd = cursor + seg.text.length;
+    cursor = segEnd;
+
+    if (seg.kind !== "text") {
+      out.push(seg);
+      continue;
+    }
+
+    let localText = seg.text;
+    let localOffset = segStart;
+
+    while (
+      flagIdx < flagHighlights.length &&
+      flagHighlights[flagIdx]!.start >= segStart &&
+      flagHighlights[flagIdx]!.start < segEnd
+    ) {
+      const fh = flagHighlights[flagIdx]!;
+      flagIdx += 1;
+
+      const fEnd = Math.min(fh.end, segEnd);
+      const relStart = fh.start - localOffset;
+      const relEnd = fEnd - localOffset;
+
+      if (relStart < 0 || relEnd > localText.length || relStart >= relEnd) {
+        continue;
+      }
+
+      const before = localText.slice(0, relStart);
+      const mid = localText.slice(relStart, relEnd);
+      const after = localText.slice(relEnd);
+
+      if (before.length > 0) out.push({ kind: "text", text: before });
+      out.push({ kind: "flag", text: mid, parsedFlag: fh.flag ?? undefined, flagStatus: fh.flagStatus });
+
+      localText = after;
+      localOffset = localOffset + relEnd;
+    }
+
+    if (localText.length > 0) out.push({ kind: "text", text: localText });
+  }
+
+  return out;
 }

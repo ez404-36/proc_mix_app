@@ -158,6 +158,8 @@ describe("fingerprintForm", () => {
     disableHints: false,
     outputSchema: undefined,
     envRows: [],
+    workingDir: "",
+    promptWorkingDir: false,
   };
 
   it("is stable for identical persisted fields", () => {

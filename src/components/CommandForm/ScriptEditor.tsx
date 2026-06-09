@@ -12,14 +12,14 @@ import type {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import type { UtilityHelp, VariableSpec } from "../../types";
+import type { ParsedFlag, UtilityHelp, VariableSpec } from "../../types";
 import { useContextMenu } from "../ContextMenu";
 import type { ContextMenuEntry } from "../ContextMenu";
-import { tokenizeScript } from "./scriptHighlight";
-import type { UtilityHighlight } from "./scriptHighlight";
+import { buildFlagHighlights, tokenizeScript } from "./scriptHighlight";
+import type { FlagHighlight, UtilityHighlight } from "./scriptHighlight";
 
 /**
- * Editable script field with two features layered on top of a plain
+ * Editable script field with three features layered on top of a plain
  * `<textarea>`:
  *
  *   1. Inline syntax highlighting for `${name}` / `${name:default}`
@@ -36,6 +36,11 @@ import type { UtilityHighlight } from "./scriptHighlight";
  *      The menu also offers a quick "New variable…" entry that
  *      inserts a `${todo}` placeholder; the user must declare it
  *      in the Variables section before saving.
+ *
+ *   3. Flag token highlighting: when `parsedFlags` is provided,
+ *      flag tokens in the script are underlined and show a description
+ *      popover on hover — exactly the same mechanism as the utility
+ *      token hover.
  *
  * Implementation notes (the standard "overlay highlight" pattern):
  *
@@ -89,6 +94,12 @@ export interface ScriptEditorProps {
    * token still highlights (status "pending") but hovering shows nothing.
    */
   utilityHelp?: UtilityHelp | null;
+  /**
+   * Parsed flags for the current utility. When provided, flag tokens in the
+   * script are highlighted with a subtle underline and show a description
+   * popover on hover. `null`/`undefined` disables flag highlighting entirely.
+   */
+  parsedFlags?: ReadonlyArray<ParsedFlag> | null;
 }
 
 export function ScriptEditor(props: ScriptEditorProps): ReactElement {
@@ -103,115 +114,182 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
     textareaRef: externalRef,
     utilityHighlight,
     utilityHelp,
+    parsedFlags,
   } = props;
   const { t } = useTranslation();
   const { show: showContextMenu } = useContextMenu();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const overlayRef = useRef<HTMLPreElement | null>(null);
-  // Ref to the highlighted utility <span> in the overlay. The overlay
-  // sits BEHIND the textarea (z-index 0 vs 1), so the span itself never
-  // receives mouse events — the textarea on top intercepts them all.
-  // We therefore hit-test the cursor against this span's rect from the
-  // textarea's `mousemove` (see `handleTextareaMouseMove`).
+  // Ref to the highlighted utility <span> in the overlay.
   const utilitySpanRef = useRef<HTMLSpanElement | null>(null);
+  // Refs to each flag <span> in the overlay, keyed by segment index.
+  const flagSpanRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
 
-  // Set of declared names for O(1) lookup during tokenization.
-  // Recomputed only when `variables` identity changes, which is
-  // rare (only on add/remove/edit-name in the parent form).
   const knownNames = useMemo<ReadonlySet<string>>(() => {
     const set = new Set<string>();
     for (const v of variables) set.add(v.name);
     return set;
   }, [variables]);
 
-  const segments = useMemo(
-    () => tokenizeScript(value, knownNames, utilityHighlight ?? null),
-    [value, knownNames, utilityHighlight],
+  // Compute flag highlight ranges whenever the script or flags change.
+  const flagHighlights = useMemo<ReadonlyArray<FlagHighlight>>(
+    () => buildFlagHighlights(value, parsedFlags ?? []),
+    [value, parsedFlags],
   );
 
-  // Hover-popover for the highlighted utility token. Anchored to the
-  // hovered span's bounding rect (the overlay is laid out exactly like
-  // the textarea, so the rect lines up with what the user sees). The
-  // open/close timing mirrors the variables cheat-sheet tooltip.
-  const [helpAnchor, setHelpAnchor] = useState<DOMRect | null>(null);
-  const closeTimerRef = useRef<number | null>(null);
+  const segments = useMemo(
+    () => tokenizeScript(value, knownNames, utilityHighlight ?? null, flagHighlights),
+    [value, knownNames, utilityHighlight, flagHighlights],
+  );
 
-  const cancelHelpClose = useCallback((): void => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
+  // Clear stale flag span refs when segments change (different count/layout).
+  // We rebuild them fresh on each render via callback refs below.
+  useEffect(() => {
+    flagSpanRefs.current.clear();
+  }, [segments]);
+
+  // ---------------------------------------------------------------------------
+  // Utility hover popover
+  // ---------------------------------------------------------------------------
+
+  const [helpAnchor, setHelpAnchor] = useState<DOMRect | null>(null);
+  const utilityCloseTimerRef = useRef<number | null>(null);
+
+  const cancelUtilityClose = useCallback((): void => {
+    if (utilityCloseTimerRef.current !== null) {
+      window.clearTimeout(utilityCloseTimerRef.current);
+      utilityCloseTimerRef.current = null;
     }
   }, []);
 
-  const scheduleHelpClose = useCallback((): void => {
-    cancelHelpClose();
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null;
+  const scheduleUtilityClose = useCallback((): void => {
+    cancelUtilityClose();
+    utilityCloseTimerRef.current = window.setTimeout(() => {
+      utilityCloseTimerRef.current = null;
       setHelpAnchor(null);
     }, 120);
-  }, [cancelHelpClose]);
+  }, [cancelUtilityClose]);
 
-  /**
-   * Hit-test the pointer against the highlighted utility token while the
-   * cursor moves over the textarea. The textarea (z-index 1) sits ON TOP
-   * of the highlight overlay (z-index 0), so the overlay span's own
-   * `onMouseEnter` never fires — every mouse event lands on the textarea.
-   * We reconstruct the hover here: if the pointer is within the utility
-   * span's bounding rect, open the help popover anchored to that rect;
-   * otherwise schedule it closed. The overlay is laid out identically to
-   * the textarea, so the span's rect matches what the user sees.
-   */
+  // ---------------------------------------------------------------------------
+  // Flag hover popover
+  // ---------------------------------------------------------------------------
+
+  const [hoveredFlag, setHoveredFlag] = useState<{
+    anchor: DOMRect;
+    flag: ParsedFlag;
+  } | null>(null);
+  const flagCloseTimerRef = useRef<number | null>(null);
+
+  const cancelFlagClose = useCallback((): void => {
+    if (flagCloseTimerRef.current !== null) {
+      window.clearTimeout(flagCloseTimerRef.current);
+      flagCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleFlagClose = useCallback((): void => {
+    cancelFlagClose();
+    flagCloseTimerRef.current = window.setTimeout(() => {
+      flagCloseTimerRef.current = null;
+      setHoveredFlag(null);
+    }, 120);
+  }, [cancelFlagClose]);
+
+  // ---------------------------------------------------------------------------
+  // Mouse move: hit-test utility span AND all flag spans.
+  // Only one popover is shown at a time — hovering one closes the other.
+  // ---------------------------------------------------------------------------
+
   const handleTextareaMouseMove = useCallback(
     (e: React.MouseEvent<HTMLTextAreaElement>): void => {
-      const span = utilitySpanRef.current;
-      if (!span) {
-        // No utility token currently highlighted — nothing to hover.
-        if (helpAnchor !== null) scheduleHelpClose();
-        return;
+      // --- Utility span hit-test ---
+      const uSpan = utilitySpanRef.current;
+      if (uSpan) {
+        const rect = uSpan.getBoundingClientRect();
+        const insideUtility =
+          e.clientX >= rect.left &&
+          e.clientX <= rect.right &&
+          e.clientY >= rect.top &&
+          e.clientY <= rect.bottom;
+        if (insideUtility) {
+          cancelUtilityClose();
+          scheduleFlagClose();
+          setHelpAnchor((prev) =>
+            prev &&
+            prev.left === rect.left &&
+            prev.top === rect.top &&
+            prev.width === rect.width &&
+            prev.height === rect.height
+              ? prev
+              : rect,
+          );
+          return;
+        }
       }
-      const rect = span.getBoundingClientRect();
-      const inside =
-        e.clientX >= rect.left &&
-        e.clientX <= rect.right &&
-        e.clientY >= rect.top &&
-        e.clientY <= rect.bottom;
-      if (inside) {
-        cancelHelpClose();
-        // Only update the anchor when it actually changes to avoid a
-        // setState on every mousemove frame.
-        setHelpAnchor((prev) =>
-          prev &&
-          prev.left === rect.left &&
-          prev.top === rect.top &&
-          prev.width === rect.width &&
-          prev.height === rect.height
-            ? prev
-            : rect,
-        );
-      } else if (helpAnchor !== null) {
-        scheduleHelpClose();
+      if (helpAnchor !== null) scheduleUtilityClose();
+
+      // --- Flag spans hit-test ---
+      let foundFlag = false;
+      for (const [, span] of flagSpanRefs.current) {
+        const rect = span.getBoundingClientRect();
+        const inside =
+          e.clientX >= rect.left &&
+          e.clientX <= rect.right &&
+          e.clientY >= rect.top &&
+          e.clientY <= rect.bottom;
+        if (inside) {
+          const segIdx = Number(span.dataset["segIdx"]);
+          const seg = segments[segIdx];
+          if (seg?.kind === "flag" && seg.parsedFlag !== undefined) {
+            cancelFlagClose();
+            scheduleUtilityClose();
+            setHoveredFlag((prev) => {
+              if (
+                prev &&
+                prev.anchor.left === rect.left &&
+                prev.anchor.top === rect.top &&
+                prev.anchor.width === rect.width &&
+                prev.anchor.height === rect.height &&
+                prev.flag === seg.parsedFlag
+              ) {
+                return prev;
+              }
+              return { anchor: rect, flag: seg.parsedFlag! };
+            });
+          }
+          foundFlag = true;
+          break;
+        }
+      }
+      if (!foundFlag && hoveredFlag !== null) {
+        scheduleFlagClose();
       }
     },
-    [helpAnchor, cancelHelpClose, scheduleHelpClose],
+    [
+      helpAnchor,
+      hoveredFlag,
+      segments,
+      cancelUtilityClose,
+      scheduleUtilityClose,
+      cancelFlagClose,
+      scheduleFlagClose,
+    ],
   );
 
-  // Cancel any pending close on unmount so the timer can't fire late.
-  useEffect(() => cancelHelpClose, [cancelHelpClose]);
+  const handleMouseLeave = useCallback((): void => {
+    scheduleUtilityClose();
+    scheduleFlagClose();
+  }, [scheduleUtilityClose, scheduleFlagClose]);
 
-  // Close the popover if the utility token disappears or moves (e.g. the
-  // user edits the command) so a stale popover can't linger over a token
-  // that no longer exists.
-  //
-  // NOTE: we intentionally key this ONLY on the token's [start,end]
-  // offsets — NOT on `utilityHelp.utility`. The help text resolves
-  // asynchronously: when the user hovers a still-"pending" token, the
-  // IPC result arrives a moment later and flips `utilityHelp` from null
-  // to the resolved object. If that change reset the anchor, the popover
-  // would close the instant the text became available — so the user
-  // would hover, see nothing, and the tooltip would never appear. By
-  // depending only on the offsets, the open anchor survives the
-  // pending→resolved transition and the popover renders as soon as the
-  // help text arrives.
+  // Cancel timers on unmount.
+  useEffect(() => {
+    return () => {
+      cancelUtilityClose();
+      cancelFlagClose();
+    };
+  }, [cancelUtilityClose, cancelFlagClose]);
+
+  // Close utility popover when utility token moves/disappears.
   useEffect(() => {
     setHelpAnchor(null);
   }, [utilityHighlight?.start, utilityHighlight?.end]);
@@ -231,10 +309,6 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
     [onChange],
   );
 
-  // Sync scroll position from the textarea to the overlay so the
-  // highlights track the visible region. We use `onScroll` rather
-  // than a layout-effect-driven mirror because scroll fires far more
-  // often than React renders; a manual mirror keeps it cheap.
   const handleScroll = useCallback((e: SyntheticEvent<HTMLTextAreaElement>) => {
     const el = e.currentTarget;
     const overlay = overlayRef.current;
@@ -245,9 +319,7 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
 
   /**
    * Replace the current selection in the textarea with `text`,
-   * leaving the caret positioned after the inserted text. Uses
-   * `setRangeText` so the browser's native undo stack records the
-   * change correctly (no manual restoration trickery needed).
+   * leaving the caret positioned after the inserted text.
    */
   const insertAtCursor = useCallback(
     (text: string): void => {
@@ -257,39 +329,15 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
       const end = el.selectionEnd;
       el.focus();
       el.setRangeText(text, start, end, "end");
-      // setRangeText doesn't fire `input`/`change`, so notify the
-      // parent manually with the new value from the element.
       onChange(el.value);
     },
     [onChange],
   );
 
-  /**
-   * Show the custom context menu on right-click. Strategy:
-   *
-   *   - Listen in the bubble phase on the textarea itself (handled
-   *     here via React's `onContextMenu`).
-   *   - Use the capture-phase listener below to call
-   *     `stopImmediatePropagation` on the original event so the
-   *     ContextMenuProvider's global window-level capture handler
-   *     never runs. That handler shows generic cut/copy/paste/
-   *     selectAll and would otherwise pre-empt our menu.
-   *   - Build a menu that combines the "Insert variable" group with
-   *     the same cut/copy/paste/selectAll entries so the user
-   *     doesn't lose existing functionality.
-   */
-  // Capture-phase listener attached imperatively so we can call
-  // `stopImmediatePropagation` BEFORE the window-level capture
-  // handler in ContextMenuProvider fires. React's onContextMenu
-  // is bubble-phase only and can't pre-empt a window capture.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     const handler = (e: MouseEvent): void => {
-      // Stop the window-level capture handler in ContextMenuProvider
-      // (registered at `window` with `{ capture: true }`) from
-      // running — otherwise it would replace our menu with the
-      // generic edit-actions list.
       e.stopImmediatePropagation();
       e.preventDefault();
       const selection = window.getSelection()?.toString() ?? "";
@@ -297,13 +345,6 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
 
       const items: ContextMenuEntry[] = [];
 
-      // "Insert variable" parent: real nested submenu via the
-      // ContextMenu's `submenu` field. When the user has no
-      // variables declared, the parent is shown disabled so they
-      // see the affordance and know to declare one below.
-      // Submenu labels are built in JS (not via i18n placeholders)
-      // so the literal `${name}` syntax doesn't collide with
-      // i18next's own `{{...}}` interpolation markers.
       if (variables.length > 0) {
         items.push({
           id: "insert-variable",
@@ -312,11 +353,6 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
           }),
           submenu: variables.map((spec) => ({
             id: `insert-variable-${spec.name}`,
-            // Label is the bare variable name (e.g. `size`). The
-            // submenu is already scoped to "Insert variable", so
-            // the `${...}` syntax in the label would be redundant
-            // noise — the user picks `size`, the editor inserts
-            // `${size}` (see onSelect below).
             label: spec.name,
             onSelect: () => {
               insertAtCursor(`\${${spec.name}}`);
@@ -334,9 +370,6 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
       }
       items.push({ id: "div-vars", divider: true });
 
-      // Standard edit actions — mirror the ContextMenuProvider's
-      // generic set so the user keeps the cut/copy/paste/selectAll
-      // functionality they have everywhere else.
       items.push(
         {
           id: "cut",
@@ -366,10 +399,6 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
           id: "paste",
           label: t("contextMenu.paste"),
           onSelect: () => {
-            // Read clipboard async; insert at the current selection.
-            // Using the Clipboard API rather than document.execCommand
-            // because the textarea may have lost focus while the menu
-            // was visible — execCommand would no-op.
             navigator.clipboard
               ?.readText()
               .then((text) => {
@@ -377,10 +406,7 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
                   insertAtCursor(text);
                 }
               })
-              .catch(() => {
-                // Clipboard may be denied by the browser when not
-                // in a user-gesture context; ignore silently.
-              });
+              .catch(() => {});
           },
         },
         { id: "div-edit", divider: true },
@@ -406,10 +432,6 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
     return () => {
       el.removeEventListener("contextmenu", handler, { capture: true });
     };
-    // Re-attach when the variable list or t function changes so the
-    // menu items reflect the current state. The handler itself is
-    // re-created on every render; that's fine — attach/detach is
-    // O(1) and rarely happens.
   }, [variables, t, insertAtCursor, showContextMenu]);
 
   return (
@@ -424,10 +446,6 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
             return <span key={i}>{seg.text}</span>;
           }
           if (seg.kind === "utility") {
-            // The leading-utility token: coloured by status and a hover
-            // target for the help popover. `pointer-events: auto` is set
-            // on this span's class so it receives mouse events even
-            // though the overlay as a whole has them disabled.
             const status = seg.utilityStatus ?? "pending";
             const statusClass =
               status === "found"
@@ -440,6 +458,28 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
                 key={i}
                 ref={utilitySpanRef}
                 className={`command-form__script-editor-utility ${statusClass}`}
+              >
+                {seg.text}
+              </span>
+            );
+          }
+          if (seg.kind === "flag") {
+            const flagClass =
+              seg.flagStatus === "not-found"
+                ? "command-form__script-editor-flag command-form__script-editor-flag--not-found"
+                : "command-form__script-editor-flag command-form__script-editor-flag--found";
+            return (
+              <span
+                key={i}
+                ref={(el) => {
+                  if (el) {
+                    el.dataset["segIdx"] = String(i);
+                    flagSpanRefs.current.set(i, el);
+                  } else {
+                    flagSpanRefs.current.delete(i);
+                  }
+                }}
+                className={flagClass}
               >
                 {seg.text}
               </span>
@@ -471,21 +511,22 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
         onChange={handleChange}
         onScroll={handleScroll}
         onMouseMove={handleTextareaMouseMove}
-        onMouseLeave={scheduleHelpClose}
+        onMouseLeave={handleMouseLeave}
         placeholder={placeholder}
         rows={rows}
         spellCheck={false}
         aria-invalid={ariaInvalid ? true : undefined}
         aria-describedby={ariaDescribedBy}
       />
+      {/* Utility help popover */}
       {helpAnchor && utilityHelp
         ? createPortal(
             <div
               role="tooltip"
               className="command-form__help-popover command-form__script-help-popover"
-              style={utilityPopoverStyle(helpAnchor)}
-              onMouseEnter={cancelHelpClose}
-              onMouseLeave={scheduleHelpClose}
+              style={tokenPopoverStyle(helpAnchor)}
+              onMouseEnter={cancelUtilityClose}
+              onMouseLeave={scheduleUtilityClose}
             >
               {utilityHelp.status === "not-found" ? (
                 t("commandForm.scriptHelp.notFound", {
@@ -507,26 +548,46 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
             document.body,
           )
         : null}
+      {/* Flag description popover */}
+      {hoveredFlag !== null && hoveredFlag.flag.description.length > 0
+        ? createPortal(
+            <div
+              role="tooltip"
+              className="command-form__help-popover command-form__script-help-popover command-form__script-flag-popover"
+              style={tokenPopoverStyle(hoveredFlag.anchor)}
+              onMouseEnter={cancelFlagClose}
+              onMouseLeave={scheduleFlagClose}
+            >
+              <p className="command-form__script-flag-label">
+                {hoveredFlag.flag.flags.join(", ")}
+              </p>
+              <p className="command-form__script-flag-desc">
+                {hoveredFlag.flag.description}
+              </p>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
 
 /** Assumed max popover height (px), used only for the flip decision. */
-const UTILITY_POPOVER_MAX_H = 320;
+const TOKEN_POPOVER_MAX_H = 320;
 
 /**
- * Position the utility help popover under the hovered token, flipping
- * above it when it would overflow the viewport bottom.
+ * Position a help popover under the hovered token, flipping above it when
+ * it would overflow the viewport bottom.
  */
-function utilityPopoverStyle(anchor: DOMRect): React.CSSProperties {
+function tokenPopoverStyle(anchor: DOMRect): React.CSSProperties {
   const GAP = 6;
   const viewportH = typeof window !== "undefined" ? window.innerHeight : 0;
-  const fitsBelow = anchor.bottom + GAP + UTILITY_POPOVER_MAX_H <= viewportH;
+  const fitsBelow = anchor.bottom + GAP + TOKEN_POPOVER_MAX_H <= viewportH;
   const top = fitsBelow
     ? anchor.bottom + GAP
-    : Math.max(8, anchor.top - GAP - UTILITY_POPOVER_MAX_H);
+    : Math.max(8, anchor.top - GAP - TOKEN_POPOVER_MAX_H);
   const left = Math.max(8, anchor.left);
-  return { position: "fixed", top, left, maxHeight: UTILITY_POPOVER_MAX_H };
+  return { position: "fixed", top, left, maxHeight: TOKEN_POPOVER_MAX_H };
 }
 
 export type { HighlightSegment } from "./scriptHighlight";

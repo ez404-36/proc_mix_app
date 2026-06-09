@@ -291,6 +291,29 @@ pub async fn fetch_utility_help(
     crate::core::utility_help::fetch_help(utility).await
 }
 
+/// Parse structured flag / positional-argument metadata from the raw
+/// `--help` output of a utility. Fetches help text via `fetch_help`
+/// (same security model and probes as `fetch_utility_help`) and runs the
+/// heuristic `flag_parser::parse_flags` over it.
+///
+/// Returns an empty `ParsedCli` when the utility is not found or its help
+/// text cannot be parsed — the frontend treats this as "no pre-fill
+/// available" and falls back to the plain script editor.
+#[tauri::command]
+pub async fn parse_utility_flags(
+    utility: String,
+) -> Result<crate::core::flag_parser::ParsedCli, String> {
+    let help = crate::core::utility_help::fetch_help(utility).await?;
+    if help.status == crate::core::utility_help::UtilityHelpStatus::NotFound {
+        return Ok(crate::core::flag_parser::ParsedCli {
+            positional_args: vec![],
+            flags: vec![],
+        });
+    }
+    let text = help.text.unwrap_or_default();
+    Ok(crate::core::flag_parser::parse_flags(&text))
+}
+
 /// Preview the result of running an output schema against a sample of
 /// stdout, WITHOUT executing any command. The OutputSchemaEditor calls
 /// this so the user can see the extracted fields / return value live as

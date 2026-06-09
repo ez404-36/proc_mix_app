@@ -239,6 +239,8 @@ export function buildInitialState(
   t: TFunction,
   platform: PlatformOrUnknown | null,
   availableShells: ReadonlyArray<Shell>,
+  /** Optional pre-filled script for the create path (from ScriptFirstCreator). */
+  initialScript?: string,
 ): FormState {
   if (mode === "edit" && command) {
     // For seeds, use the localized labels so the user sees and edits the
@@ -262,12 +264,15 @@ export function buildInitialState(
       disableHints: false,
       outputSchema: command.outputSchema,
       envRows: recordToEnvRows(command.env),
+      workingDir: command.workingDir ?? "",
+      promptWorkingDir: command.promptWorkingDir ?? false,
     };
   }
   return {
     name: "",
     description: "",
-    script: "",
+    // When coming from ScriptFirstCreator, the script is pre-filled.
+    script: initialScript ?? "",
     shell: pickCreateModeShell(platform, availableShells),
     tags: [],
     category: "",
@@ -279,6 +284,8 @@ export function buildInitialState(
     disableHints: false,
     outputSchema: undefined,
     envRows: [],
+    workingDir: "",
+    promptWorkingDir: false,
   };
 }
 
@@ -312,5 +319,7 @@ export function fingerprintForm(form: FormState): string {
       promptAtRuntime: v.promptAtRuntime,
     })),
     envRows: form.envRows.map((r) => ({ key: r.key, value: r.value })),
+    workingDir: form.workingDir,
+    promptWorkingDir: form.promptWorkingDir,
   });
 }
