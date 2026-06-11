@@ -468,7 +468,17 @@ pub(super) async fn kill_child_tree(
     }
     #[cfg(not(unix))]
     {
-        let _ = immediate; // SIGKILL semantics are identical on non-Unix.
+        let _ = immediate;
+        // Kill the entire process tree so child processes spawned by the
+        // shell (e.g. python.exe, npm.exe) don't survive the cancel/timeout.
+        // /F forces termination, /T recurses into all descendants.
+        if let Some(pid) = child.id() {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .output();
+        }
+        // Safety net: if taskkill wasn't available or the PID already exited,
+        // this ensures the direct child is signalled too.
         let _ = child.start_kill();
     }
 }

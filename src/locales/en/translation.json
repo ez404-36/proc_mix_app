@@ -384,7 +384,7 @@
     },
     "about": {
       "title": "About",
-      "version": "v0.5.0",
+      "version": "v0.5.1",
       "description": "Cross-platform command and workflow automation tool.",
       "license": "Open source. MIT License.",
       "copyright": "© 2026 Zenkin Egor Andreevich"
@@ -725,7 +725,7 @@
     "emptyRecording": "Recording. Use another app to capture the commands it launches.",
     "unsupported": "Process recording is not yet implemented on this operating system. It is currently available on Windows only — support for Linux and macOS is planned.",
     "unsupportedBadge": "Windows only",
-    "startFailed": "Failed to start recording",
+    "startFailed": "Couldn't start recording. Process recording uses a Windows ETW trace session, which requires administrator rights — run ProcMix as administrator and try again.",
     "column": {
       "image": "Program",
       "commandLine": "Command line"

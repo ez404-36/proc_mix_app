@@ -447,6 +447,10 @@ enum StderrPolicy {
     /// Fall back to non-empty stderr as the help text (for `--help`/`-h`).
     Fallback,
     /// Ignore stderr entirely and require a successful exit (for `man`).
+    ///
+    /// `allow(dead_code)` off Unix: only the `#[cfg(unix)]` `man` probe
+    /// constructs this; the `--help` probe (all platforms) uses `Fallback`.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Reject,
 }
 

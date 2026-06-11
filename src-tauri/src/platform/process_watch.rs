@@ -10,8 +10,9 @@
 // (`captureStore`) and is never persisted here.
 //
 // Platform split:
-//   - Windows: ETW subscription to `Microsoft-Windows-Kernel-Process`
-//     (see the `imp` module below, gated `#[cfg(windows)]`).
+//   - Windows: an ETW kernel-logger subscription to the Process provider
+//     (NT Kernel Logger), which reports each launch WITH its command line.
+//     See the `imp` module below, gated `#[cfg(windows)]`.
 //   - Everything else: `start` returns the `CAPTURE_UNSUPPORTED` sentinel
 //     so the frontend can hide the feature, mirroring the
 //     `ERR_ADMIN_PASSWORD_REQUIRED` sentinel pattern in `executor.rs`.
@@ -37,6 +38,11 @@ pub const CAPTURE_EVENT: &str = "capture-event";
 /// this exact string to keep the Recorder UI hidden. Keep it a single ASCII
 /// identifier so a future message-wrapping pass cannot mutate it — the same
 /// discipline as `ERR_ADMIN_PASSWORD_REQUIRED`.
+///
+/// `allow(dead_code)` on Windows: there the ETW `imp` always has an
+/// implementation, so only the non-Windows `imp` (and the cross-platform
+/// unit test) reference this sentinel.
+#[cfg_attr(windows, allow(dead_code))]
 pub const CAPTURE_UNSUPPORTED: &str = "CAPTURE_UNSUPPORTED";
 
 /// One captured process birth, forwarded to the frontend.
@@ -168,7 +174,8 @@ mod imp {
 }
 
 // ----------------------------------------------------------------------
-// Windows implementation: ETW subscription to the Kernel-Process provider.
+// Windows implementation: an ETW kernel-logger subscription to the Process
+// provider, whose Start event includes the launch command line.
 //
 // The ETW trace loop is BLOCKING and must not run on the async runtime —
 // it is driven on a dedicated `std::thread`, the same discipline used for
@@ -183,23 +190,23 @@ mod imp {
     use std::thread::JoinHandle;
 
     use ferrisetw::parser::Parser;
+    use ferrisetw::provider::kernel_providers::PROCESS_PROVIDER;
     use ferrisetw::provider::Provider;
     use ferrisetw::schema_locator::SchemaLocator;
-    // `TraceTrait` must be in scope to call `UserTrace::process_from_handle`,
-    // which is a provided method on the trait (implemented for `UserTrace`).
-    use ferrisetw::trace::{stop_trace_by_name, TraceTrait, UserTrace};
+    // `TraceTrait` must be in scope to call `KernelTrace::process_from_handle`,
+    // which is a provided method on the trait (implemented for `KernelTrace`).
+    use ferrisetw::trace::{stop_trace_by_name, KernelTrace, TraceTrait};
     use ferrisetw::EventRecord;
     use tauri::{AppHandle, Runtime};
 
     use super::{emit_capture, CaptureEvent};
     use crate::core::capture_filter::CaptureFilter;
 
-    /// ETW provider GUID for `Microsoft-Windows-Kernel-Process`.
-    const KERNEL_PROCESS_PROVIDER: &str = "22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716";
-
-    /// Opcode 1 of the Kernel-Process provider is `ProcessStart`. Other
-    /// opcodes (process stop, thread/image events) are ignored — we only
-    /// care about births.
+    /// Opcode 1 of the kernel Process provider is `Start` — a freshly created
+    /// process, the only thing we want. Opcode 3 (`DCStart`) enumerates the
+    /// processes that were ALREADY running when the session opened, and 2/4
+    /// are stop/rundown; filtering to opcode 1 drops all of those so the user
+    /// sees only launches that happened while recording.
     const OPCODE_PROCESS_START: u8 = 1;
 
     /// Unique trace session name so start/stop can target it and a stale
@@ -208,7 +215,7 @@ mod imp {
 
     /// Owns the running ETW session and its driver thread.
     ///
-    /// The `trace` field keeps the `UserTrace` alive for the whole session:
+    /// The `trace` field keeps the `KernelTrace` alive for the whole session:
     /// `start()` returns it alongside the handle, and dropping it stops the
     /// session (per ferrisetw, "to stop the session, you can drop this
     /// instance"). If we dropped it at the end of [`start`], the session would
@@ -218,7 +225,7 @@ mod imp {
     pub(super) struct StopHandle {
         running: Arc<AtomicBool>,
         thread: Option<JoinHandle<()>>,
-        trace: UserTrace,
+        trace: KernelTrace,
     }
 
     pub(super) fn start<R: Runtime>(app: AppHandle<R>) -> Result<StopHandle, String> {
@@ -242,7 +249,12 @@ mod imp {
         // so the lock is never contended.
         let filter = Mutex::new(CaptureFilter::new(&self_exe));
 
-        let provider = Provider::by_guid(KERNEL_PROCESS_PROVIDER)
+        // The kernel Process provider (NT Kernel Logger) carries the full
+        // `CommandLine` of each launch — unlike the manifest
+        // `Microsoft-Windows-Kernel-Process` provider, whose `ProcessStart`
+        // event has no command-line field. Capturing command lines is the
+        // whole point of the recorder, so this is the right provider.
+        let provider = Provider::kernel(&PROCESS_PROVIDER)
             .add_callback(move |record: &EventRecord, locator: &SchemaLocator| {
                 if !running_for_cb.load(Ordering::Relaxed) {
                     return;
@@ -264,27 +276,32 @@ mod imp {
             })
             .build();
 
-        // `start()` returns `(UserTrace, TraceHandle)`. We process via the
+        // `start()` returns `(KernelTrace, TraceHandle)`. We process via the
         // HANDLE on a worker thread (`process_from_handle`), which — unlike
-        // `UserTrace::process()` — does NOT consume the trace. That lets us
-        // keep the `UserTrace` in the `StopHandle` so the session stays open,
+        // `KernelTrace::process()` — does NOT consume the trace. That lets us
+        // keep the `KernelTrace` in the `StopHandle` so the session stays open,
         // and stop it explicitly later. The `process_from_handle` call blocks
         // until the session ends, so it must run off the main thread.
-        let (trace, handle) = UserTrace::new()
+        //
+        // On Windows 8+ a `KernelTrace` is a private system logger with its
+        // own name, so our `SESSION_NAME` works and multiple system loggers
+        // can coexist (we are not contending for the single legacy
+        // "NT Kernel Logger").
+        let (trace, handle) = KernelTrace::new()
             .named(SESSION_NAME.to_string())
             .enable(provider)
             .start()
             // `TraceError` implements `Debug` but not `Display`, so format
             // with `{e:?}`.
-            .map_err(|e| format!("failed to start ETW capture session: {e:?}"))?;
+            .map_err(|e| format!("failed to start ETW kernel capture session: {e:?}"))?;
 
         let thread = std::thread::Builder::new()
             .name("procmix-capture".into())
             .spawn(move || {
                 // Blocks until the named session is stopped (by `stop()`),
                 // triggering the provider callback for each event. Driven by
-                // the handle, so the owning `UserTrace` lives in `StopHandle`.
-                let _ = UserTrace::process_from_handle(handle);
+                // the handle, so the owning `KernelTrace` lives in `StopHandle`.
+                let _ = KernelTrace::process_from_handle(handle);
             })
             .map_err(|e| format!("failed to spawn capture thread: {e}"))?;
 
@@ -309,21 +326,52 @@ mod imp {
         drop(handle.trace);
     }
 
-    /// Extract a [`CaptureEvent`] from a Kernel-Process `ProcessStart`
-    /// record. Returns `None` if the schema/property lookup fails so a
-    /// single malformed record can never crash the trace thread.
+    /// Extract a [`CaptureEvent`] from a kernel Process `Start` record.
+    /// Returns `None` if the schema lookup or the (required) PID parse fails,
+    /// so a single malformed record can never crash the trace thread.
+    ///
+    /// Property names differ from the manifest provider: the classic kernel
+    /// Process MOF event uses `ProcessId` / `ParentId` / `ImageFileName` /
+    /// `CommandLine`. We try the manifest spellings (`ProcessID`,
+    /// `ParentProcessID`, `ImageName`) as fallbacks so a schema-naming
+    /// difference across Windows builds degrades gracefully instead of
+    /// dropping the row.
     fn parse_process_start(record: &EventRecord, locator: &SchemaLocator) -> Option<CaptureEvent> {
         let schema = locator.event_schema(record).ok()?;
         let parser = Parser::create(record, &schema);
 
-        let pid: u32 = parser.try_parse("ProcessID").ok()?;
-        let ppid: u32 = parser.try_parse("ParentProcessID").ok()?;
-        let image: String = parser.try_parse("ImageName").ok()?;
-        // The CommandLine property may be absent for some processes; fall
-        // back to the image path so the row is still actionable.
+        // PID is required: without it the row cannot be deduped or trusted.
+        let pid: u32 = parser
+            .try_parse("ProcessId")
+            .or_else(|_| parser.try_parse("ProcessID"))
+            .ok()?;
+        // PPID is informational; default to 0 if the schema omits it.
+        let ppid: u32 = parser
+            .try_parse("ParentId")
+            .or_else(|_| parser.try_parse("ParentProcessID"))
+            .unwrap_or(0);
+        // `ImageFileName` is the executable's base name (it may be truncated
+        // to ~15 chars by the kernel). Used as a label and for noise/self
+        // filtering.
+        let image: String = parser
+            .try_parse::<String>("ImageFileName")
+            .or_else(|_| parser.try_parse::<String>("ImageName"))
+            .unwrap_or_default();
+        // The real prize: the full command line as passed to CreateProcess
+        // (normal `C:\…` paths, with arguments). Some processes start with
+        // no command line — fall back to the image name so the row is still
+        // actionable rather than empty.
         let command_line: String = parser
-            .try_parse("CommandLine")
-            .unwrap_or_else(|_| image.clone());
+            .try_parse::<String>("CommandLine")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| image.clone());
+
+        // A record with neither an image nor a command line carries nothing
+        // worth showing.
+        if image.is_empty() && command_line.is_empty() {
+            return None;
+        }
 
         Some(CaptureEvent {
             pid,

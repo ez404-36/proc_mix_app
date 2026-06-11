@@ -57,6 +57,21 @@ const SYSTEM_NOISE: &[&str] = &[
 /// is never falsely deduped, while a long-running session can't leak.
 const DEDUP_CAPACITY: usize = 512;
 
+/// True for a Chromium/Electron *child* process (renderer, GPU, utility,
+/// crashpad handler, …).
+///
+/// Keyed on the `--type=<role>` child-role switch **combined with** a
+/// Chromium IPC handle (`--field-trial-handle` or
+/// `--mojo-platform-channel-handle`). Requiring both keeps the rule precise:
+/// the app's main/parent process has neither switch and still flows through,
+/// and an unrelated CLI tool that merely happens to take a `--type` argument
+/// is not mistaken for browser plumbing.
+fn is_browser_helper(command_line: &str) -> bool {
+    command_line.contains("--type=")
+        && (command_line.contains("--field-trial-handle")
+            || command_line.contains("--mojo-platform-channel-handle"))
+}
+
 /// Lowercased basename of a path, using both `/` and `\\` as separators so
 /// the same logic works for Windows image paths and any test fixtures.
 fn basename_lower(path: &str) -> String {
@@ -114,7 +129,18 @@ impl CaptureFilter {
             return false;
         }
 
-        // Rule 3: dedup. Key on the raw image + command line so two genuinely
+        // Rule 3: browser/Electron helper processes. Chromium-based apps
+        // (Electron, WebView2, Chrome/Edge/Yandex, draw.io, …) spawn a swarm
+        // of child processes — renderers, GPU, utility, network — for every
+        // window. These are never something the user "ran", and they bury the
+        // real launches. This also drops ProcMix's OWN WebView2 children,
+        // which carry a different image name (`msedgewebview2.exe`) than
+        // `self_image` and so slip past Rule 1.
+        if is_browser_helper(command_line) {
+            return false;
+        }
+
+        // Rule 4: dedup. Key on the raw image + command line so two genuinely
         // different invocations of the same binary are both kept.
         let key = format!("{image}\u{0}{command_line}");
         if self.dedup_seen.contains(&key) {
@@ -169,6 +195,41 @@ mod tests {
         assert!(!f.should_emit("C:/Windows/System32/svchost.exe", "svchost -k netsvcs"));
         assert!(!f.should_emit("C:/Windows/System32/SVCHOST.EXE", "svchost -k other"));
         assert!(!f.should_emit("C:/Windows/System32/RuntimeBroker.exe", ""));
+    }
+
+    #[test]
+    fn rejects_chromium_helper_children() {
+        let mut f = filter();
+        // draw.io (Electron) renderer.
+        assert!(!f.should_emit(
+            "C:/Program Files/WindowsApps/draw.io/app/draw.io.exe",
+            "\"C:\\Program Files\\WindowsApps\\draw.io\\app\\draw.io.exe\" \
+             --type=renderer --user-data-dir=\"C:\\Users\\Mi\\AppData\\Roaming\\draw.io\" \
+             --field-trial-handle=1304,i,11969538719744404825,4625502481333311898,262144"
+        ));
+        // ProcMix's OWN WebView2 GPU process — different image name than
+        // procmix.exe, so only this rule (not self-exclusion) catches it.
+        assert!(!f.should_emit(
+            "C:/Program Files (x86)/Microsoft/EdgeWebView/Application/149/msedgewebview2.exe",
+            "\"...\\msedgewebview2.exe\" --type=gpu-process \
+             --webview-exe-name=procmix.exe --mojo-platform-channel-handle=1316"
+        ));
+    }
+
+    #[test]
+    fn keeps_main_app_launch_and_type_lookalikes() {
+        let mut f = filter();
+        // Main Electron process: no --type, no IPC handle — a real launch.
+        assert!(f.should_emit(
+            "C:/Program Files/WindowsApps/draw.io/app/draw.io.exe",
+            "\"C:\\Program Files\\WindowsApps\\draw.io\\app\\draw.io.exe\" "
+        ));
+        // A genuine CLI tool that takes a `--type` argument but is not a
+        // Chromium child (no IPC handle) must NOT be filtered.
+        assert!(f.should_emit(
+            "C:/tools/convert.exe",
+            "convert --type=png input.svg output.png"
+        ));
     }
 
     #[test]

@@ -442,6 +442,11 @@ pub async fn collect_root_snapshot(_password: &str) -> Result<EnvSnapshot, Strin
 /// `KEY=value` form. Values may legitimately contain `=`; the first `=`
 /// separates the key from the value. Lines without `=` are silently skipped
 /// (this should not happen but tolerating it is cheap).
+///
+/// `allow(dead_code)` off Unix: the only non-test caller lives in the
+/// `#[cfg(unix)]` root-snapshot path, so on Windows this is referenced only
+/// by the unit tests below.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn parse_env_output(s: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for line in s.lines() {

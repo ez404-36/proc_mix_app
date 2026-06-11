@@ -86,6 +86,10 @@ pub struct OutputPipelineStepRecord {
     pub fields: Vec<OutputFieldRecord>,
 }
 
+fn default_parser_kind() -> String {
+    "raw".to_string()
+}
+
 /// Declarative description of a command's stdout shape. Persisted as the
 /// `output_schema` TEXT column (JSON-encoded, NULL when absent) and
 /// consumed by `core::extractor` after the command finishes. Mirrors the
@@ -105,6 +109,10 @@ pub struct OutputSchemaRecord {
     /// One of: "raw", "lines", "json", "regex", "keyValue", "table".
     /// Kept a plain string here; `core::extractor` owns the typed
     /// interpretation, exactly as `WorkflowNodeRecord::kind` does.
+    /// Default "raw" so pipeline-mode records (which omit this field) still
+    /// deserialise cleanly — the extractor ignores `parser` when `pipeline`
+    /// is non-empty.
+    #[serde(default = "default_parser_kind")]
     pub parser: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,

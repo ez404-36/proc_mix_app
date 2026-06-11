@@ -37,7 +37,7 @@ const SEED_TEMPLATES: readonly SeedTemplate[] = [
     scripts: {
       linux: { script: "ls -la ~", shell: "bash" },
       macos: { script: "ls -la ~", shell: "zsh" },
-      windows: { script: "Get-ChildItem -Force ~", shell: "pwsh" },
+      windows: { script: "Get-ChildItem -Force ~", shell: "powershell" },
     },
   },
   {
@@ -50,7 +50,7 @@ const SEED_TEMPLATES: readonly SeedTemplate[] = [
     scripts: {
       linux: { script: "date", shell: "bash" },
       macos: { script: "date", shell: "zsh" },
-      windows: { script: "Get-Date", shell: "pwsh" },
+      windows: { script: "Get-Date", shell: "powershell" },
     },
   },
   {
@@ -66,7 +66,7 @@ const SEED_TEMPLATES: readonly SeedTemplate[] = [
       windows: {
         script:
           "Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize",
-        shell: "pwsh",
+        shell: "powershell",
       },
     },
   },

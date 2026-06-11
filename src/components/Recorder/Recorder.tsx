@@ -130,6 +130,10 @@ export function Recorder(): ReactElement {
         setSupported(false);
         return;
       }
+      // Surface the real cause for diagnosis. The generic message alone hid
+      // the dominant failure mode: creating the ETW trace session needs
+      // administrator rights, so the OS returns "access denied" here.
+      console.error("start_process_capture failed:", err);
       setStartError(t("processCapture.startFailed"));
     }
   };

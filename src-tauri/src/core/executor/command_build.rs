@@ -51,7 +51,7 @@ pub(super) fn shell_invocation(shell: &str) -> (&'static str, &'static [&'static
 
 pub(super) fn default_shell() -> &'static str {
     if cfg!(windows) {
-        "pwsh"
+        "powershell"
     } else {
         "bash"
     }
