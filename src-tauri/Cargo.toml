@@ -126,6 +126,16 @@ keyring = { version = "3", features = ["windows-native"] }
 # `docs/process-capture.md`.
 ferrisetw = "1.2"
 
+# Win32 bindings for the Process Capture target picker: `list_capture_targets`
+# enumerates running processes via the Toolhelp snapshot
+# (`CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS)`), the Windows analogue of the
+# Linux `/proc` walk. Pinned to 0.57 so it shares the version ferrisetw already
+# locks (no new `windows` major in the tree). See the scoping plan §4.1.
+windows = { version = "0.57", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+
 # Enable Tauri's `test` feature for our test target only — exposes
 # `tauri::test::mock_app()` and the MockRuntime needed for integration
 # tests that spawn real child processes through `spawn_execution`.

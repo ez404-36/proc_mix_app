@@ -3449,6 +3449,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "uuid",
+ "windows 0.57.0",
 ]
 
 [[package]]

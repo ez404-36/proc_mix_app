@@ -571,11 +571,79 @@ mod imp {
     }
 
     pub(super) fn list_targets() -> Vec<super::CaptureTarget> {
-        // TODO: enumerate via Toolhelp `CreateToolhelp32Snapshot` (see scoping
-        // plan §4.1). Deferred together with Windows snapshot-seeding; until
-        // then the Recorder's "choose app" list is empty on Windows and only
-        // the "all processes" scope is available there.
-        Vec::new()
+        // Enumerate every running process via the Toolhelp snapshot — the
+        // Windows analogue of the Linux `/proc` walk (scoping plan §4.1).
+        // First version: ALL processes; "has a visible window" filtering is
+        // deferred (matches the Linux side). Best-effort: any Win32 failure
+        // yields an empty list rather than erroring the IPC call.
+        list_targets_toolhelp().unwrap_or_default()
+    }
+
+    /// Walk the Toolhelp process snapshot into `(pid, name)` capture targets,
+    /// sorted by name (case-insensitive, PID tiebreak) for a stable picker —
+    /// mirroring the Linux `cn_proc::list_targets` contract.
+    ///
+    /// Returns `None` only if the snapshot itself can't be taken; a snapshot
+    /// with zero usable entries returns `Some(empty)`.
+    fn list_targets_toolhelp() -> Option<Vec<super::CaptureTarget>> {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        };
+
+        // SAFETY: every call below follows the documented Toolhelp contract:
+        // `CreateToolhelp32Snapshot` returns a handle we own and always close;
+        // `PROCESSENTRY32W::dwSize` is set before the first iteration as the
+        // API requires; the `*W` entry-name buffer is a fixed-size UTF-16
+        // array we read up to its first NUL. No raw pointer outlives the loop.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.ok()?;
+
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+
+        let mut targets = Vec::new();
+        // `Process32FirstW` fails (and we bail to an empty list) if the
+        // snapshot is empty.
+        if unsafe { Process32FirstW(snapshot, &mut entry) }.is_ok() {
+            loop {
+                if let Some(name) = exe_name_from_entry(&entry.szExeFile) {
+                    targets.push(super::CaptureTarget {
+                        pid: entry.th32ProcessID,
+                        name,
+                    });
+                }
+                if unsafe { Process32NextW(snapshot, &mut entry) }.is_err() {
+                    break;
+                }
+            }
+        }
+
+        // Release the snapshot handle regardless of how the walk ended.
+        let _ = unsafe { CloseHandle(snapshot) };
+
+        targets.sort_by(|a, b| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+                .then(a.pid.cmp(&b.pid))
+        });
+        Some(targets)
+    }
+
+    /// Decode a Toolhelp `szExeFile` UTF-16 buffer (NUL-terminated, fixed
+    /// length) into the executable's display name. `None` for an empty name
+    /// (e.g. the System Idle Process), so it is skipped from the picker.
+    fn exe_name_from_entry(buf: &[u16]) -> Option<String> {
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        let name = String::from_utf16_lossy(&buf[..len]);
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
+        }
     }
 }
 
