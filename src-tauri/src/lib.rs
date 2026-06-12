@@ -171,6 +171,7 @@ pub fn run() {
             commands::start_process_capture,
             commands::stop_process_capture,
             commands::process_capture_status,
+            commands::list_capture_targets,
             commands::get_process_env,
             commands::list_env_files,
             commands::add_env_file,

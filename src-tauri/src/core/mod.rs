@@ -7,6 +7,7 @@ pub mod flag_parser;
 pub mod parser;
 pub mod redact;
 pub mod scheduler;
+pub mod scope_tracker;
 pub mod shells;
 pub mod utility_help;
 pub mod workflow;

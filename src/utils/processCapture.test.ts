@@ -65,11 +65,29 @@ describe("isCaptureUnsupportedError", () => {
 });
 
 describe("IPC wrappers", () => {
-  it("startProcessCapture invokes the start command", async () => {
+  it("startProcessCapture invokes the start command with no scope by default", async () => {
     mocks.invoke.mockResolvedValue(undefined);
     const { startProcessCapture } = await import("./processCapture");
     await startProcessCapture();
-    expect(mocks.invoke).toHaveBeenCalledWith("start_process_capture");
+    expect(mocks.invoke).toHaveBeenCalledWith("start_process_capture", {});
+  });
+
+  it("startProcessCapture forwards an explicit capture scope", async () => {
+    mocks.invoke.mockResolvedValue(undefined);
+    const { startProcessCapture } = await import("./processCapture");
+    await startProcessCapture({ mode: "subtree", roots: [4321] });
+    expect(mocks.invoke).toHaveBeenCalledWith("start_process_capture", {
+      scope: { mode: "subtree", roots: [4321] },
+    });
+  });
+
+  it("listCaptureTargets invokes the list command", async () => {
+    mocks.invoke.mockResolvedValue([{ pid: 1, name: "init" }]);
+    const { listCaptureTargets } = await import("./processCapture");
+    await expect(listCaptureTargets()).resolves.toEqual([
+      { pid: 1, name: "init" },
+    ]);
+    expect(mocks.invoke).toHaveBeenCalledWith("list_capture_targets");
   });
 
   it("stopProcessCapture invokes the stop command", async () => {

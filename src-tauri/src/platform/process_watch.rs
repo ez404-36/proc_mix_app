@@ -23,14 +23,17 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::Mutex;
 
+use crate::core::scope_tracker::CaptureScope;
+
 /// Tauri event channel carrying captured process starts to the frontend.
 /// Mirrors `EXECUTION_EVENT` from `executor.rs`. The TS side subscribes via
 /// `subscribeCaptureEvents` (`src/utils/processCapture.ts`).
 ///
-/// `allow(dead_code)` off Windows: consumed only by the Windows ETW `imp`
-/// module (and the frontend over IPC), but is part of the cross-boundary
-/// contract and is exercised by the unit test below on every platform.
-#[cfg_attr(not(windows), allow(dead_code))]
+/// `allow(dead_code)` on platforms with no capture backend (macOS/other):
+/// consumed by the Windows ETW and Linux cn_proc `imp` modules (and the
+/// frontend over IPC), but is part of the cross-boundary contract and is
+/// exercised by the unit test below on every platform.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub const CAPTURE_EVENT: &str = "capture-event";
 
 /// Sentinel returned by [`start`] on platforms where Process Capture is not
@@ -39,11 +42,26 @@ pub const CAPTURE_EVENT: &str = "capture-event";
 /// identifier so a future message-wrapping pass cannot mutate it — the same
 /// discipline as `ERR_ADMIN_PASSWORD_REQUIRED`.
 ///
-/// `allow(dead_code)` on Windows: there the ETW `imp` always has an
-/// implementation, so only the non-Windows `imp` (and the cross-platform
-/// unit test) reference this sentinel.
-#[cfg_attr(windows, allow(dead_code))]
+/// `allow(dead_code)` on platforms WITH a capture backend (Windows ETW,
+/// Linux cn_proc): there `imp::start` never returns this sentinel, so only
+/// the fallback `imp` on other OSes (and the cross-platform unit test)
+/// reference it.
+#[cfg_attr(any(windows, target_os = "linux"), allow(dead_code))]
 pub const CAPTURE_UNSUPPORTED: &str = "CAPTURE_UNSUPPORTED";
+
+/// Sentinel returned by [`start`] when the feature IS supported but the OS
+/// denied the capture backend for lack of privilege — currently only Linux,
+/// where binding the `cn_proc` netlink multicast group needs `CAP_NET_ADMIN`.
+/// The frontend matches this exact string (`isCaptureRequiresPrivilegeError`)
+/// to show a tailored "grant CAP_NET_ADMIN" hint instead of the generic
+/// "unsupported" notice. A single ASCII identifier, same discipline as
+/// [`CAPTURE_UNSUPPORTED`].
+///
+/// `allow(dead_code)` off Linux: only the Linux cn_proc `imp` can produce
+/// this, but the constant is part of the cross-boundary contract and pinned
+/// by a unit test on every platform.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub const CAPTURE_REQUIRES_PRIVILEGE: &str = "CAPTURE_REQUIRES_PRIVILEGE";
 
 /// One captured process birth, forwarded to the frontend.
 ///
@@ -55,10 +73,11 @@ pub const CAPTURE_UNSUPPORTED: &str = "CAPTURE_UNSUPPORTED";
 /// happens on the frontend (`redactSecrets`) before display — this struct
 /// never reaches a log; see the privacy section of the design doc.
 ///
-/// `allow(dead_code)` off Windows: only the Windows ETW `imp` module
-/// constructs this, but the type + its camelCase wire format are pinned by
-/// a unit test on every platform.
-#[cfg_attr(not(windows), allow(dead_code))]
+/// `allow(dead_code)` on platforms with no capture backend (macOS/other):
+/// only the Windows ETW and Linux cn_proc `imp` modules construct this, but
+/// the type + its camelCase wire format are pinned by a unit test on every
+/// platform.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureEvent {
@@ -110,17 +129,23 @@ struct WatcherHandle {
 }
 
 /// Begin observing process starts and emitting `CaptureEvent`s on
-/// [`CAPTURE_EVENT`]. Idempotent: starting while already running is a no-op
-/// success, so the UI can call it without tracking state precisely.
+/// [`CAPTURE_EVENT`], constrained to `scope` (the chosen app's subtree, all
+/// processes, or everything-except-a-subtree). Idempotent: starting while
+/// already running is a no-op success, so the UI can call it without tracking
+/// state precisely.
 ///
 /// Returns `Err(CAPTURE_UNSUPPORTED)` on platforms without an
 /// implementation.
-pub async fn start<R: Runtime>(app: AppHandle<R>, state: Arc<WatcherState>) -> Result<(), String> {
+pub async fn start<R: Runtime>(
+    app: AppHandle<R>,
+    state: Arc<WatcherState>,
+    scope: CaptureScope,
+) -> Result<(), String> {
     let mut guard = state.inner.lock().await;
     if guard.is_some() {
         return Ok(());
     }
-    let stop = imp::start(app)?;
+    let stop = imp::start(app, scope)?;
     *guard = Some(WatcherHandle { stop });
     Ok(())
 }
@@ -135,34 +160,82 @@ pub async fn stop(state: Arc<WatcherState>) -> Result<(), String> {
     Ok(())
 }
 
+/// A process the user can pick as the capture-scope root in the Recorder
+/// ("record this app and its children"). Serialised camelCase to match the TS
+/// `CaptureTarget` interface (`src/types/capture.ts`).
+///
+/// `allow(dead_code)` on platforms with no capture backend (macOS/other):
+/// there `list_targets` returns an empty list, but the type + its wire format
+/// are part of the cross-boundary contract.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureTarget {
+    /// PID to use as the `Subtree` root.
+    pub pid: u32,
+    /// Human-readable process name (`/proc/<pid>/comm` on Linux).
+    pub name: String,
+}
+
+/// Enumerate processes the user can scope capture to. First version: ALL
+/// processes (filtering to "has a visible window" is deferred — hard on
+/// Wayland; see the scoping plan §4.1). Returns an empty list on platforms
+/// without a capture backend.
+pub fn list_targets() -> Vec<CaptureTarget> {
+    imp::list_targets()
+}
+
 /// Emit a single captured event to the frontend. Best-effort: an emit
 /// failure is logged via stderr and otherwise ignored (matches
 /// `executor::emit_event`). The raw command line is NEVER logged here.
 ///
 /// `allow(dead_code)` off Windows: only the Windows ETW callback calls this.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub(crate) fn emit_capture<R: Runtime>(app: &AppHandle<R>, event: &CaptureEvent) {
     if let Err(err) = app.emit(CAPTURE_EVENT, event) {
         eprintln!("failed to emit capture event: {err}");
     }
 }
 
+/// Current UTC time as a minimal ISO-8601-ish string (seconds since epoch).
+/// ProcMix has no time-crate dependency, and the frontend only displays this
+/// value, so a small hand-rolled formatter keeps the dependency surface
+/// unchanged. Shared by every platform `imp` that builds a [`CaptureEvent`].
+///
+/// `allow(dead_code)` on platforms with no capture backend (macOS/other):
+/// only the Windows ETW and Linux cn_proc impls construct `CaptureEvent`s.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+pub(crate) fn iso_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Seconds since epoch as a sortable, unambiguous timestamp. The UI
+    // formats it for display; precision finer than a second is not needed
+    // for a capture row.
+    format!("{secs}")
+}
+
 // ----------------------------------------------------------------------
-// Non-Windows implementation: every operation reports unsupported. Kept in
-// a private `imp` module so the public API above is platform-agnostic and
-// the cfg-split lives in exactly one place (mirrors how `admin_password`
-// keeps Unix specifics contained).
+// Fallback implementation (macOS and any other non-Windows, non-Linux OS):
+// every operation reports unsupported. Kept in a private `imp` module so the
+// public API above is platform-agnostic and the cfg-split lives in exactly
+// one place (mirrors how `admin_password` keeps Unix specifics contained).
 // ----------------------------------------------------------------------
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 mod imp {
     use super::CAPTURE_UNSUPPORTED;
     use tauri::{AppHandle, Runtime};
 
-    /// Stand-in stop handle. Never constructed on non-Windows because
+    /// Stand-in stop handle. Never constructed on this platform because
     /// [`start`] always errors before producing one.
     pub(super) enum StopHandle {}
 
-    pub(super) fn start<R: Runtime>(_app: AppHandle<R>) -> Result<StopHandle, String> {
+    pub(super) fn start<R: Runtime>(
+        _app: AppHandle<R>,
+        _scope: crate::core::scope_tracker::CaptureScope,
+    ) -> Result<StopHandle, String> {
         Err(CAPTURE_UNSUPPORTED.to_string())
     }
 
@@ -170,6 +243,68 @@ mod imp {
         // Uninhabited: there is no value to handle. The match proves to the
         // compiler this branch is unreachable without an `unwrap`/panic.
         match handle {}
+    }
+
+    pub(super) fn list_targets() -> Vec<super::CaptureTarget> {
+        // No capture backend on this platform → nothing to scope to.
+        Vec::new()
+    }
+}
+
+// ----------------------------------------------------------------------
+// Linux implementation: a netlink subscription to the kernel proc connector
+// (`cn_proc`), reading `/proc/<pid>` for each exec to reconstruct the
+// command line. The socket/parse/`/proc` machinery lives in the sibling
+// `cn_proc` module; this `imp` is just the thin contract binding.
+//
+// Like the Windows ETW loop, the blocking `recv()` runs on a dedicated
+// `std::thread` (named `procmix-capture`), NOT on the async runtime; `stop`
+// flips an atomic and wakes the blocked `poll()` via a self-pipe so the
+// thread exits promptly. See `docs/process-capture.md`.
+// ----------------------------------------------------------------------
+#[cfg(target_os = "linux")]
+mod imp {
+    use tauri::{AppHandle, Runtime};
+
+    use super::super::cn_proc::{self, StartError};
+    use super::CAPTURE_REQUIRES_PRIVILEGE;
+    use crate::core::scope_tracker::CaptureScope;
+
+    /// Owns the running cn_proc listener (worker thread + stop plumbing).
+    pub(super) struct StopHandle {
+        listener: cn_proc::Listener,
+    }
+
+    pub(super) fn start<R: Runtime>(
+        app: AppHandle<R>,
+        scope: CaptureScope,
+    ) -> Result<StopHandle, String> {
+        // Noise filter key: ProcMix's own exe basename, so its self-spawned
+        // shells are excluded. `current_exe` should always resolve; fall
+        // back to the known binary name so self-exclusion still works by
+        // basename if it somehow fails.
+        let self_exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(str::to_owned))
+            .unwrap_or_else(|| "procmix".to_string());
+
+        match cn_proc::start(app, self_exe, scope) {
+            Ok(listener) => Ok(StopHandle { listener }),
+            // Missing CAP_NET_ADMIN: the feature is supported but the socket
+            // could not be bound. Return the dedicated sentinel so the UI
+            // shows a "grant the privilege" hint, NOT the generic
+            // "unsupported" notice.
+            Err(StartError::Privilege) => Err(CAPTURE_REQUIRES_PRIVILEGE.to_string()),
+            Err(StartError::Other(msg)) => Err(msg),
+        }
+    }
+
+    pub(super) fn stop(handle: StopHandle) {
+        cn_proc::stop(handle.listener);
+    }
+
+    pub(super) fn list_targets() -> Vec<super::CaptureTarget> {
+        cn_proc::list_targets()
     }
 }
 
@@ -199,15 +334,20 @@ mod imp {
     use ferrisetw::EventRecord;
     use tauri::{AppHandle, Runtime};
 
-    use super::{emit_capture, CaptureEvent};
+    use super::{emit_capture, iso_now, CaptureEvent};
     use crate::core::capture_filter::CaptureFilter;
+    use crate::core::scope_tracker::CaptureScope;
 
     /// Opcode 1 of the kernel Process provider is `Start` — a freshly created
-    /// process, the only thing we want. Opcode 3 (`DCStart`) enumerates the
-    /// processes that were ALREADY running when the session opened, and 2/4
-    /// are stop/rundown; filtering to opcode 1 drops all of those so the user
-    /// sees only launches that happened while recording.
+    /// process, the only thing we surface. Opcode 3 (`DCStart`) enumerates the
+    /// processes that were ALREADY running when the session opened, and 4 is
+    /// rundown; we ignore those.
     const OPCODE_PROCESS_START: u8 = 1;
+
+    /// Opcode 2 is `End` — a process exit. We do NOT surface it, but we feed
+    /// its PID to the filter's `on_exit` so the scope tree is pruned (bounds
+    /// PID reuse and clears `sh -c` wrapper state). See the scoping plan §3.1.
+    const OPCODE_PROCESS_END: u8 = 2;
 
     /// Unique trace session name so start/stop can target it and a stale
     /// session from a crashed prior run can be torn down by name.
@@ -228,7 +368,10 @@ mod imp {
         trace: KernelTrace,
     }
 
-    pub(super) fn start<R: Runtime>(app: AppHandle<R>) -> Result<StopHandle, String> {
+    pub(super) fn start<R: Runtime>(
+        app: AppHandle<R>,
+        scope: CaptureScope,
+    ) -> Result<StopHandle, String> {
         // Tear down any session left over from a previous crashed run so
         // `start` cannot fail with "already exists".
         let _ = stop_trace_by_name(SESSION_NAME);
@@ -247,7 +390,22 @@ mod imp {
         // The ETW callback is `Fn`, but the filter needs `&mut`; a `Mutex`
         // gives interior mutability. There is exactly one callback thread,
         // so the lock is never contended.
-        let filter = Mutex::new(CaptureFilter::new(&self_exe));
+        //
+        // Mandatory self-exclusion (scoping plan §3.4): exclude ProcMix's own
+        // subtree. We add our own PID; the immediate-parent root (Toolhelp
+        // ppid lookup) is deferred together with Windows snapshot-seeding.
+        //
+        // NOTE: Windows snapshot-seeding (Toolhelp `CreateToolhelp32Snapshot`)
+        // for `Subtree`/self-exclusion is a follow-up — see scoping plan
+        // §3.2/§3.3. Without it, scoping a Windows app that is ALREADY running
+        // won't pick up its pre-existing children, only those launched after
+        // recording starts. The scope tree itself is fully wired; only the
+        // seed source is TODO.
+        let self_roots: std::collections::HashSet<u32> =
+            std::iter::once(std::process::id()).collect();
+        let filter = Mutex::new(CaptureFilter::with_scope_and_self_subtree(
+            &self_exe, scope, self_roots,
+        ));
 
         // The kernel Process provider (NT Kernel Logger) carries the full
         // `CommandLine` of each launch — unlike the manifest
@@ -259,19 +417,37 @@ mod imp {
                 if !running_for_cb.load(Ordering::Relaxed) {
                     return;
                 }
-                if record.opcode() != OPCODE_PROCESS_START {
-                    return;
-                }
-                if let Some(event) = parse_process_start(record, locator) {
-                    // Drop self / system-noise / duplicate starts before
-                    // they ever reach the frontend.
-                    let keep = filter
-                        .lock()
-                        .map(|mut f| f.should_emit(&event.image, &event.command_line))
-                        .unwrap_or(true);
-                    if keep {
-                        emit_capture(&app, &event);
+                match record.opcode() {
+                    OPCODE_PROCESS_START => {
+                        if let Some(event) = parse_process_start(record, locator) {
+                            // Drop out-of-scope / self / system-noise / wrapper
+                            // / duplicate starts before they reach the frontend.
+                            let keep = filter
+                                .lock()
+                                .map(|mut f| {
+                                    f.should_emit(
+                                        event.pid,
+                                        event.ppid,
+                                        &event.image,
+                                        &event.command_line,
+                                    )
+                                })
+                                .unwrap_or(true);
+                            if keep {
+                                emit_capture(&app, &event);
+                            }
+                        }
                     }
+                    OPCODE_PROCESS_END => {
+                        // Prune the dead PID from the filter's tree/wrapper
+                        // state. Never surfaced.
+                        if let Some(pid) = parse_process_end(record, locator) {
+                            if let Ok(mut f) = filter.lock() {
+                                f.on_exit(pid);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             })
             .build();
@@ -382,19 +558,24 @@ mod imp {
         })
     }
 
-    /// Current UTC time as a minimal ISO-8601 string. ProcMix has no time
-    /// crate dependency, and the frontend only displays this value, so a
-    /// small hand-rolled formatter keeps the dependency surface unchanged.
-    fn iso_now() -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        // Seconds since epoch as a sortable, unambiguous timestamp. The UI
-        // formats it for display; precision finer than a second is not
-        // needed for a capture row.
-        format!("{secs}")
+    /// Extract just the exiting PID from a kernel Process `End` record (used
+    /// only to prune the filter's scope tree — never surfaced). Returns
+    /// `None` if the schema/PID parse fails.
+    fn parse_process_end(record: &EventRecord, locator: &SchemaLocator) -> Option<u32> {
+        let schema = locator.event_schema(record).ok()?;
+        let parser = Parser::create(record, &schema);
+        parser
+            .try_parse("ProcessId")
+            .or_else(|_| parser.try_parse("ProcessID"))
+            .ok()
+    }
+
+    pub(super) fn list_targets() -> Vec<super::CaptureTarget> {
+        // TODO: enumerate via Toolhelp `CreateToolhelp32Snapshot` (see scoping
+        // plan §4.1). Deferred together with Windows snapshot-seeding; until
+        // then the Recorder's "choose app" list is empty on Windows and only
+        // the "all processes" scope is available there.
+        Vec::new()
     }
 }
 
@@ -407,6 +588,15 @@ mod tests {
     #[test]
     fn capture_unsupported_sentinel_is_exact() {
         assert_eq!(CAPTURE_UNSUPPORTED, "CAPTURE_UNSUPPORTED");
+    }
+
+    /// The privilege sentinel must stay an exact ASCII identifier and stay
+    /// DISTINCT from the unsupported one — the frontend branches on each to
+    /// show a different message (grant-privilege hint vs. unsupported notice).
+    #[test]
+    fn capture_requires_privilege_sentinel_is_exact_and_distinct() {
+        assert_eq!(CAPTURE_REQUIRES_PRIVILEGE, "CAPTURE_REQUIRES_PRIVILEGE");
+        assert_ne!(CAPTURE_REQUIRES_PRIVILEGE, CAPTURE_UNSUPPORTED);
     }
 
     /// The event channel name is part of the cross-boundary contract with
@@ -437,19 +627,23 @@ mod tests {
         assert_eq!(json.get("ppid").and_then(|v| v.as_u64()), Some(1));
     }
 
-    /// On non-Windows, `start` must report unsupported rather than silently
-    /// succeeding. (On Windows this test is skipped — there `start` opens a
-    /// real ETW session, which needs a runtime + privileges and belongs to
-    /// manual QA.)
-    #[cfg(not(windows))]
+    /// On platforms with NO capture backend (macOS / other), `start` must
+    /// report unsupported rather than silently succeeding. Skipped on
+    /// Windows (real ETW session) and Linux (real cn_proc socket) — both need
+    /// a runtime + privileges and belong to manual/privileged QA.
+    #[cfg(not(any(windows, target_os = "linux")))]
     #[tokio::test]
     async fn start_is_unsupported_off_windows() {
         // Build a mock Tauri app so we have a real `AppHandle`.
         let app = tauri::test::mock_app();
         let state = Arc::new(WatcherState::new());
-        let err = start(app.handle().clone(), state.clone())
-            .await
-            .expect_err("capture must be unsupported off Windows");
+        let err = start(
+            app.handle().clone(),
+            state.clone(),
+            crate::core::scope_tracker::CaptureScope::All,
+        )
+        .await
+        .expect_err("capture must be unsupported off Windows");
         assert_eq!(err, CAPTURE_UNSUPPORTED);
         assert!(!state.is_running().await, "no session should be recorded");
     }
@@ -460,5 +654,101 @@ mod tests {
         let state = Arc::new(WatcherState::new());
         stop(state.clone()).await.expect("idle stop is ok");
         assert!(!state.is_running().await);
+    }
+
+    /// End-to-end Linux capture: start the cn_proc listener, spawn a known
+    /// child, and assert a `capture-event` is emitted for it. `#[ignore]`d
+    /// because binding the proc-connector multicast group needs
+    /// `CAP_NET_ADMIN` — run only in privileged CI / manual QA:
+    /// `sudo -E cargo test capture_emits_event_for_spawned_child -- --ignored`.
+    #[cfg(target_os = "linux")]
+    #[ignore = "needs CAP_NET_ADMIN to bind the proc connector multicast group"]
+    #[tokio::test]
+    async fn capture_emits_event_for_spawned_child() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+        // `listen` lives on the `Listener` trait.
+        use tauri::Listener;
+
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+        let state = Arc::new(WatcherState::new());
+
+        // Observe the capture channel: flip a flag when ANY event arrives.
+        let seen = Arc::new(AtomicBool::new(false));
+        let seen_for_listener = seen.clone();
+        handle.listen(CAPTURE_EVENT, move |_event| {
+            seen_for_listener.store(true, Ordering::Relaxed);
+        });
+
+        start(
+            handle.clone(),
+            state.clone(),
+            crate::core::scope_tracker::CaptureScope::All,
+        )
+        .await
+        .expect("capture should start with CAP_NET_ADMIN");
+        assert!(state.is_running().await);
+
+        // Spawn a short-lived child whose exec the connector should report.
+        let _ = std::process::Command::new("true")
+            .status()
+            .expect("spawn `true`");
+
+        // Poll for the event with a generous timeout.
+        let mut got = false;
+        for _ in 0..50 {
+            if seen.load(Ordering::Relaxed) {
+                got = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        stop(state.clone()).await.expect("stop should succeed");
+        assert!(!state.is_running().await);
+        assert!(got, "expected a capture-event for the spawned child");
+    }
+
+    /// Negative path (Layer 2b): when the process has NO `CAP_NET_ADMIN`,
+    /// `start` must reject CLEANLY with the `CAPTURE_REQUIRES_PRIVILEGE`
+    /// sentinel (so the UI shows the grant-capability hint), never succeed
+    /// with a dead session. This is the contract a Flatpak/Snap confinement
+    /// exercises: a seccomp-filtered `socket()` or a denied multicast `bind()`
+    /// both surface as `EPERM`/`EACCES` → `StartError::Privilege` → this
+    /// sentinel.
+    ///
+    /// `#[ignore]`d and run DELIBERATELY without the capability — e.g. drop
+    /// it first (`sudo setcap -r <bin>`), or run inside an unprivileged user
+    /// namespace / the actual sandbox:
+    ///   `unshare --user --map-root-user <test-bin> --ignored --exact \
+    ///     platform::process_watch::tests::start_without_privilege_is_rejected`
+    ///
+    /// NOT a normal CI test: a developer box that happens to grant the
+    /// capability would see `start` succeed, which is a valid (different)
+    /// outcome — hence the manual gate.
+    #[cfg(target_os = "linux")]
+    #[ignore = "run WITHOUT CAP_NET_ADMIN (e.g. inside the sandbox) to verify clean privilege rejection"]
+    #[tokio::test]
+    async fn start_without_privilege_is_rejected() {
+        let app = tauri::test::mock_app();
+        let state = Arc::new(WatcherState::new());
+
+        let err = start(
+            app.handle().clone(),
+            state.clone(),
+            crate::core::scope_tracker::CaptureScope::All,
+        )
+        .await
+        .expect_err("start must fail without CAP_NET_ADMIN");
+
+        // The exact sentinel the frontend branches on for the tailored hint.
+        assert_eq!(
+            err, CAPTURE_REQUIRES_PRIVILEGE,
+            "privilege denial must surface as the dedicated sentinel, not a \
+             generic error or a silent success"
+        );
+        // No half-started session may linger on the failure path.
+        assert!(!state.is_running().await, "no session should be recorded");
     }
 }

@@ -26,3 +26,31 @@ export interface CaptureEvent {
   /** Event time as an ISO-8601 (UTC) string. */
   timestamp: string;
 }
+
+/**
+ * A process the user can pick as the capture-scope root in the Recorder
+ * ("record this app and its children"). Mirror of the Rust `CaptureTarget`
+ * struct (camelCase serde). Returned by the `list_capture_targets` command.
+ */
+export interface CaptureTarget {
+  /** PID to use as the `Subtree` scope root. */
+  pid: number;
+  /** Human-readable process name (`/proc/<pid>/comm` on Linux). */
+  name: string;
+}
+
+/**
+ * What slice of the process-birth stream to capture. Mirror of the Rust
+ * `CaptureScope` enum, serialised as an internally-tagged union
+ * (`{ mode, roots }`). Passed to `start_process_capture`.
+ *
+ * - `all` — capture everything (the previous default).
+ * - `subtree` — only the given root PIDs and their descendants (the base
+ *   "record this app" scenario).
+ * - `excludeSubtree` — everything except the given subtree (reserved for
+ *   subtracting ProcMix's own / launcher tree).
+ */
+export type CaptureScope =
+  | { mode: "all" }
+  | { mode: "subtree"; roots: number[] }
+  | { mode: "excludeSubtree"; roots: number[] };

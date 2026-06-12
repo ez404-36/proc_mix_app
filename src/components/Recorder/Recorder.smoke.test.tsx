@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   startProcessCapture: vi.fn(),
   stopProcessCapture: vi.fn(),
   subscribeCaptureEvents: vi.fn(),
+  listCaptureTargets: vi.fn(),
   getPlatform: vi.fn(),
   // Captured handler so the test can push fake capture events.
   eventHandler: null as ((e: unknown) => void) | null,
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../utils/processCapture", () => ({
   startProcessCapture: mocks.startProcessCapture,
   stopProcessCapture: mocks.stopProcessCapture,
+  listCaptureTargets: mocks.listCaptureTargets,
   subscribeCaptureEvents: (h: (e: unknown) => void) => {
     mocks.eventHandler = h;
     return () => {
@@ -31,7 +33,10 @@ vi.mock("../../utils/processCapture", () => ({
     };
   },
   isCaptureUnsupportedError: (err: unknown) => err === "CAPTURE_UNSUPPORTED",
+  isCaptureRequiresPrivilegeError: (err: unknown) =>
+    err === "CAPTURE_REQUIRES_PRIVILEGE",
   CAPTURE_UNSUPPORTED: "CAPTURE_UNSUPPORTED",
+  CAPTURE_REQUIRES_PRIVILEGE: "CAPTURE_REQUIRES_PRIVILEGE",
 }));
 
 vi.mock("../../utils/platform", () => ({
@@ -63,6 +68,7 @@ import { useCaptureStore } from "../../stores/captureStore";
 beforeEach(() => {
   mocks.startProcessCapture.mockReset().mockResolvedValue(undefined);
   mocks.stopProcessCapture.mockReset().mockResolvedValue(undefined);
+  mocks.listCaptureTargets.mockReset().mockResolvedValue([]);
   mocks.getPlatform.mockReset().mockResolvedValue("windows");
   saveMocks.saveCaptureAsCommand.mockReset().mockReturnValue([{ id: "c1" }]);
   saveMocks.saveCaptureAsWorkflow
@@ -82,8 +88,8 @@ afterEach(() => {
 });
 
 describe("Recorder gating", () => {
-  it("shows the not-yet-implemented notice off Windows", async () => {
-    mocks.getPlatform.mockResolvedValue("linux");
+  it("shows the not-yet-implemented notice on unsupported platforms (macOS)", async () => {
+    mocks.getPlatform.mockResolvedValue("macos");
     render(<Recorder />);
     expect(
       await screen.findByText(/not yet implemented on this operating system/i),
@@ -96,6 +102,16 @@ describe("Recorder gating", () => {
   it("shows the Start control on Windows", async () => {
     render(<Recorder />);
     expect(await screen.findByText("Start recording")).toBeTruthy();
+  });
+
+  it("shows the Start control on Linux (cn_proc backend)", async () => {
+    mocks.getPlatform.mockResolvedValue("linux");
+    render(<Recorder />);
+    expect(await screen.findByText("Start recording")).toBeTruthy();
+    // No unsupported notice on Linux.
+    expect(
+      screen.queryByText(/not yet implemented on this operating system/i),
+    ).toBeNull();
   });
 
   it("shows the Start control in Basic mode (recorder is not PRO-gated)", async () => {
@@ -146,6 +162,154 @@ describe("Recorder consent gate", () => {
       expect(mocks.startProcessCapture).toHaveBeenCalledOnce(),
     );
     expect(screen.queryByText("Enable Process Capture?")).toBeNull();
+  });
+
+  it("shows the CAP_NET_ADMIN hint when the backend reports a privilege error", async () => {
+    // Linux supports the feature, but the kernel proc connector bind needs
+    // CAP_NET_ADMIN — the backend rejects start with the privilege sentinel.
+    useUIStore.setState({ processCaptureEnabled: true });
+    mocks.getPlatform.mockResolvedValue("linux");
+    mocks.startProcessCapture
+      .mockReset()
+      .mockRejectedValue("CAPTURE_REQUIRES_PRIVILEGE");
+    render(<Recorder />);
+    const start = await screen.findByText("Start recording");
+
+    await act(async () => {
+      start.click();
+    });
+
+    // The tailored privilege hint is shown; the feature is NOT hidden, and
+    // the generic startFailed message is not used.
+    expect(await screen.findByText(/CAP_NET_ADMIN/)).toBeTruthy();
+    expect(useCaptureStore.getState().recording).toBe(false);
+    expect(screen.getByText("Start recording")).toBeTruthy();
+  });
+});
+
+describe("Recorder scope selector", () => {
+  it("defaults to capturing all processes", async () => {
+    useUIStore.setState({ processCaptureEnabled: true });
+    render(<Recorder />);
+    const start = await screen.findByText("Start recording");
+    await act(async () => {
+      start.click();
+    });
+    await waitFor(() =>
+      expect(mocks.startProcessCapture).toHaveBeenCalledWith({ mode: "all" }),
+    );
+  });
+
+  it("loads targets when the scope dropdown opens", async () => {
+    useUIStore.setState({ processCaptureEnabled: true });
+    mocks.listCaptureTargets.mockResolvedValue([{ pid: 4321, name: "draw.io" }]);
+    render(<Recorder />);
+    await screen.findByText("Start recording");
+
+    // The list is fetched only when the dropdown opens (lazy load), not on
+    // mount — avoids a useless `/proc` walk if the user never picks an app.
+    expect(mocks.listCaptureTargets).not.toHaveBeenCalled();
+    const trigger = screen.getByLabelText("What to record");
+    await act(async () => {
+      trigger.click();
+    });
+    await waitFor(() => expect(mocks.listCaptureTargets).toHaveBeenCalled());
+    // The option appears once loaded.
+    expect(await screen.findByText("draw.io")).toBeTruthy();
+  });
+
+  it("scopes capture to the chosen app's subtree", async () => {
+    useUIStore.setState({ processCaptureEnabled: true });
+    mocks.listCaptureTargets.mockResolvedValue([
+      { pid: 4321, name: "draw.io" },
+    ]);
+    render(<Recorder />);
+    await screen.findByText("Start recording");
+
+    await act(async () => {
+      screen.getByLabelText("What to record").click();
+    });
+    const option = await screen.findByText("draw.io");
+    await act(async () => {
+      option.click();
+    });
+
+    await act(async () => {
+      screen.getByText("Start recording").click();
+    });
+    await waitFor(() =>
+      expect(mocks.startProcessCapture).toHaveBeenCalledWith({
+        mode: "subtree",
+        roots: [4321],
+      }),
+    );
+  });
+
+  it("shows each chosen app as a removable chip (not a count)", async () => {
+    useUIStore.setState({ processCaptureEnabled: true });
+    mocks.listCaptureTargets.mockResolvedValue([
+      { pid: 10, name: "draw.io" },
+      { pid: 20, name: "obsidian" },
+    ]);
+    render(<Recorder />);
+    await screen.findByText("Start recording");
+
+    await act(async () => {
+      screen.getByLabelText("What to record").click();
+    });
+    // Pick both options from the popup (matched by role to avoid colliding
+    // with the chip text that appears in the trigger after selection).
+    await act(async () => {
+      (await screen.findByRole("option", { name: /draw\.io/ })).click();
+    });
+    await act(async () => {
+      screen.getByRole("option", { name: /obsidian/ }).click();
+    });
+
+    // Both names are shown as chips (the trigger does NOT collapse to "2").
+    const removeDrawio = screen.getByLabelText("Remove draw.io");
+    expect(removeDrawio).toBeTruthy();
+    expect(screen.getByLabelText("Remove obsidian")).toBeTruthy();
+
+    // Removing a chip deselects only that app.
+    await act(async () => {
+      removeDrawio.click();
+    });
+    expect(screen.queryByLabelText("Remove draw.io")).toBeNull();
+    expect(screen.getByLabelText("Remove obsidian")).toBeTruthy();
+  });
+
+  it("scopes capture to MULTIPLE chosen apps (multi-select)", async () => {
+    useUIStore.setState({ processCaptureEnabled: true });
+    mocks.listCaptureTargets.mockResolvedValue([
+      { pid: 10, name: "draw.io" },
+      { pid: 20, name: "obsidian" },
+    ]);
+    render(<Recorder />);
+    await screen.findByText("Start recording");
+
+    await act(async () => {
+      screen.getByLabelText("What to record").click();
+    });
+    // Multi-select: the popup stays open after the first pick, so we can pick
+    // a second app without reopening it. Match by role so the trigger chip
+    // (which echoes the label) doesn't create an ambiguous text match.
+    await act(async () => {
+      (await screen.findByRole("option", { name: /draw\.io/ })).click();
+    });
+    await act(async () => {
+      screen.getByRole("option", { name: /obsidian/ }).click();
+    });
+
+    await act(async () => {
+      screen.getByText("Start recording").click();
+    });
+    await waitFor(() =>
+      expect(mocks.startProcessCapture).toHaveBeenCalledWith({
+        mode: "subtree",
+        roots: [10, 20],
+      }),
+    );
   });
 });
 

@@ -57,6 +57,34 @@ export interface DropdownProps {
   searchable?: boolean;
   /** Placeholder text for the search input (only used when searchable=true). */
   searchPlaceholder?: string;
+  /**
+   * Multi-select mode. When true, clicking an option TOGGLES it and the popup
+   * stays open; the selection is `values` and changes are reported via
+   * `onChangeMultiple`. The single-select `value`/`onChange` are ignored.
+   */
+  multiple?: boolean;
+  /** Selected values in multi-select mode (`multiple=true`). */
+  values?: ReadonlyArray<string>;
+  /** Change handler in multi-select mode (receives the full new selection). */
+  onChangeMultiple?: (values: string[]) => void;
+  /**
+   * When true, the popup shows a loading row instead of (or above) options.
+   * Use while the option list is being fetched asynchronously so the user
+   * isn't shown a misleadingly-short list.
+   */
+  loading?: boolean;
+  /** Label for the loading row (defaults to "Loading…"). */
+  loadingLabel?: string;
+  /**
+   * Trigger text shown when nothing is selected. Single-select also falls back
+   * to the raw `value`; multi-select falls back to this placeholder.
+   */
+  placeholder?: string;
+  /**
+   * Called when the popup opens (`true`) or closes (`false`). Useful to lazily
+   * fetch options the first time the dropdown is opened.
+   */
+  onOpenChange?: (open: boolean) => void;
 }
 
 interface PopupPosition {
@@ -109,12 +137,60 @@ export function Dropdown(props: DropdownProps): ReactElement {
     id,
     searchable = false,
     searchPlaceholder = "Search…",
+    multiple = false,
+    values,
+    onChangeMultiple,
+    loading = false,
+    loadingLabel = "Loading…",
+    placeholder,
+    onOpenChange,
   } = props;
 
+  // In multi mode, a stable Set of the selected values for O(1) membership.
+  const selectedSet = useMemo(
+    () => new Set(values ?? []),
+    [values],
+  );
+
+  // Whether a given option value is currently selected (handles both modes).
+  const isValueSelected = useCallback(
+    (optValue: string): boolean =>
+      multiple ? selectedSet.has(optValue) : optValue === value,
+    [multiple, selectedSet, value],
+  );
+
+  // The selected options (multi mode), in the order they appear in `options`,
+  // for rendering removable chips in the trigger.
+  const selectedOptions = useMemo(
+    () => (multiple ? options.filter((opt) => selectedSet.has(opt.value)) : []),
+    [multiple, options, selectedSet],
+  );
+
+  // Remove one value from the multi-select (chip remove button).
+  const removeValue = useCallback(
+    (optValue: string): void => {
+      const current = values ?? [];
+      onChangeMultiple?.(current.filter((v) => v !== optValue));
+    },
+    [onChangeMultiple, values],
+  );
+
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  // In multi mode the trigger is a chip CONTAINER (a div); the popup is sized
+  // and positioned against it so it spans the full control width.
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef<Array<HTMLDivElement | null>>([]);
+
+  // The element the popup measures/aligns against: the chip container in
+  // multi mode, otherwise the single-select button. Stable per `multiple`
+  // (the refs themselves are stable) so it can be a hook dependency.
+  const measureEl = useCallback(
+    (): HTMLElement | null =>
+      multiple ? containerRef.current : triggerRef.current,
+    [multiple],
+  );
 
   const [open, setOpen] = useState<boolean>(false);
   const [activeIndex, setActiveIndex] = useState<number>(-1);
@@ -130,10 +206,12 @@ export function Dropdown(props: DropdownProps): ReactElement {
     [options, value],
   );
 
+  // Trigger label for SINGLE-select mode. Multi-select renders chips instead
+  // (see the multi trigger below), so it does not use this.
   const selectedLabel = useMemo(() => {
     const found = options.find((opt) => opt.value === value);
-    return found?.label ?? value;
-  }, [options, value]);
+    return found?.label ?? (value === "" ? (placeholder ?? "") : value);
+  }, [options, placeholder, value]);
 
   // Filtered options: when searchable and query is non-empty, filter by label
   // and description. Disabled options are always excluded from search results
@@ -186,7 +264,7 @@ export function Dropdown(props: DropdownProps): ReactElement {
   );
 
   const computePosition = useCallback((): PopupPosition | null => {
-    const trigger = triggerRef.current;
+    const trigger = measureEl();
     if (!trigger) return null;
     const rect = trigger.getBoundingClientRect();
     const vh = window.innerHeight;
@@ -202,7 +280,7 @@ export function Dropdown(props: DropdownProps): ReactElement {
       width: rect.width,
       flipped,
     };
-  }, []);
+  }, [measureEl]);
 
   const openPopup = useCallback((): void => {
     if (disabled) return;
@@ -210,20 +288,32 @@ export function Dropdown(props: DropdownProps): ReactElement {
     if (pos) setPosition(pos);
     setQuery("");
     setOpen(true);
+    onOpenChange?.(true);
     const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : null;
     if (selectedOption && !selectedOption.disabled) {
       setActiveIndex(selectedIndex);
     } else {
       setActiveIndex(firstEnabledIndex);
     }
-  }, [computePosition, disabled, firstEnabledIndex, options, selectedIndex]);
+  }, [
+    computePosition,
+    disabled,
+    firstEnabledIndex,
+    onOpenChange,
+    options,
+    selectedIndex,
+  ]);
 
-  const closePopup = useCallback((restoreFocus: boolean): void => {
-    setOpen(false);
-    setActiveIndex(-1);
-    setQuery("");
-    if (restoreFocus) triggerRef.current?.focus();
-  }, []);
+  const closePopup = useCallback(
+    (restoreFocus: boolean): void => {
+      setOpen(false);
+      setActiveIndex(-1);
+      setQuery("");
+      onOpenChange?.(false);
+      if (restoreFocus) triggerRef.current?.focus();
+    },
+    [onOpenChange],
+  );
 
   // Focus the search input when the popup opens (searchable mode only).
   useEffect(() => {
@@ -244,10 +334,29 @@ export function Dropdown(props: DropdownProps): ReactElement {
         return;
       }
       if (next.disabled) return;
+      if (multiple) {
+        // Toggle membership; keep the popup OPEN so several options can be
+        // picked in one interaction.
+        const current = values ?? [];
+        const has = current.includes(next.value);
+        const updated = has
+          ? current.filter((v) => v !== next.value)
+          : [...current, next.value];
+        onChangeMultiple?.(updated);
+        return;
+      }
       if (next.value !== value) onChange(next.value);
       closePopup(true);
     },
-    [closePopup, onChange, filteredOptions, value],
+    [
+      closePopup,
+      multiple,
+      onChange,
+      onChangeMultiple,
+      filteredOptions,
+      value,
+      values,
+    ],
   );
 
   // Recompute the popup position once it has rendered so the flip decision
@@ -255,7 +364,7 @@ export function Dropdown(props: DropdownProps): ReactElement {
   useLayoutEffect(() => {
     if (!open) return;
     const popup = popupRef.current;
-    const trigger = triggerRef.current;
+    const trigger = measureEl();
     if (!popup || !trigger) return;
     const rect = trigger.getBoundingClientRect();
     const popupRect = popup.getBoundingClientRect();
@@ -271,7 +380,7 @@ export function Dropdown(props: DropdownProps): ReactElement {
         ? prev
         : { left: rect.left, top, width: rect.width, flipped },
     );
-  }, [open]);
+  }, [open, measureEl]);
 
   // Click outside / scroll / resize close the popup.
   useEffect(() => {
@@ -282,6 +391,9 @@ export function Dropdown(props: DropdownProps): ReactElement {
       if (!target) return;
       if (popupRef.current && popupRef.current.contains(target)) return;
       if (triggerRef.current && triggerRef.current.contains(target)) return;
+      // Multi mode: clicks inside the chip container (e.g. a chip remove
+      // button) must not close the popup.
+      if (containerRef.current && containerRef.current.contains(target)) return;
       closePopup(false);
     };
 
@@ -428,7 +540,8 @@ export function Dropdown(props: DropdownProps): ReactElement {
   const triggerClassName =
     "dropdown__trigger" + (className ? ` ${className}` : "");
 
-  const trigger = (
+  // Single-select trigger: a plain button showing the selected label.
+  const singleTrigger = (
     <button
       ref={triggerRef}
       id={id}
@@ -451,6 +564,61 @@ export function Dropdown(props: DropdownProps): ReactElement {
     </button>
   );
 
+  // Multi-select trigger: a tag-input-style container of removable chips for
+  // the selected options, plus an inner button that opens the popup. Nested
+  // buttons are invalid HTML, so the chips live OUTSIDE the toggle button.
+  const multiTrigger = (
+    <div
+      ref={containerRef}
+      className={
+        "dropdown__multi tag-input" +
+        (className ? ` ${className}` : "") +
+        (disabled ? " is-disabled" : "")
+      }
+    >
+      {selectedOptions.map((opt) => (
+        <span key={opt.value} className="tag-input__chip">
+          {opt.label}
+          <button
+            type="button"
+            className="tag-input__chip-remove"
+            aria-label={`Remove ${opt.label}`}
+            disabled={disabled}
+            onClick={() => removeValue(opt.value)}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      <button
+        ref={triggerRef}
+        id={id}
+        type="button"
+        className="dropdown__multi-toggle"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        aria-activedescendant={
+          open && activeIndex >= 0 ? optionId(activeIndex) : undefined
+        }
+        disabled={disabled}
+        onClick={handleTriggerClick}
+        onKeyDown={handleTriggerKeyDown}
+      >
+        {selectedOptions.length === 0 ? (
+          <span className="dropdown__value dropdown__value--placeholder">
+            {placeholder ?? ""}
+          </span>
+        ) : null}
+        <span className="dropdown__chevron" aria-hidden="true">
+          ▾
+        </span>
+      </button>
+    </div>
+  );
+
+  const trigger = multiple ? multiTrigger : singleTrigger;
+
   const popup =
     open && position ? (
       <div
@@ -462,6 +630,7 @@ export function Dropdown(props: DropdownProps): ReactElement {
         }
         role="listbox"
         aria-label={ariaLabel}
+        aria-multiselectable={multiple ? true : undefined}
         style={{
           left: position.left,
           top: position.top,
@@ -493,11 +662,17 @@ export function Dropdown(props: DropdownProps): ReactElement {
             />
           </div>
         ) : null}
-        {filteredOptions.length === 0 && searchable ? (
+        {loading ? (
+          <div className="dropdown__loading" role="status" aria-live="polite">
+            <span className="dropdown__spinner" aria-hidden="true" />
+            {loadingLabel}
+          </div>
+        ) : null}
+        {!loading && filteredOptions.length === 0 && searchable ? (
           <div className="dropdown__search-empty">—</div>
         ) : null}
         {filteredOptions.map((opt, idx) => {
-          const isSelected = opt.value === value;
+          const isSelected = isValueSelected(opt.value);
           const isActive = idx === activeIndex;
           const isDisabled = opt.disabled === true;
           const cls =
@@ -523,9 +698,14 @@ export function Dropdown(props: DropdownProps): ReactElement {
                 if (!isDisabled) commit(idx);
               }}
             >
-              <span className="dropdown__option-label">{opt.label}</span>
+              <span className="dropdown__option-label" title={opt.label}>
+                {opt.label}
+              </span>
               {opt.description ? (
-                <span className="dropdown__option-description">
+                <span
+                  className="dropdown__option-description"
+                  title={opt.description}
+                >
                   {opt.description}
                 </span>
               ) : null}

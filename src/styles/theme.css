@@ -3480,6 +3480,123 @@ select {
   text-align: center;
 }
 
+/* Recorder toolbar: row of controls (scope selector, Start/Stop, status,
+   selection actions) with consistent spacing so they don't slip together. */
+.recorder__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.recorder__toolbar-spacer {
+  flex: 1;
+}
+
+.recorder__status {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* "(experimental)" tag next to the Recorder title — warning (amber) tone. */
+.recorder__experimental {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--app-color-edit);
+  white-space: nowrap;
+}
+
+/* Explainer under the Recorder subtitle: clarifies that the feature captures
+   launched processes (command lines), not UI clicks/keystrokes. */
+.recorder__explainer {
+  margin-top: 6px;
+  max-width: 70ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* Recorder scope selector: a comfortable min-width so the placeholder
+   ("All processes") and process names aren't cramped. */
+.recorder__scope-select.dropdown__trigger,
+.recorder__scope-select.dropdown__multi {
+  min-width: 200px;
+}
+
+/* Give the scope popup room so process names show in full before any
+   ellipsis kicks in (the picker can list long binary names). */
+.recorder__scope-popup {
+  max-width: min(420px, calc(100vw - 16px));
+}
+
+/* Multi-select trigger: a tag-input container of selected chips + an inline
+   toggle button that opens the popup. Reuses the `.tag-input` chip styling. */
+.dropdown__multi {
+  cursor: pointer;
+}
+
+.dropdown__multi.is-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* The toggle button fills the remaining row so clicking the empty area (or
+   the chevron) opens the popup; it carries no border of its own. */
+.dropdown__multi-toggle {
+  flex: 1;
+  min-width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: inherit;
+  font: inherit;
+}
+
+.dropdown__multi-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.dropdown__value--placeholder {
+  flex: 1;
+  text-align: left;
+  color: var(--color-text-muted);
+}
+
+/* Loading row shown in the popup while options are fetched asynchronously. */
+.dropdown__loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.dropdown__spinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: dropdown-spin 0.6s linear infinite;
+}
+
+@keyframes dropdown-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Disabled options stay visible (so users can see a stored-but-
    unavailable value in edit mode) but are clearly non-interactive. */
 .dropdown__option--disabled {

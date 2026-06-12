@@ -12,7 +12,11 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { CaptureEvent } from "../types/capture";
+import type {
+  CaptureEvent,
+  CaptureScope,
+  CaptureTarget,
+} from "../types/capture";
 
 /** Channel name — must match `CAPTURE_EVENT` in `process_watch.rs`. */
 const CAPTURE_EVENT = "capture-event";
@@ -31,13 +35,40 @@ export function isCaptureUnsupportedError(err: unknown): boolean {
 }
 
 /**
- * Start the background capture session. Resolves once the Rust side has the
- * session running. Rejects with {@link CAPTURE_UNSUPPORTED} off Windows.
+ * Sentinel returned by `start_process_capture` when the feature IS supported
+ * but the OS denied the capture backend for lack of privilege — currently
+ * only Linux, where binding the `cn_proc` netlink multicast group needs
+ * `CAP_NET_ADMIN`. Must match `CAPTURE_REQUIRES_PRIVILEGE` in
+ * `process_watch.rs`. The UI shows a tailored "grant CAP_NET_ADMIN" hint
+ * (`processCapture.requiresPrivilege`) instead of hiding the feature.
+ */
+export const CAPTURE_REQUIRES_PRIVILEGE = "CAPTURE_REQUIRES_PRIVILEGE";
+
+/** Strict-equality check for the requires-privilege sentinel. */
+export function isCaptureRequiresPrivilegeError(err: unknown): boolean {
+  return err === CAPTURE_REQUIRES_PRIVILEGE;
+}
+
+/**
+ * Start the background capture session, optionally constrained to a
+ * {@link CaptureScope} (defaults to "all" when omitted). Resolves once the
+ * Rust side has the session running. Rejects with {@link CAPTURE_UNSUPPORTED}
+ * on unsupported platforms, or {@link CAPTURE_REQUIRES_PRIVILEGE} when the
+ * Linux proc connector needs `CAP_NET_ADMIN`.
  *
  * Idempotent on the Rust side: starting while already running is a no-op.
  */
-export async function startProcessCapture(): Promise<void> {
-  await invoke("start_process_capture");
+export async function startProcessCapture(scope?: CaptureScope): Promise<void> {
+  await invoke("start_process_capture", scope ? { scope } : {});
+}
+
+/**
+ * Enumerate processes the user can scope capture to ("record this app and its
+ * children"). Empty on platforms whose target enumeration is not yet
+ * implemented (Windows, macOS).
+ */
+export async function listCaptureTargets(): Promise<CaptureTarget[]> {
+  return invoke<CaptureTarget[]>("list_capture_targets");
 }
 
 /** Stop the capture session. Idempotent. */

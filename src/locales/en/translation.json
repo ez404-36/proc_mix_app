@@ -386,7 +386,7 @@
     },
     "about": {
       "title": "About",
-      "version": "v0.5.2",
+      "version": "v0.6.0",
       "description": "Cross-platform command and workflow automation tool.",
       "license": "Open source. MIT License.",
       "copyright": "© 2026 Zenkin Egor Andreevich"
@@ -709,7 +709,9 @@
   },
   "processCapture": {
     "title": "Recorder",
-    "subtitle": "Record commands launched by other apps and turn them into ProcMix commands.",
+    "experimental": "(experimental)",
+    "subtitle": "Capture the commands that other apps launch under the hood, and turn them into ProcMix commands.",
+    "explainer": "The Recorder watches the programs (processes) your computer starts — not your mouse clicks or what you type. While it's running, do something in another app that kicks off work (open a file, build, sync, export…); the command lines of any processes that app launches show up below, ready to save.",
     "start": "Start recording",
     "stop": "Stop recording",
     "recording": "Recording…",
@@ -724,11 +726,21 @@
     "savedCommands_plural": "Saved {{count}} commands",
     "savedWorkflow": "Saved workflow \"{{name}}\"",
     "defaultWorkflowName": "Recorded workflow",
-    "empty": "No commands captured yet. Press Start, then use another app — the commands it launches will appear here.",
-    "emptyRecording": "Recording. Use another app to capture the commands it launches.",
-    "unsupported": "Process recording is not yet implemented on this operating system. It is currently available on Windows only — support for Linux and macOS is planned.",
+    "empty": "No processes captured yet. Press Start, then trigger some work in another app — the command lines of the processes it launches will appear here.",
+    "emptyRecording": "Recording process launches… Trigger some work in another app (build, sync, export…) to capture the command lines it runs.",
+    "unsupported": "Process recording is not yet implemented on this operating system. It is currently available on Windows and Linux — macOS support is planned.",
     "unsupportedBadge": "Windows only",
-    "startFailed": "Couldn't start recording. Process recording uses a Windows ETW trace session, which requires administrator rights — run ProcMix as administrator and try again.",
+    "startFailed": "Couldn't start recording. On Windows it uses an ETW trace session that needs administrator rights — run ProcMix as administrator and try again.",
+    "requiresPrivilege": "Couldn't start recording. On Linux the kernel process connector needs the CAP_NET_ADMIN capability. Grant it once with: sudo setcap cap_net_admin+ep <path-to-procmix>, then restart ProcMix.",
+    "scope": {
+      "label": "What to record",
+      "all": "All processes",
+      "search": "Search processes…",
+      "loading": "Loading processes…",
+      "active": "Recording {{name}} and its child processes",
+      "activeCount_one": "{{count}} app",
+      "activeCount_other": "{{count}} apps"
+    },
     "column": {
       "image": "Program",
       "commandLine": "Command line"
