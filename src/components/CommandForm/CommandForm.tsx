@@ -1629,6 +1629,11 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
                             />
                             <span>{t("commandForm.variables.sensitive")}</span>
                           </label>
+                          {row.sensitive ? (
+                            <p className="form-hint">
+                              {t("commandForm.variables.sensitiveLeakWarning")}
+                            </p>
+                          ) : null}
                         </div>
                         <button
                           type="button"

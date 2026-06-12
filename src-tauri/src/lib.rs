@@ -72,6 +72,19 @@ pub fn run() {
                 tauri::async_runtime::block_on(async { crate::storage::init_pool(db_path).await })?;
             app.manage(pool);
 
+            // One-time security migration: move any PLAINTEXT sensitive
+            // scheduled-variable values a pre-upgrade database stored in the
+            // `schedules.variable_values` column into the OS keychain. Runs
+            // once per launch and is a cheap no-op once migrated. Best-effort
+            // (keychain failures are logged, never fatal) so the app always
+            // starts. See `scheduler::migrate_plaintext_schedule_secrets`.
+            {
+                let pool = app.state::<crate::storage::DbPool>().inner().clone();
+                tauri::async_runtime::block_on(async {
+                    scheduler::migrate_plaintext_schedule_secrets(&pool).await;
+                });
+            }
+
             // Migration notice: if the user has a `env-files.json` left over
             // from the old "global .env manager" feature, log a warning so it
             // is visible in the dev console. The file is intentionally left

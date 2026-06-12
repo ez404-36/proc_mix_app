@@ -40,6 +40,31 @@ pub struct VariableSpec {
     pub sensitive: bool,
 }
 
+/// Return a copy of `variables` with every `sensitive` spec's `default_value`
+/// removed. A sensitive variable must never carry a baked-in plaintext default
+/// secret on disk — it prompts at run time instead (or, for a schedule, draws
+/// its value from the OS keychain). The non-secret spec fields (name,
+/// description, `sensitive`) are preserved so the variable still works.
+///
+/// This runs at the storage boundary (`upsert`) so the rule holds regardless of
+/// what the frontend sent — a buggy or older client cannot smuggle a secret
+/// default into the `commands` table.
+fn strip_sensitive_defaults(variables: &[VariableSpec]) -> Vec<VariableSpec> {
+    variables
+        .iter()
+        .map(|spec| {
+            if spec.sensitive {
+                VariableSpec {
+                    default_value: None,
+                    ..spec.clone()
+                }
+            } else {
+                spec.clone()
+            }
+        })
+        .collect()
+}
+
 /// A single field extracted from a command's stdout. The locator field
 /// that matters depends on the parser (see [`OutputSchemaRecord::parser`]):
 ///   - json   → `path`   (e.g. `items[0].name`)
@@ -256,8 +281,15 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
         None => None,
     };
     let tags_json = serde_json::to_string(&cmd.tags).map_err(|e| format!("encode tags: {e}"))?;
-    let variables_json =
-        serde_json::to_string(&cmd.variables).map_err(|e| format!("encode variables: {e}"))?;
+    // Never persist a `sensitive` variable's default value to disk: a baked-in
+    // default for a secret would write a plaintext token/password into the
+    // `variables` TEXT column, defeating the `sensitive` flag's whole purpose.
+    // The spec (name / description / `sensitive`) is kept so the variable still
+    // prompts at run time; only the secret default is dropped. See H-1 in
+    // `docs/plans/security-audit-remediation-plan.md`.
+    let sanitized_variables = strip_sensitive_defaults(&cmd.variables);
+    let variables_json = serde_json::to_string(&sanitized_variables)
+        .map_err(|e| format!("encode variables: {e}"))?;
     let output_schema_json = match &cmd.output_schema {
         Some(s) => {
             Some(serde_json::to_string(s).map_err(|e| format!("encode output_schema: {e}"))?)
@@ -706,6 +738,63 @@ mod sqlite_integration_tests {
         upsert(&pool, &rec).await.unwrap();
         let listed = list_all(&pool).await.unwrap();
         assert_eq!(listed, vec![rec]);
+    }
+
+    /// H-1: a `sensitive` variable's default value must NOT be persisted to the
+    /// `commands` table — `upsert` strips it so a plaintext secret never lands
+    /// in the `variables` column. The non-secret spec fields survive, and a
+    /// non-sensitive variable's default is untouched.
+    #[tokio::test]
+    async fn upsert_strips_sensitive_variable_default_before_persisting() {
+        let pool = make_pool().await;
+        let mut rec = fixture("secret-cmd", false);
+        rec.variables = vec![
+            VariableSpec {
+                name: "token".into(),
+                default_value: Some("s3cr3t-default".into()),
+                description: Some("API token".into()),
+                sensitive: true,
+            },
+            VariableSpec {
+                name: "host".into(),
+                default_value: Some("example.com".into()),
+                description: None,
+                sensitive: false,
+            },
+        ];
+        upsert(&pool, &rec).await.unwrap();
+
+        // Read the raw column so we assert against what is actually on disk.
+        let raw: String = sqlx::query("SELECT variables FROM commands WHERE id = 'secret-cmd'")
+            .fetch_one(pool.as_ref())
+            .await
+            .unwrap()
+            .try_get("variables")
+            .unwrap();
+        assert!(
+            !raw.contains("s3cr3t-default"),
+            "the sensitive default must never be written to the commands table: {raw}"
+        );
+
+        let listed = list_all(&pool).await.unwrap();
+        let vars = &listed[0].variables;
+        let token = vars.iter().find(|v| v.name == "token").unwrap();
+        assert_eq!(
+            token.default_value, None,
+            "sensitive default must be dropped"
+        );
+        assert!(token.sensitive, "sensitive flag must be preserved");
+        assert_eq!(
+            token.description.as_deref(),
+            Some("API token"),
+            "non-secret spec fields must survive"
+        );
+        let host = vars.iter().find(|v| v.name == "host").unwrap();
+        assert_eq!(
+            host.default_value.as_deref(),
+            Some("example.com"),
+            "a non-sensitive default must be untouched"
+        );
     }
 
     #[tokio::test]

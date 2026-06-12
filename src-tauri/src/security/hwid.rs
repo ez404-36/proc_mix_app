@@ -197,13 +197,30 @@ fn read_primary_mac_raw() -> String {
 // Windows
 // ----------------------------------------------------------------------
 
+/// Resolve a System32 tool to its ABSOLUTE path so a same-named binary
+/// planted earlier on `PATH` cannot shadow the genuine system utility.
+/// Uses `%SystemRoot%` when set (the OS always sets it) and falls back to
+/// the conventional `C:\Windows` install root otherwise.
+#[cfg(target_os = "windows")]
+fn system32_tool(exe: &str) -> std::path::PathBuf {
+    let system_root =
+        std::env::var_os("SystemRoot").unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows"));
+    std::path::Path::new(&system_root)
+        .join("System32")
+        .join(exe)
+}
+
 #[cfg(target_os = "windows")]
 fn read_primary_machine_id_raw() -> String {
     // MachineGuid lives at HKLM\SOFTWARE\Microsoft\Cryptography. We query it
     // via `reg.exe query` with a fixed argument array (NEVER a shell string)
     // to avoid adding a registry crate. The output line looks like:
     //   MachineGuid    REG_SZ    <guid>
-    let output = std::process::Command::new("reg")
+    //
+    // Spawned by ABSOLUTE path (`%SystemRoot%\System32\reg.exe`) rather than
+    // the bare name so a `reg.exe` planted earlier on `PATH` cannot shadow the
+    // system tool.
+    let output = std::process::Command::new(system32_tool("reg.exe"))
         .args([
             "query",
             r"HKLM\SOFTWARE\Microsoft\Cryptography",
@@ -230,8 +247,10 @@ fn read_primary_machine_id_raw() -> String {
 fn read_primary_mac_raw() -> String {
     // `getmac` prints the physical adapters' MAC addresses. We take the
     // first token on the first data line that looks like a MAC. Fixed args,
-    // no shell. Absence degrades to "".
-    let output = std::process::Command::new("getmac")
+    // no shell. Absence degrades to "". Spawned by ABSOLUTE path
+    // (`%SystemRoot%\System32\getmac.exe`) so a planted `getmac.exe` earlier on
+    // `PATH` cannot shadow the system tool.
+    let output = std::process::Command::new(system32_tool("getmac.exe"))
         .arg("/fo")
         .arg("table")
         .output();

@@ -172,6 +172,32 @@ pub async fn list_schedules(
 /// write (returns `INVALID_CRON` on a syntax error). After a successful write
 /// the running scheduler loop is signalled to reload so the change is picked
 /// up immediately.
+/// Collect the names of every `sensitive` variable declared by the command
+/// `command_id`. Used by `upsert_schedule` to tell the storage layer which
+/// scheduled values to move into the OS keychain. A missing command (or a load
+/// failure) yields an empty set — the upsert then persists nothing as a secret,
+/// which is the safe default (no value is wrongly treated as secret, and the
+/// command-not-found case surfaces later as a `missingVariable`/error fire).
+async fn resolve_sensitive_var_names(
+    pool: &DbPool,
+    command_id: &str,
+) -> std::collections::BTreeSet<String> {
+    let Ok(commands) = storage_commands::list_all(pool).await else {
+        return std::collections::BTreeSet::new();
+    };
+    commands
+        .into_iter()
+        .find(|c| c.id == command_id)
+        .map(|c| {
+            c.variables
+                .iter()
+                .filter(|spec| spec.sensitive)
+                .map(|spec| spec.name.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub async fn upsert_schedule(
     pool: State<'_, DbPool>,
@@ -182,7 +208,19 @@ pub async fn upsert_schedule(
     // table (where the loop would silently skip it).
     scheduler::cron_spec::validate(&schedule.cron).map_err(|_| "INVALID_CRON".to_string())?;
 
-    storage_schedules::upsert(pool.inner(), &schedule).await?;
+    // Resolve which of the target command's variables are `sensitive` so the
+    // storage layer can move their values into the OS keychain instead of
+    // persisting them as plaintext in the `variable_values` JSON column. Only
+    // applies to `command` targets — workflow targets do not flow sensitive
+    // schedule prompts in v1 (the nested value shape has no single command spec
+    // to consult), so they pass an empty set and round-trip unchanged.
+    let sensitive_vars = if schedule.target_kind == "command" {
+        resolve_sensitive_var_names(pool.inner(), &schedule.target_id).await
+    } else {
+        std::collections::BTreeSet::new()
+    };
+
+    storage_schedules::upsert(pool.inner(), &schedule, &sensitive_vars).await?;
     // The record carries the frontend's (now stale) `next_run_at`; recompute it
     // from the just-saved cron so the schedule tile's cached display value
     // reflects the edit instead of the old time.

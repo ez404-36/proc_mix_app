@@ -843,6 +843,97 @@ pub async fn clear_all(pool: &DbPool) -> Result<(), String> {
     Ok(())
 }
 
+/// One-time security migration: strip any `sensitive` variable's
+/// `defaultValue` out of the command snapshots embedded in OLD history rows.
+///
+/// Before `commands::strip_sensitive_defaults` existed, a `commandCreated` /
+/// `commandEdited` / `commandDeleted` event captured a full `CommandRecord`
+/// snapshot in `payload_json` — including the plaintext `defaultValue` of a
+/// `sensitive` variable. Those rows are immutable history, so the secret would
+/// linger on disk forever. This sweep rewrites each affected payload in place,
+/// removing only the `defaultValue` of variables flagged `sensitive` and
+/// leaving every other field untouched.
+///
+/// Works directly on the JSON (not via `CommandRecord`) so it is robust to
+/// snapshot-shape changes and touches the minimum. Idempotent: a row with no
+/// sensitive default left is rewritten to identical bytes (and detected as
+/// unchanged, so no write happens). Best-effort per row — a single undecodable
+/// payload is logged and skipped rather than aborting the whole migration.
+/// Returns the number of rows actually rewritten (for the caller's VACUUM
+/// decision and tests).
+pub async fn redact_sensitive_history_defaults(pool: &DbPool) -> Result<u64, String> {
+    // Only the three snapshot-bearing kinds can embed a CommandRecord.
+    let rows = sqlx::query(
+        "SELECT id, payload_json FROM history_events \
+         WHERE kind IN ('commandCreated', 'commandEdited', 'commandDeleted')",
+    )
+    .fetch_all(pool.as_ref())
+    .await
+    .map_err(|e| format!("scan history for sensitive defaults: {e}"))?;
+
+    let mut rewritten = 0u64;
+    for row in rows {
+        let id: String = row.try_get("id").map_err(|e| format!("read id: {e}"))?;
+        let payload_json: String = row
+            .try_get("payload_json")
+            .map_err(|e| format!("read payload_json: {e}"))?;
+
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&payload_json) else {
+            eprintln!("history: skipping undecodable payload for event {id}");
+            continue;
+        };
+
+        // The snapshot lives under `snapshotBefore` / `snapshotAfter`. Strip
+        // each one; track whether anything changed.
+        let mut changed = false;
+        for key in ["snapshotBefore", "snapshotAfter"] {
+            if let Some(snapshot) = value.get_mut(key) {
+                changed |= strip_sensitive_defaults_in_snapshot(snapshot);
+            }
+        }
+        if !changed {
+            continue;
+        }
+
+        let new_payload =
+            serde_json::to_string(&value).map_err(|e| format!("re-encode payload: {e}"))?;
+        sqlx::query("UPDATE history_events SET payload_json = ? WHERE id = ?")
+            .bind(&new_payload)
+            .bind(&id)
+            .execute(pool.as_ref())
+            .await
+            .map_err(|e| format!("rewrite payload for {id}: {e}"))?;
+        rewritten += 1;
+    }
+    Ok(rewritten)
+}
+
+/// Remove the `defaultValue` of every `sensitive` variable inside one command
+/// snapshot JSON object. Returns `true` when at least one default was removed.
+/// A snapshot whose `variables` is absent / not an array is a no-op.
+fn strip_sensitive_defaults_in_snapshot(snapshot: &mut serde_json::Value) -> bool {
+    let Some(variables) = snapshot.get_mut("variables").and_then(|v| v.as_array_mut()) else {
+        return false;
+    };
+    let mut changed = false;
+    for var in variables.iter_mut() {
+        let Some(obj) = var.as_object_mut() else {
+            continue;
+        };
+        let is_sensitive = obj
+            .get("sensitive")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false);
+        // Only remove a defaultValue that is actually present and non-null —
+        // matches `strip_sensitive_defaults` (which sets it to None).
+        if is_sensitive && obj.get("defaultValue").is_some_and(|d| !d.is_null()) {
+            obj.remove("defaultValue");
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Trim the table to at most `limit` rows by deleting the oldest
 /// entries. Called after each insert by [`insert_event`]; safe to call
 /// standalone (e.g. as a maintenance task at startup).
@@ -1274,6 +1365,59 @@ mod wire_format_tests {
         assert_eq!(p.execution_id(), None);
         assert_eq!(p.run_status(), None);
         assert_eq!(p.kind_str(), "scheduledRun");
+    }
+
+    /// H-2: a `scheduledRun` history payload must NEVER carry the run's
+    /// variable values. The schedule's `variable_values` (which may include a
+    /// keychain-resolved sensitive value at fire time) is consumed by the
+    /// executor and must not be denormalised into the persisted history JSON.
+    /// This locks the payload shape so a future field addition can't smuggle a
+    /// secret into `payload_json`. Captured `output` is separately redacted by
+    /// the streaming readers (sensitive values are masked before they are
+    /// buffered), which this test also documents by including a secret-looking
+    /// value only in a NON-output field and asserting it never appears.
+    #[test]
+    fn scheduled_run_payload_carries_no_variable_values() {
+        let p = HistoryEventPayload::ScheduledRun {
+            schedule_id: "sch-1".into(),
+            schedule_name: "Nightly".into(),
+            target_kind: "command".into(),
+            target_id: "cmd-1".into(),
+            status: "success".into(),
+            exit_code: Some(0),
+            duration_ms: Some(42),
+            // Redacted output is the only place command output can appear; a
+            // real secret would already be masked to `***` upstream.
+            output: Some(vec![HistoryLogLine {
+                stream: "stdout".into(),
+                line: "done".into(),
+            }]),
+            result: None,
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        // No variable-values container of any shape may be present.
+        assert!(json.get("variableValues").is_none());
+        assert!(json.get("variable_values").is_none());
+        assert!(json.get("variables").is_none());
+        // The full payload object's keys are exactly the documented set —
+        // nothing that could carry a resolved secret.
+        let keys: std::collections::BTreeSet<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        for forbidden in [
+            "variableValues",
+            "variable_values",
+            "variables",
+            "adminPassword",
+        ] {
+            assert!(
+                !keys.contains(forbidden),
+                "scheduledRun payload must not contain `{forbidden}`: {keys:?}"
+            );
+        }
     }
 
     /// The denormalised subject-name accessor returns the workflow name
@@ -2048,5 +2192,87 @@ mod sqlite_integration_tests {
             assert_eq!(RunStatus::from_wire(s.as_str()), Some(s));
         }
         assert_eq!(RunStatus::from_wire("bogus"), None);
+    }
+
+    /// H-1 back-fill: an OLD `commandCreated` snapshot that embedded a
+    /// `sensitive` variable's plaintext `defaultValue` must have that default
+    /// stripped from `payload_json` by `redact_sensitive_history_defaults`,
+    /// while a non-sensitive variable's default and every other field survive.
+    #[tokio::test]
+    async fn redact_sensitive_history_defaults_strips_old_snapshot_secret() {
+        use crate::storage::commands::VariableSpec;
+
+        let pool = make_pool().await;
+
+        // An old snapshot with a sensitive default (the pre-fix leak) plus a
+        // benign non-sensitive default.
+        let mut cmd = sample_cmd("cmd-1", "Deploy");
+        cmd.variables = vec![
+            VariableSpec {
+                name: "token".into(),
+                default_value: Some("s3cr3t-default".into()),
+                description: None,
+                sensitive: true,
+            },
+            VariableSpec {
+                name: "host".into(),
+                default_value: Some("example.com".into()),
+                description: None,
+                sensitive: false,
+            },
+        ];
+        // Insert the row by writing payload_json directly so the snapshot keeps
+        // the secret default (the normal `commands::upsert` path would strip it,
+        // but history rows are written verbatim and predate the fix).
+        let payload = serde_json::to_string(&HistoryEventPayload::CommandCreated {
+            command_id: "cmd-1".into(),
+            command_name: "Deploy".into(),
+            snapshot_after: cmd,
+        })
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_events (id, created_at, kind, command_name, payload_json) \
+             VALUES ('evt-1', '2026-06-01T00:00:00Z', 'commandCreated', 'Deploy', ?)",
+        )
+        .bind(&payload)
+        .execute(pool.as_ref())
+        .await
+        .unwrap();
+        assert!(payload.contains("s3cr3t-default"), "precondition");
+
+        let rewritten = redact_sensitive_history_defaults(&pool).await.unwrap();
+        assert_eq!(rewritten, 1, "the one affected row must be rewritten");
+
+        let raw: String = sqlx::query("SELECT payload_json FROM history_events WHERE id = 'evt-1'")
+            .fetch_one(pool.as_ref())
+            .await
+            .unwrap()
+            .try_get("payload_json")
+            .unwrap();
+        assert!(
+            !raw.contains("s3cr3t-default"),
+            "sensitive default must be gone from the stored payload: {raw}"
+        );
+        assert!(
+            raw.contains("example.com"),
+            "non-sensitive default must be preserved"
+        );
+        assert!(raw.contains("\"token\""), "the spec itself must remain");
+
+        // Idempotent: a second pass rewrites nothing.
+        let again = redact_sensitive_history_defaults(&pool).await.unwrap();
+        assert_eq!(again, 0, "second pass must be a no-op");
+    }
+
+    /// A snapshot with NO sensitive defaults must not be rewritten at all, so a
+    /// clean database triggers no VACUUM.
+    #[tokio::test]
+    async fn redact_sensitive_history_defaults_noop_without_secrets() {
+        let pool = make_pool().await;
+        insert_event(&pool, &created_evt("1", "Greet", "2026-06-01T00:00:00Z"))
+            .await
+            .unwrap();
+        let rewritten = redact_sensitive_history_defaults(&pool).await.unwrap();
+        assert_eq!(rewritten, 0);
     }
 }

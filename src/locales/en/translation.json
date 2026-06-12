@@ -288,6 +288,8 @@
       "variablesHint": "Scheduled runs cannot prompt, so values are captured now.",
       "variablesRequired": "Fill in every required variable (marked *) before saving — a scheduled run cannot prompt for them.",
       "variableHelp": "About the {{name}} variable",
+      "secretStoredPlaceholder": "Secret stored — leave blank to keep",
+      "sensitiveKeychainHint": "Stored in the OS keychain, not in the app database.",
       "save": "Save schedule",
       "cancel": "Cancel",
       "delete": "Delete",
@@ -384,7 +386,7 @@
     },
     "about": {
       "title": "About",
-      "version": "v0.5.1",
+      "version": "v0.5.2",
       "description": "Cross-platform command and workflow automation tool.",
       "license": "Open source. MIT License.",
       "copyright": "© 2026 Zenkin Egor Andreevich"
@@ -512,6 +514,7 @@
       "descriptionPlaceholder": "description",
       "promptAtRuntime": "Prompt at runtime",
       "sensitive": "Sensitive",
+      "sensitiveLeakWarning": "Redaction masks only verbatim occurrences in output. A command that transforms the secret (base64, hashing, partial echo) before printing may still leak it — this is defence-in-depth, not a guarantee.",
       "remove": "Remove",
       "help": "How to use variables",
       "helpTooltip": "Reference variables in the script, args, working directory, or env values with ${name}.\n\nSyntax:\n  ${name}            — substituted from the value at runtime or from the default.\n  ${name:default}    — inline default; used if no value is provided.\n  ${name:}           — defaults to the empty string.\n  $$                 — a literal $.\n\nName regex: [A-Za-z_][A-Za-z0-9_]*\n\nVariables without a default trigger a prompt before each run.\nMark a variable as Sensitive to mask its value in events and logs.\nValues are NOT shell-quoted — quote \"${var}\" in your script if needed.",

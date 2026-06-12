@@ -26,9 +26,17 @@ vi.mock("@arco-design/web-react", () => ({
   Message: { error: vi.fn(), success: vi.fn() },
 }));
 
+const createSchedule = vi.fn().mockResolvedValue({ ok: true, schedule: {} });
+const updateSchedule = vi.fn().mockResolvedValue({ ok: true, schedule: {} });
+vi.mock("../../services/scheduleActions", () => ({
+  createSchedule: (...args: unknown[]) => createSchedule(...args),
+  updateSchedule: (...args: unknown[]) => updateSchedule(...args),
+}));
+
 import "../../i18n";
 import { useCommandStore } from "../../stores/commandStore";
 import type { Command, Schedule } from "../../types";
+import { SCHEDULE_SECRET_REF } from "../../utils/scheduleSecrets";
 import { ScheduleForm } from "./ScheduleForm";
 
 // The custom Dropdown calls scrollIntoView on its active option; jsdom does
@@ -88,6 +96,8 @@ beforeEach(() => {
     hydrated: true,
   });
   previewNextRuns.mockClear();
+  createSchedule.mockClear();
+  updateSchedule.mockClear();
 });
 afterEach(() => {
   useCommandStore.setState({ commands: [], favorites: [], hydrated: true });
@@ -185,5 +195,109 @@ describe("ScheduleForm recurrence editor", () => {
       });
     });
     expect((save as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a sensitive var with a stored sentinel renders blank, not the sentinel", () => {
+    useCommandStore.setState({
+      commands: [
+        makeCommand({
+          variables: [{ name: "token", sensitive: true }],
+        }),
+      ],
+      favorites: [],
+      seedsInitialized: true,
+      hydrated: true,
+    });
+    render(
+      <ScheduleForm
+        schedule={makeSchedule({
+          cron: "30 9 * * *",
+          variableValues: { token: SCHEDULE_SECRET_REF },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // The field is a masked input, rendered EMPTY (never the raw sentinel).
+    const input = document.querySelector(
+      'input[type="password"]',
+    ) as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.value).toBe("");
+    expect(input.value).not.toContain("keychain-secret");
+    // The sentinel must not leak into the DOM anywhere.
+    expect(document.body.innerHTML).not.toContain("keychain-secret");
+  });
+
+  it("re-saving a blank sensitive field keeps the stored sentinel", async () => {
+    useCommandStore.setState({
+      commands: [
+        makeCommand({
+          variables: [{ name: "token", sensitive: true }],
+        }),
+      ],
+      favorites: [],
+      seedsInitialized: true,
+      hydrated: true,
+    });
+    render(
+      <ScheduleForm
+        schedule={makeSchedule({
+          cron: "30 9 * * *",
+          variableValues: { token: SCHEDULE_SECRET_REF },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const save = screen.getByRole("button", { name: "Save" });
+    // The stored secret satisfies the required field even though it's blank.
+    expect((save as HTMLButtonElement).disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(save);
+    });
+
+    expect(updateSchedule).toHaveBeenCalledTimes(1);
+    const [, input] = updateSchedule.mock.calls[0] as [string, { variableValues: Record<string, string> }];
+    expect(input.variableValues.token).toBe(SCHEDULE_SECRET_REF);
+  });
+
+  it("typing a new value into a sensitive field sends the plaintext", async () => {
+    useCommandStore.setState({
+      commands: [
+        makeCommand({
+          variables: [{ name: "token", sensitive: true }],
+        }),
+      ],
+      favorites: [],
+      seedsInitialized: true,
+      hydrated: true,
+    });
+    render(
+      <ScheduleForm
+        schedule={makeSchedule({
+          cron: "30 9 * * *",
+          variableValues: { token: SCHEDULE_SECRET_REF },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const input = document.querySelector(
+      'input[type="password"]',
+    ) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(input, { target: { value: "new-secret" } });
+    });
+
+    const save = screen.getByRole("button", { name: "Save" });
+    await act(async () => {
+      fireEvent.click(save);
+    });
+
+    expect(updateSchedule).toHaveBeenCalledTimes(1);
+    const [, saved] = updateSchedule.mock.calls[0] as [string, { variableValues: Record<string, string> }];
+    expect(saved.variableValues.token).toBe("new-secret");
   });
 });

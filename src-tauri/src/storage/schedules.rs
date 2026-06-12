@@ -15,9 +15,12 @@
 // interpretation, exactly as `storage::workflows` keeps node `kind` a plain
 // string.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
+use crate::security::schedule_secrets;
 use crate::storage::DbPool;
 
 /// Materialised representation of a single schedule as stored in SQLite and
@@ -151,8 +154,32 @@ pub async fn exists(pool: &DbPool, id: &str) -> Result<bool, String> {
 }
 
 /// Insert a new schedule or update an existing one (matched by `id`).
-pub async fn upsert(pool: &DbPool, sched: &ScheduleRecord) -> Result<(), String> {
-    let variable_values_json = serde_json::to_string(&sched.variable_values)
+///
+/// `sensitive_vars` is the set of variable names the schedule's TARGET command
+/// marks `sensitive` (for a `command` target; empty for workflows in v1). Each
+/// such value is moved OUT of the persisted `variable_values` JSON and into the
+/// OS keychain via [`schedule_secrets`], leaving a non-secret sentinel in the
+/// column. This keeps tokens/passwords off disk — they live only in the
+/// keychain, exactly like the sudo password.
+///
+/// The keychain write is best-effort with respect to the DB write ORDER: we
+/// store secrets FIRST, then persist the sentinel-redacted JSON, so a crash
+/// between the two leaves a recoverable state (the secret is in the keychain;
+/// the column either still has the old value or the new sentinel — never a new
+/// plaintext secret). A keychain failure aborts the upsert with an error so the
+/// caller can surface it rather than silently persisting a plaintext secret.
+pub async fn upsert(
+    pool: &DbPool,
+    sched: &ScheduleRecord,
+    sensitive_vars: &BTreeSet<String>,
+) -> Result<(), String> {
+    // Split sensitive values out to the keychain, replacing each with a
+    // sentinel reference in the JSON that gets persisted. A no-op when the
+    // target declares no sensitive variables (the common case).
+    let redacted_values =
+        persist_sensitive_values(&sched.id, &sched.variable_values, sensitive_vars)?;
+
+    let variable_values_json = serde_json::to_string(&redacted_values)
         .map_err(|e| format!("encode variable_values: {e}"))?;
 
     sqlx::query(
@@ -207,13 +234,141 @@ pub async fn upsert(pool: &DbPool, sched: &ScheduleRecord) -> Result<(), String>
 
 /// Remove the schedule with the given id. A missing id is not an error
 /// (matches the `commands::delete` idempotent semantics).
+///
+/// Also clears any keychain secrets this schedule owned. We read the stored
+/// (sentinel-redacted) `variable_values` first to learn which variable names
+/// held a secret, then delete each keychain entry so a removed schedule never
+/// orphans a credential. Keychain clear failures are logged but do not block
+/// the row delete — an orphaned keychain entry is harmless and the user can
+/// still remove the schedule.
 pub async fn delete(pool: &DbPool, id: &str) -> Result<(), String> {
+    // Best-effort: clear the keychain secrets before dropping the row. If the
+    // schedule is already gone, `get` returns None and this is a no-op.
+    if let Ok(Some(sched)) = get(pool, id).await {
+        clear_sensitive_values(id, &sched.variable_values);
+    }
+
     sqlx::query("DELETE FROM schedules WHERE id = ?")
         .bind(id)
         .execute(pool.as_ref())
         .await
         .map_err(|e| format!("delete: {e}"))?;
     Ok(())
+}
+
+/// Move every `sensitive_vars` entry of a command-shape `variable_values`
+/// object into the keychain and return a clone of the JSON with each such value
+/// replaced by the [`schedule_secrets::SECRET_REF`] sentinel.
+///
+/// Non-sensitive values, and any value that is already the sentinel (an
+/// unchanged re-save where the UI did not re-enter the secret), pass through
+/// untouched — re-storing the sentinel as a keychain value would clobber the
+/// real secret with garbage. Only a plaintext value for a sensitive variable is
+/// stored and redacted.
+///
+/// Workflow-shape (nested) values are not redacted here: workflow targets do
+/// not flow sensitive prompts through the schedule in v1, and the nested shape
+/// has no command spec to consult. The function detects a non-object or nested
+/// shape and returns it unchanged.
+fn persist_sensitive_values(
+    schedule_id: &str,
+    values: &serde_json::Value,
+    sensitive_vars: &BTreeSet<String>,
+) -> Result<serde_json::Value, String> {
+    // Nothing to do when the target has no sensitive variables.
+    if sensitive_vars.is_empty() {
+        return Ok(values.clone());
+    }
+    let Some(obj) = values.as_object() else {
+        return Ok(values.clone());
+    };
+
+    let mut out = serde_json::Map::with_capacity(obj.len());
+    for (name, value) in obj {
+        let is_sensitive = sensitive_vars.contains(name);
+        match value.as_str() {
+            // A sensitive plaintext value → store in keychain, persist sentinel.
+            Some(s) if is_sensitive && !schedule_secrets::is_secret_ref(s) => {
+                if s.is_empty() {
+                    // An empty secret carries nothing to protect; drop any prior
+                    // keychain entry and persist the sentinel so the fire path
+                    // treats it as "no stored secret" → missingVariable.
+                    let _ = schedule_secrets::clear(schedule_id, name);
+                } else {
+                    schedule_secrets::set(schedule_id, name, s)
+                        .map_err(|e| format!("store sensitive value for {name}: {e}"))?;
+                }
+                out.insert(
+                    name.clone(),
+                    serde_json::Value::String(schedule_secrets::SECRET_REF.to_string()),
+                );
+            }
+            // Already a sentinel (unchanged re-save) or non-sensitive → keep.
+            _ => {
+                out.insert(name.clone(), value.clone());
+            }
+        }
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
+/// Clear every keychain secret referenced by a schedule's stored
+/// `variable_values` (i.e. each value equal to the sentinel). Best-effort —
+/// individual clear failures are logged, never propagated, because an orphaned
+/// keychain entry is harmless.
+fn clear_sensitive_values(schedule_id: &str, values: &serde_json::Value) {
+    let Some(obj) = values.as_object() else {
+        return;
+    };
+    for (name, value) in obj {
+        if value.as_str().is_some_and(schedule_secrets::is_secret_ref) {
+            if let Err(e) = schedule_secrets::clear(schedule_id, name) {
+                eprintln!("schedules: failed to clear keychain secret for {name}: {e}");
+            }
+        }
+    }
+}
+
+/// Resolve a schedule's stored command-shape `variable_values` back into real
+/// values for a fire: every sentinel reference is swapped for the secret read
+/// from the keychain. A sentinel with NO stored keychain entry (user cleared
+/// it, or a backend error) resolves to `None` for that key — it is OMITTED from
+/// the returned object so the executor treats it as an unset variable and
+/// records a `missingVariable` run rather than passing the literal sentinel to
+/// the child process.
+///
+/// Non-sentinel values pass through unchanged. Returns the resolved JSON object
+/// the scheduler then decodes via `command_variable_values`.
+pub fn resolve_sensitive_values(
+    schedule_id: &str,
+    values: &serde_json::Value,
+) -> serde_json::Value {
+    let Some(obj) = values.as_object() else {
+        return values.clone();
+    };
+    let mut out = serde_json::Map::with_capacity(obj.len());
+    for (name, value) in obj {
+        match value.as_str() {
+            Some(s) if schedule_secrets::is_secret_ref(s) => {
+                match schedule_secrets::get(schedule_id, name) {
+                    Ok(Some(secret)) => {
+                        out.insert(name.clone(), serde_json::Value::String(secret));
+                    }
+                    // No stored secret (cleared) or a keychain error: omit the
+                    // key so the fire reports a missing variable instead of
+                    // leaking the sentinel into the command.
+                    Ok(None) => {}
+                    Err(e) => {
+                        eprintln!("schedules: failed to read keychain secret for {name}: {e}");
+                    }
+                }
+            }
+            _ => {
+                out.insert(name.clone(), value.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(out)
 }
 
 /// Toggle a schedule's `enabled` flag and refresh `updated_at`. Used by the
@@ -463,6 +618,13 @@ mod sqlite_integration_tests {
     use super::*;
     use std::sync::Arc;
 
+    /// No sensitive variables: the common case for these CRUD tests, which use
+    /// non-sensitive `variable_values`. The keychain split path is exercised
+    /// separately in `secret_redaction_tests`.
+    fn no_secrets() -> BTreeSet<String> {
+        BTreeSet::new()
+    }
+
     async fn make_pool() -> DbPool {
         let opts = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(":memory:")
@@ -506,7 +668,7 @@ mod sqlite_integration_tests {
     async fn upsert_then_list_returns_inserted_record() {
         let pool = make_pool().await;
         let rec = fixture("one", true);
-        upsert(&pool, &rec).await.unwrap();
+        upsert(&pool, &rec, &no_secrets()).await.unwrap();
         let listed = list_all(&pool).await.unwrap();
         assert_eq!(listed, vec![rec]);
     }
@@ -515,11 +677,11 @@ mod sqlite_integration_tests {
     async fn upsert_updates_existing_id() {
         let pool = make_pool().await;
         let mut rec = fixture("one", false);
-        upsert(&pool, &rec).await.unwrap();
+        upsert(&pool, &rec, &no_secrets()).await.unwrap();
         rec.name = "renamed".into();
         rec.cron = "*/5 * * * *".into();
         rec.enabled = true;
-        upsert(&pool, &rec).await.unwrap();
+        upsert(&pool, &rec, &no_secrets()).await.unwrap();
         let listed = list_all(&pool).await.unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "renamed");
@@ -532,7 +694,7 @@ mod sqlite_integration_tests {
         let pool = make_pool().await;
         assert!(get(&pool, "one").await.unwrap().is_none());
         let rec = fixture("one", true);
-        upsert(&pool, &rec).await.unwrap();
+        upsert(&pool, &rec, &no_secrets()).await.unwrap();
         assert_eq!(get(&pool, "one").await.unwrap(), Some(rec));
         assert!(get(&pool, "missing").await.unwrap().is_none());
     }
@@ -540,7 +702,9 @@ mod sqlite_integration_tests {
     #[tokio::test]
     async fn set_next_run_round_trips_through_get() {
         let pool = make_pool().await;
-        upsert(&pool, &fixture("one", true)).await.unwrap();
+        upsert(&pool, &fixture("one", true), &no_secrets())
+            .await
+            .unwrap();
         set_next_run(&pool, "one", Some("2026-06-04T02:00:00+00:00"))
             .await
             .unwrap();
@@ -555,7 +719,9 @@ mod sqlite_integration_tests {
     #[tokio::test]
     async fn delete_removes_record() {
         let pool = make_pool().await;
-        upsert(&pool, &fixture("one", false)).await.unwrap();
+        upsert(&pool, &fixture("one", false), &no_secrets())
+            .await
+            .unwrap();
         delete(&pool, "one").await.unwrap();
         assert!(list_all(&pool).await.unwrap().is_empty());
     }
@@ -571,18 +737,24 @@ mod sqlite_integration_tests {
         let pool = make_pool().await;
         assert_eq!(count_all(&pool).await.unwrap(), 0);
         assert!(!exists(&pool, "a").await.unwrap());
-        upsert(&pool, &fixture("a", true)).await.unwrap();
+        upsert(&pool, &fixture("a", true), &no_secrets())
+            .await
+            .unwrap();
         assert_eq!(count_all(&pool).await.unwrap(), 1);
         assert!(exists(&pool, "a").await.unwrap());
         // Updating the existing schedule does not increase the count.
-        upsert(&pool, &fixture("a", false)).await.unwrap();
+        upsert(&pool, &fixture("a", false), &no_secrets())
+            .await
+            .unwrap();
         assert_eq!(count_all(&pool).await.unwrap(), 1);
     }
 
     #[tokio::test]
     async fn set_enabled_flips_flag() {
         let pool = make_pool().await;
-        upsert(&pool, &fixture("a", true)).await.unwrap();
+        upsert(&pool, &fixture("a", true), &no_secrets())
+            .await
+            .unwrap();
         set_enabled(&pool, "a", false, "2026-06-03T01:00:00Z")
             .await
             .unwrap();
@@ -594,7 +766,9 @@ mod sqlite_integration_tests {
     #[tokio::test]
     async fn record_run_bumps_count_and_stamps_status() {
         let pool = make_pool().await;
-        upsert(&pool, &fixture("a", true)).await.unwrap();
+        upsert(&pool, &fixture("a", true), &no_secrets())
+            .await
+            .unwrap();
         record_run(
             &pool,
             "a",
@@ -620,7 +794,9 @@ mod sqlite_integration_tests {
     #[tokio::test]
     async fn set_next_run_does_not_count_a_run() {
         let pool = make_pool().await;
-        upsert(&pool, &fixture("a", true)).await.unwrap();
+        upsert(&pool, &fixture("a", true), &no_secrets())
+            .await
+            .unwrap();
         set_next_run(&pool, "a", Some("2026-06-04T02:00:00Z"))
             .await
             .unwrap();
@@ -641,8 +817,95 @@ mod sqlite_integration_tests {
         rec.target_kind = "workflow".into();
         rec.target_id = "wf-1".into();
         rec.variable_values = serde_json::json!({ "node-a": { "x": "1" } });
-        upsert(&pool, &rec).await.unwrap();
+        upsert(&pool, &rec, &no_secrets()).await.unwrap();
         let listed = list_all(&pool).await.unwrap();
         assert_eq!(listed[0].variable_values, rec.variable_values);
+    }
+}
+
+/// Tests for the H-1 keychain-reference redaction of sensitive scheduled
+/// variable values. These deliberately exercise the keychain-INDEPENDENT
+/// decision logic only: like `security::admin_password`'s tests, we do NOT
+/// drive a real keychain round-trip (the test config links the real platform
+/// backend, which is unavailable / non-deterministic in CI). The keychain
+/// write/read round-trip is covered by manual QA against a real OS keychain.
+#[cfg(test)]
+mod secret_redaction_tests {
+    use super::*;
+
+    /// With NO sensitive variables, `persist_sensitive_values` is a pure
+    /// pass-through and never touches the keychain — the JSON is unchanged.
+    #[test]
+    fn persist_is_noop_without_sensitive_vars() {
+        let values = serde_json::json!({ "host": "example.com", "token": "s3cr3t" });
+        let out = persist_sensitive_values("sched-1", &values, &BTreeSet::new()).unwrap();
+        assert_eq!(out, values, "no sensitive vars → JSON must be untouched");
+    }
+
+    /// A value that is ALREADY the sentinel (an unchanged re-save where the UI
+    /// did not re-enter the secret) is kept as-is and never re-stored — so the
+    /// real keychain secret is not clobbered. This path needs no keychain.
+    #[test]
+    fn persist_keeps_existing_sentinel_without_touching_keychain() {
+        let mut sensitive = BTreeSet::new();
+        sensitive.insert("token".to_string());
+        let values = serde_json::json!({
+            "host": "example.com",
+            "token": schedule_secrets::SECRET_REF,
+        });
+        let out = persist_sensitive_values("sched-1", &values, &sensitive).unwrap();
+        assert_eq!(
+            out, values,
+            "an existing sentinel must pass through unchanged"
+        );
+    }
+
+    /// `resolve_sensitive_values` passes NON-sentinel values through unchanged
+    /// without consulting the keychain — the common, secret-free fire path.
+    #[test]
+    fn resolve_passes_through_plain_values() {
+        let values = serde_json::json!({ "host": "example.com", "port": "8080" });
+        let out = resolve_sensitive_values("sched-1", &values);
+        assert_eq!(out, values);
+    }
+
+    /// The persisted JSON for a SENSITIVE plaintext value must be the sentinel,
+    /// not the secret — proving the value never lands in the column. Skipped
+    /// gracefully when the OS keychain backend is unavailable (CI without
+    /// D-Bus), exactly like the admin-password round-trip is left to manual QA:
+    /// we assert the redaction only when the keychain `set` actually succeeded.
+    #[test]
+    fn persist_redacts_sensitive_plaintext_to_sentinel_when_keychain_available() {
+        let mut sensitive = BTreeSet::new();
+        sensitive.insert("token".to_string());
+        let values = serde_json::json!({ "host": "example.com", "token": "s3cr3t" });
+
+        match persist_sensitive_values("sched-redact-test", &values, &sensitive) {
+            Ok(out) => {
+                // The secret must NOT be in the column; the sentinel replaces it.
+                let obj = out.as_object().expect("object");
+                assert_eq!(
+                    obj.get("token").and_then(|v| v.as_str()),
+                    Some(schedule_secrets::SECRET_REF),
+                    "sensitive value must be replaced by the keychain sentinel"
+                );
+                assert_eq!(
+                    obj.get("host").and_then(|v| v.as_str()),
+                    Some("example.com"),
+                    "non-sensitive value must pass through unchanged"
+                );
+                let serialised = serde_json::to_string(&out).unwrap();
+                assert!(
+                    !serialised.contains("s3cr3t"),
+                    "the persisted JSON must never contain the plaintext secret"
+                );
+                // Clean up the keychain entry we created.
+                let _ = schedule_secrets::clear("sched-redact-test", "token");
+            }
+            Err(_) => {
+                // Keychain backend unavailable in this environment — the
+                // round-trip is covered by manual QA. Not a failure.
+            }
+        }
     }
 }

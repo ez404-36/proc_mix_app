@@ -32,6 +32,10 @@ import type {
 import { isCommandVariableValues } from "../../types";
 import { getCommandName } from "../../utils/commandLabels";
 import {
+  SCHEDULE_SECRET_REF,
+  isScheduleSecretRef,
+} from "../../utils/scheduleSecrets";
+import {
   buildCron,
   defaultRecurrence,
   parseCron,
@@ -110,6 +114,13 @@ export function ScheduleForm({
   const [variableValues, setVariableValues] = useState<CommandVariableValues>(
     {},
   );
+  // Names of sensitive variables whose persisted value is the keychain
+  // sentinel (a secret already lives in the OS keychain). Those fields render
+  // BLANK; on save, leaving one blank re-sends the sentinel so the backend
+  // keeps the existing secret instead of clobbering it.
+  const [storedSecretVars, setStoredSecretVars] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const [preview, setPreview] = useState<string[]>([]);
   const [cronError, setCronError] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -145,9 +156,24 @@ export function ScheduleForm({
       // edit form (the stored values round-trip untouched). The guard
       // narrows the polymorphic `variableValues` union via the discriminator.
       if (isCommandVariableValues(schedule)) {
-        setVariableValues(schedule.variableValues);
+        // A sensitive value persisted as the keychain sentinel must never be
+        // shown to the user: blank the field and remember it carries a stored
+        // secret so a blank save re-sends the sentinel (see handleSave).
+        const secretVars = new Set<string>();
+        const cleaned: CommandVariableValues = {};
+        for (const [key, value] of Object.entries(schedule.variableValues)) {
+          if (isScheduleSecretRef(value)) {
+            secretVars.add(key);
+            cleaned[key] = "";
+          } else {
+            cleaned[key] = value;
+          }
+        }
+        setVariableValues(cleaned);
+        setStoredSecretVars(secretVars);
       } else {
         setVariableValues({});
+        setStoredSecretVars(new Set());
       }
     } else {
       setName("");
@@ -164,6 +190,7 @@ export function ScheduleForm({
       setMaxRetries(1);
       setEnabled(true);
       setVariableValues({});
+      setStoredSecretVars(new Set());
     }
     setFormError(null);
     setCronError(false);
@@ -228,15 +255,32 @@ export function ScheduleForm({
       ? requiredVariableNames(selectedCommand.variables)
       : [];
 
+  // The values actually persisted: a sensitive field left blank that already
+  // has a stored keychain secret round-trips the sentinel (keep the secret);
+  // any other field sends its literal (possibly empty) value. New plaintext a
+  // user typed into a sensitive field is sent as-is — the backend moves it to
+  // the keychain. This is the single source of truth for both validation and
+  // the save payload.
+  const effectiveVariableValues = useMemo<CommandVariableValues>(() => {
+    const out: CommandVariableValues = { ...variableValues };
+    for (const name of storedSecretVars) {
+      if ((variableValues[name] ?? "").trim() === "") {
+        out[name] = SCHEDULE_SECRET_REF;
+      }
+    }
+    return out;
+  }, [variableValues, storedSecretVars]);
+
   const variablesOk =
     selectedCommand === undefined ||
-    commandVariablesSatisfied(selectedCommand, variableValues);
+    commandVariablesSatisfied(selectedCommand, effectiveVariableValues);
 
   // No-default variables still blank — surfaced as the reason Save is
   // disabled so the user knows what to fill in (a background run would fail
-  // with `missingVariable` otherwise).
+  // with `missingVariable` otherwise). A sensitive field backed by a stored
+  // keychain secret counts as filled even though it renders blank.
   const missingRequiredVars = requiredVars.filter(
-    (name) => (variableValues[name] ?? "").trim() === "",
+    (name) => (effectiveVariableValues[name] ?? "").trim() === "",
   );
 
   // Weekly with no selected days has no meaningful cron; block save until at
@@ -480,6 +524,7 @@ export function ScheduleForm({
         {selectedCommand.variables?.map((spec) => {
           const required = requiredVars.includes(spec.name);
           const missing = missingRequiredVars.includes(spec.name);
+          const hasStoredSecret = storedSecretVars.has(spec.name);
           return (
             <label key={spec.name} className="form-field">
               <span className="schedule-form__variable-label">
@@ -504,10 +549,20 @@ export function ScheduleForm({
                 value={variableValues[spec.name] ?? ""}
                 aria-required={required}
                 aria-invalid={missing}
+                placeholder={
+                  hasStoredSecret
+                    ? t("scheduler.form.secretStoredPlaceholder")
+                    : undefined
+                }
                 onChange={(e) =>
                   handleVariableChange(spec.name, e.target.value)
                 }
               />
+              {spec.sensitive ? (
+                <p className="form-hint">
+                  {t("scheduler.form.sensitiveKeychainHint")}
+                </p>
+              ) : null}
             </label>
           );
         })}
@@ -536,7 +591,7 @@ export function ScheduleForm({
       // whatever was stored (empty for new workflow schedules in the MVP).
       variableValues:
         targetKind === "command"
-          ? variableValues
+          ? effectiveVariableValues
           : schedule?.variableValues ?? {},
       skipIfRunning,
       captureOutput,

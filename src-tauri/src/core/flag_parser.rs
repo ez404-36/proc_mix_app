@@ -145,7 +145,9 @@ fn extract_positional_args(help_text: &str) -> Vec<ParsedArg> {
                     if !token.is_empty()
                         && !token.starts_with('-')
                         && !token.contains("...")
-                        && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                        && token
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
                         && !is_option_metaword(token)
                     {
                         let key = token.to_uppercase();
@@ -173,8 +175,20 @@ fn extract_positional_args(help_text: &str) -> Vec<ParsedArg> {
 /// `[FLAG]`, etc. and must not be surfaced as positional arg fields.
 fn is_option_metaword(token: &str) -> bool {
     const METAWORDS: &[&str] = &[
-        "option", "options", "flag", "flags", "arg", "args", "argument", "arguments",
-        "param", "params", "parameter", "parameters", "switch", "switches",
+        "option",
+        "options",
+        "flag",
+        "flags",
+        "arg",
+        "args",
+        "argument",
+        "arguments",
+        "param",
+        "params",
+        "parameter",
+        "parameters",
+        "switch",
+        "switches",
     ];
     let lower = token.to_lowercase();
     METAWORDS.iter().any(|&m| lower == m)
@@ -245,18 +259,13 @@ fn extract_flags(help_text: &str) -> Vec<ParsedFlag> {
                 // Try to gather a continuation description from the next
                 // line if the current line has no description and the next
                 // line is indented (continuation pattern).
-                let description = if parsed.description.is_empty()
-                    && i + 1 < lines.len()
-                {
+                let description = if parsed.description.is_empty() && i + 1 < lines.len() {
                     let next = lines[i + 1];
                     let next_trimmed = next.trim();
                     // Continuation: next line is indented by at least 4 spaces
                     // and does NOT start with `-` (i.e. it's not a new flag).
                     let indent = leading_spaces(next);
-                    if indent >= 4
-                        && !next_trimmed.starts_with('-')
-                        && !next_trimmed.is_empty()
-                    {
+                    if indent >= 4 && !next_trimmed.starts_with('-') && !next_trimmed.is_empty() {
                         i += 1; // consume continuation line
                         next_trimmed.to_string()
                     } else {
@@ -365,9 +374,7 @@ fn parse_flag_tokens<'a>(
             // description — we've consumed all flag/value tokens.
             if pos < len && (char_at(line, pos) == ' ' || char_at(line, pos) == '\t') {
                 // Skip all whitespace.
-                while pos < len
-                    && (char_at(line, pos) == ' ' || char_at(line, pos) == '\t')
-                {
+                while pos < len && (char_at(line, pos) == ' ' || char_at(line, pos) == '\t') {
                     pos += 1;
                 }
                 // If next char is `-`, it's another flag alias; otherwise
@@ -396,7 +403,8 @@ fn parse_flag_tokens<'a>(
                 let c = char_at(line, pos);
                 // Stop at whitespace, value-separator `=`, optional-value `[`,
                 // and alias separators `,` `;` `|`.
-                if c == ' ' || c == '\t' || c == ',' || c == ';' || c == '|' || c == '=' || c == '[' {
+                if c == ' ' || c == '\t' || c == ',' || c == ';' || c == '|' || c == '=' || c == '['
+                {
                     break;
                 }
                 pos += 1;
@@ -458,7 +466,9 @@ fn parse_flag_tokens<'a>(
             let word = &substr(line, start)[..pos - start];
             // Only treat it as a value hint if it looks like a placeholder:
             // all uppercase, possibly with `-` or `_`, length ≥ 1.
-            if word.chars().all(|c| c.is_ascii_uppercase() || c == '-' || c == '_')
+            if word
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c == '-' || c == '_')
                 && !word.is_empty()
             {
                 *takes_value = true;
@@ -520,7 +530,11 @@ fn read_value_hint_until_angle(s: &str) -> (String, usize) {
 fn read_value_hint_until_bracket(s: &str) -> (String, usize) {
     let end = s.find(']').unwrap_or(s.len());
     let consumed = if end < s.len() { end + 1 } else { end };
-    let hint = s[..end].trim_start_matches('<').trim_end_matches('>').trim().to_string();
+    let hint = s[..end]
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim()
+        .to_string();
     (hint, consumed)
 }
 
@@ -571,20 +585,29 @@ Options:
         let result = parse_flags(help);
         assert!(!result.flags.is_empty(), "should find flags");
 
-        let verbose = result.flags.iter().find(|f| f.flags.contains(&"--verbose".to_string()));
+        let verbose = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--verbose".to_string()));
         assert!(verbose.is_some(), "--verbose not found");
         let verbose = verbose.unwrap();
         assert!(verbose.flags.contains(&"-v".to_string()));
         assert!(!verbose.takes_value);
         assert!(verbose.description.to_lowercase().contains("verbose"));
 
-        let output = result.flags.iter().find(|f| f.flags.contains(&"--output".to_string()));
+        let output = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--output".to_string()));
         assert!(output.is_some(), "--output not found");
         let output = output.unwrap();
         assert!(output.takes_value);
         assert_eq!(output.value_hint, "FILE");
 
-        let n_flag = result.flags.iter().find(|f| f.flags.contains(&"-n".to_string()));
+        let n_flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"-n".to_string()));
         assert!(n_flag.is_some(), "-n not found");
         let n_flag = n_flag.unwrap();
         assert!(n_flag.takes_value);
@@ -595,7 +618,10 @@ Options:
     fn equals_style_value() {
         let help = "  --output=<FILE>    Write output to FILE\n";
         let result = parse_flags(help);
-        let flag = result.flags.iter().find(|f| f.flags.contains(&"--output".to_string()));
+        let flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--output".to_string()));
         assert!(flag.is_some());
         let flag = flag.unwrap();
         assert!(flag.takes_value);
@@ -606,7 +632,10 @@ Options:
     fn optional_equals_value() {
         let help = "  --color[=WHEN]     Colorize the output\n";
         let result = parse_flags(help);
-        let flag = result.flags.iter().find(|f| f.flags.contains(&"--color".to_string()));
+        let flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--color".to_string()));
         assert!(flag.is_some());
         let flag = flag.unwrap();
         assert!(flag.takes_value);
@@ -617,7 +646,10 @@ Options:
     fn boolean_flag_no_value() {
         let help = "  -h, --help          Show this help\n";
         let result = parse_flags(help);
-        let flag = result.flags.iter().find(|f| f.flags.contains(&"--help".to_string()));
+        let flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--help".to_string()));
         assert!(flag.is_some());
         let flag = flag.unwrap();
         assert!(!flag.takes_value);
@@ -647,7 +679,11 @@ Options:
     fn required_positional_from_usage() {
         let help = "Usage: cp <SOURCE> <DEST>\n";
         let result = parse_flags(help);
-        let names: Vec<&str> = result.positional_args.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<&str> = result
+            .positional_args
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect();
         assert!(names.contains(&"SOURCE"), "SOURCE not found: {names:?}");
         assert!(names.contains(&"DEST"), "DEST not found: {names:?}");
         assert!(result.positional_args.iter().all(|a| a.required));
@@ -657,7 +693,10 @@ Options:
     fn optional_positional_from_usage() {
         let help = "Usage: ls [DIRECTORY]\n";
         let result = parse_flags(help);
-        let dir = result.positional_args.iter().find(|a| a.name == "DIRECTORY");
+        let dir = result
+            .positional_args
+            .iter()
+            .find(|a| a.name == "DIRECTORY");
         assert!(dir.is_some(), "DIRECTORY not found");
         assert!(!dir.unwrap().required);
     }
@@ -667,9 +706,16 @@ Options:
         let help = "Usage: tar [OPTIONS] <ARCHIVE>\nOptions:\n  -v   verbose\n";
         let result = parse_flags(help);
         // Should find ARCHIVE but not OPTIONS.
-        let names: Vec<&str> = result.positional_args.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<&str> = result
+            .positional_args
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect();
         assert!(names.contains(&"ARCHIVE"), "ARCHIVE not found: {names:?}");
-        assert!(!names.contains(&"OPTIONS"), "OPTIONS must not be a positional arg");
+        assert!(
+            !names.contains(&"OPTIONS"),
+            "OPTIONS must not be a positional arg"
+        );
     }
 
     #[test]
@@ -679,22 +725,52 @@ Options:
         // appearing as [OPTION] must definitely not become one either.
         let help = "Usage: cp [OPTION]... [-T] <SOURCE> <DEST>\n";
         let result = parse_flags(help);
-        let names: Vec<&str> = result.positional_args.iter().map(|a| a.name.as_str()).collect();
-        assert!(!names.contains(&"OPTION"), "[OPTION] must not appear as a positional arg");
+        let names: Vec<&str> = result
+            .positional_args
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect();
+        assert!(
+            !names.contains(&"OPTION"),
+            "[OPTION] must not appear as a positional arg"
+        );
         assert!(names.contains(&"SOURCE"), "SOURCE not found: {names:?}");
         assert!(names.contains(&"DEST"), "DEST not found: {names:?}");
     }
 
     #[test]
     fn option_metaword_variants_all_filtered() {
-        for word in &["OPTION", "OPTIONS", "FLAG", "FLAGS", "ARG", "ARGS",
-                      "ARGUMENT", "ARGUMENTS", "PARAM", "PARAMS",
-                      "PARAMETER", "PARAMETERS", "SWITCH", "SWITCHES"] {
+        for word in &[
+            "OPTION",
+            "OPTIONS",
+            "FLAG",
+            "FLAGS",
+            "ARG",
+            "ARGS",
+            "ARGUMENT",
+            "ARGUMENTS",
+            "PARAM",
+            "PARAMS",
+            "PARAMETER",
+            "PARAMETERS",
+            "SWITCH",
+            "SWITCHES",
+        ] {
             let help = format!("Usage: foo [{word}] <FILE>\n");
             let result = parse_flags(&help);
-            let names: Vec<&str> = result.positional_args.iter().map(|a| a.name.as_str()).collect();
-            assert!(!names.contains(word), "[{word}] must not appear as a positional arg");
-            assert!(names.contains(&"FILE"), "FILE not found for word {word}: {names:?}");
+            let names: Vec<&str> = result
+                .positional_args
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect();
+            assert!(
+                !names.contains(word),
+                "[{word}] must not appear as a positional arg"
+            );
+            assert!(
+                names.contains(&"FILE"),
+                "FILE not found for word {word}: {names:?}"
+            );
         }
     }
 
@@ -709,7 +785,10 @@ Options:
     fn description_trimming() {
         let help = "  --verbose    — Verbose mode\n";
         let result = parse_flags(help);
-        let flag = result.flags.iter().find(|f| f.flags.contains(&"--verbose".to_string()));
+        let flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--verbose".to_string()));
         assert!(flag.is_some());
         // The `—` and surrounding spaces should be stripped.
         assert!(
@@ -727,10 +806,17 @@ Options:
         // aspell / btrfs style: `-v|--verbose`
         let help = "  -v|--verbose          Enable verbose output\n";
         let result = parse_flags(help);
-        let flag = result.flags.iter().find(|f| f.flags.contains(&"--verbose".to_string()));
+        let flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--verbose".to_string()));
         assert!(flag.is_some(), "--verbose not found");
         let flag = flag.unwrap();
-        assert!(flag.flags.contains(&"-v".to_string()), "-v alias missing: {:?}", flag.flags);
+        assert!(
+            flag.flags.contains(&"-v".to_string()),
+            "-v alias missing: {:?}",
+            flag.flags
+        );
         assert!(!flag.takes_value);
     }
 
@@ -740,7 +826,10 @@ Options:
         // We should not push "usage" as a flag name.
         let help = "  -?|usage          Show help\n";
         let result = parse_flags(help);
-        let garbage = result.flags.iter().any(|f| f.flags.iter().any(|s| s == "usage"));
+        let garbage = result
+            .flags
+            .iter()
+            .any(|f| f.flags.iter().any(|s| s == "usage"));
         assert!(!garbage, "\"usage\" must not appear as a flag name");
     }
 
@@ -748,10 +837,17 @@ Options:
     fn pipe_separated_three_aliases() {
         let help = "  -q|-Q|--quiet      Suppress output\n";
         let result = parse_flags(help);
-        let flag = result.flags.iter().find(|f| f.flags.contains(&"--quiet".to_string()));
+        let flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--quiet".to_string()));
         assert!(flag.is_some(), "--quiet not found");
         let flag = flag.unwrap();
-        assert!(flag.flags.contains(&"-q".to_string()), "-q missing: {:?}", flag.flags);
+        assert!(
+            flag.flags.contains(&"-q".to_string()),
+            "-q missing: {:?}",
+            flag.flags
+        );
     }
 
     // -----------------------------------------------------------------
@@ -763,16 +859,27 @@ Options:
         // X.org / Xwayland style.
         let help = "use: Xephyr :<display> [option]\n";
         let result = parse_flags(help);
-        let names: Vec<&str> = result.positional_args.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<&str> = result
+            .positional_args
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect();
         // `<display>` should become a required positional named "DISPLAY".
-        assert!(names.contains(&"DISPLAY"), "DISPLAY not found in: {names:?}");
+        assert!(
+            names.contains(&"DISPLAY"),
+            "DISPLAY not found in: {names:?}"
+        );
     }
 
     #[test]
     fn use_space_prefix_extracts_positional_args() {
         let help = "use foo <INPUT> <OUTPUT>\n";
         let result = parse_flags(help);
-        let names: Vec<&str> = result.positional_args.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<&str> = result
+            .positional_args
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect();
         assert!(names.contains(&"INPUT"), "INPUT not found in: {names:?}");
         assert!(names.contains(&"OUTPUT"), "OUTPUT not found in: {names:?}");
     }
@@ -782,7 +889,11 @@ Options:
         // Regression: the existing `usage:` path must be unaffected.
         let help = "Usage: cp <SOURCE> <DEST>\n";
         let result = parse_flags(help);
-        let names: Vec<&str> = result.positional_args.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<&str> = result
+            .positional_args
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect();
         assert!(names.contains(&"SOURCE"), "SOURCE not found: {names:?}");
         assert!(names.contains(&"DEST"), "DEST not found: {names:?}");
     }
@@ -796,10 +907,22 @@ Options:
         // btrfs-select-super embeds SOH (\x01) before the flag dash.
         let help = "  \x01-s NUM     Superblock copy number\n  \x02--verbose  Verbose\n";
         let result = parse_flags(help);
-        let s_flag = result.flags.iter().find(|f| f.flags.contains(&"-s".to_string()));
-        assert!(s_flag.is_some(), "-s flag not extracted despite leading \\x01");
-        let v_flag = result.flags.iter().find(|f| f.flags.contains(&"--verbose".to_string()));
-        assert!(v_flag.is_some(), "--verbose not extracted despite leading \\x02");
+        let s_flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"-s".to_string()));
+        assert!(
+            s_flag.is_some(),
+            "-s flag not extracted despite leading \\x01"
+        );
+        let v_flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--verbose".to_string()));
+        assert!(
+            v_flag.is_some(),
+            "--verbose not extracted despite leading \\x02"
+        );
     }
 
     #[test]
@@ -808,7 +931,10 @@ Options:
         // (it is excluded from the control-char trim).
         let help = "\t-v, --verbose    Verbose\n";
         let result = parse_flags(help);
-        let flag = result.flags.iter().find(|f| f.flags.contains(&"--verbose".to_string()));
+        let flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--verbose".to_string()));
         assert!(flag.is_some(), "--verbose not found with tab indent");
     }
 
@@ -820,7 +946,10 @@ Options:
     fn bracket_wrapped_boolean_flag_extracted() {
         let help = "   [--version]\n   [--help]\n";
         let result = parse_flags(help);
-        let ver = result.flags.iter().find(|f| f.flags.contains(&"--version".to_string()));
+        let ver = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--version".to_string()));
         assert!(ver.is_some(), "--version not extracted from [--version]");
         assert!(!ver.unwrap().takes_value);
     }
@@ -830,11 +959,20 @@ Options:
         // caca-config style: `[--prefix[=DIR]]`
         let help = "   [--prefix[=DIR]]\n";
         let result = parse_flags(help);
-        let flag = result.flags.iter().find(|f| f.flags.contains(&"--prefix".to_string()));
-        assert!(flag.is_some(), "--prefix not extracted from [--prefix[=DIR]]");
+        let flag = result
+            .flags
+            .iter()
+            .find(|f| f.flags.contains(&"--prefix".to_string()));
+        assert!(
+            flag.is_some(),
+            "--prefix not extracted from [--prefix[=DIR]]"
+        );
         let flag = flag.unwrap();
         assert!(flag.takes_value, "--prefix should take a value");
-        assert!(!flag.value_hint.is_empty(), "value hint should be non-empty");
+        assert!(
+            !flag.value_hint.is_empty(),
+            "value hint should be non-empty"
+        );
     }
 
     #[test]
@@ -843,9 +981,10 @@ Options:
         // for bracket-wrapped flags (they contain no `--`).
         let help = "Usage: foo [OPTIONS] [FILE]\n";
         let result = parse_flags(help);
-        let bad = result.flags.iter().any(|f| {
-            f.flags.iter().any(|s| s == "OPTIONS" || s == "FILE")
-        });
+        let bad = result
+            .flags
+            .iter()
+            .any(|f| f.flags.iter().any(|s| s == "OPTIONS" || s == "FILE"));
         assert!(!bad, "OPTIONS/FILE must not become flag names");
     }
 }

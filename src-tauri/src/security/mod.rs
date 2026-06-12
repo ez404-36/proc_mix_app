@@ -7,3 +7,4 @@
 // backend) so the module's public surface is portable.
 
 pub mod admin_password;
+pub mod schedule_secrets;

@@ -59,6 +59,25 @@ pub async fn init_pool(db_path: PathBuf) -> Result<DbPool, String> {
     Ok(Arc::new(pool))
 }
 
+/// Rewrite the database file to reclaim free pages, physically discarding the
+/// stale bytes of rows an `UPDATE`/`DELETE` left behind.
+///
+/// SQLite never zeroes the old content of a changed row — it just marks the
+/// page free for reuse. After a secret-redaction migration the plaintext secret
+/// is still recoverable from those free pages with a raw hex dump of the file.
+/// `VACUUM` rebuilds the file from live rows only, so the old bytes are gone.
+///
+/// This is comparatively expensive (it rewrites the whole file), so the caller
+/// runs it ONLY when a redaction actually rewrote at least one row — never on a
+/// clean launch.
+pub async fn vacuum(pool: &DbPool) -> Result<(), String> {
+    sqlx::query("VACUUM")
+        .execute(pool.as_ref())
+        .await
+        .map_err(|e| format!("vacuum: {e}"))?;
+    Ok(())
+}
+
 /// Idempotent `ALTER TABLE … ADD COLUMN …` for the `commands` table.
 ///
 /// `CREATE TABLE IF NOT EXISTS` only creates the schema as it was on
