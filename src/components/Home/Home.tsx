@@ -406,9 +406,16 @@ export function Home(): ReactElement {
   const commands = useCommandStore((s) => s.commands);
   const workflows = useWorkflowStore((s) => s.workflows);
 
-  const favorites = useMemo(
-    () => commands.filter((c) => c.favorite),
-    [commands],
+  type FavoriteEntry =
+    | { type: "command"; command: Command }
+    | { type: "workflow"; workflow: Workflow };
+
+  const favorites = useMemo<FavoriteEntry[]>(
+    () => [
+      ...commands.filter((c) => c.favorite).map((c) => ({ type: "command" as const, command: c })),
+      ...workflows.filter((w) => w.favorite).map((w) => ({ type: "workflow" as const, workflow: w })),
+    ],
+    [commands, workflows],
   );
 
   const recent = useMemo<RecentEntry[]>(() => {
@@ -446,9 +453,13 @@ export function Home(): ReactElement {
           <div className="empty-state">{t("home.noFavorites")}</div>
         ) : (
           <div className="command-list">
-            {favorites.map((cmd) => (
-              <CommandRow key={cmd.id} cmd={cmd} />
-            ))}
+            {favorites.map((entry) =>
+              entry.type === "command" ? (
+                <CommandRow key={`cmd-${entry.command.id}`} cmd={entry.command} />
+              ) : (
+                <WorkflowRow key={`wf-${entry.workflow.id}`} wf={entry.workflow} />
+              ),
+            )}
           </div>
         )}
       </section>
