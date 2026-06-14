@@ -355,7 +355,11 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
             id: `insert-variable-${spec.name}`,
             label: spec.name,
             onSelect: () => {
-              insertAtCursor(`\${${spec.name}}`);
+              const snippet =
+                spec.defaultValue !== undefined
+                  ? `\${${spec.name}:${spec.defaultValue}}`
+                  : `\${${spec.name}}`;
+              insertAtCursor(snippet);
             },
           })),
         });

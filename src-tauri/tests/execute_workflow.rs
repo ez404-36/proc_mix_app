@@ -22,11 +22,13 @@ use procmix_lib::core::executor::{
 use procmix_lib::core::workflow::{
     cancel_workflow, execute_workflow, WorkflowEvent, WorkflowExecutorState, WORKFLOW_EVENT,
 };
+use procmix_lib::core::workflow_condition::{Condition, Op, Subject};
 use procmix_lib::storage::commands::{
     CommandRecord, OutputFieldRecord, OutputSchemaRecord, VariableSpec,
 };
 use procmix_lib::storage::workflows::{
-    NodePosition, WorkflowEdgeRecord, WorkflowNodeRecord, WorkflowRecord,
+    DataAssignmentRecord, LoopConfigRecord, NodePosition, RetryConfigRecord, SwitchCaseRecord,
+    WorkflowEdgeRecord, WorkflowNodeRecord, WorkflowRecord,
 };
 use tauri::test::mock_builder;
 use tauri::Listener;
@@ -125,6 +127,7 @@ fn command_with_var(id: &str, default: Option<&str>) -> CommandRecord {
     cmd.variables = vec![VariableSpec {
         name: "who".into(),
         default_value: default.map(Into::into),
+        prompt_at_runtime: false,
         description: None,
         sensitive: false,
     }];
@@ -137,6 +140,11 @@ fn node(id: &str, kind: &str, command_id: Option<&str>) -> WorkflowNodeRecord {
         kind: kind.into(),
         command_id: command_id.map(Into::into),
         label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: None,
+        retry: None,
+        data: Vec::new(),
         position: NodePosition { x: 0.0, y: 0.0 },
     }
 }
@@ -634,6 +642,7 @@ async fn extracted_field_flows_into_next_node_variable() {
     consumer.variables = vec![VariableSpec {
         name: "who".into(),
         default_value: None,
+        prompt_at_runtime: false,
         description: None,
         sensitive: false,
     }];
@@ -735,6 +744,7 @@ async fn node_variable_value_overrides_data_flow_field() {
     consumer.variables = vec![VariableSpec {
         name: "who".into(),
         default_value: None,
+        prompt_at_runtime: false,
         description: None,
         sensitive: false,
     }];
@@ -799,4 +809,643 @@ async fn node_variable_value_overrides_data_flow_field() {
         Some(Some(0)),
         "per-node value must override the data-flow field, events: {collected:?}"
     );
+}
+
+// ---- §3 switch end-to-end --------------------------------------------------
+
+/// A `switch` node whose test command's exit code drives the case selection:
+///
+/// start → switch(test) ── case:zero → end_zero
+///                       ├─ case:low  → end_low
+///                       └─ default   → end_default
+///
+/// `case:zero` matches `exitCode == 0`, `case:low` matches `exitCode < 10`.
+/// The `default` edge catches everything else.
+fn switch_workflow(test_command_id: &str) -> WorkflowRecord {
+    let switch_node = WorkflowNodeRecord {
+        id: "sw".into(),
+        kind: "switch".into(),
+        command_id: Some(test_command_id.into()),
+        label: None,
+        condition: None,
+        cases: vec![
+            SwitchCaseRecord {
+                id: "zero".into(),
+                condition: Condition {
+                    subject: Subject::ExitCode,
+                    op: Op::Eq,
+                    value: "0".into(),
+                },
+            },
+            SwitchCaseRecord {
+                id: "low".into(),
+                condition: Condition {
+                    subject: Subject::ExitCode,
+                    op: Op::Lt,
+                    value: "10".into(),
+                },
+            },
+        ],
+        loop_config: None,
+        retry: None,
+        data: Vec::new(),
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    WorkflowRecord {
+        id: "wf-switch".into(),
+        name: "switch".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            switch_node,
+            node("end_zero", "end", None),
+            node("end_low", "end", None),
+            node("end_default", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "sw", "out"),
+            edge("e_zero", "sw", "end_zero", "case:zero"),
+            edge("e_low", "sw", "end_low", "case:low"),
+            edge("e_default", "sw", "end_default", "default"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    }
+}
+
+/// Run the switch fixture with a test command exiting `code`, returning the
+/// `(branch, edgeId)` from the emitted `branchTaken` event.
+async fn run_switch_with_exit(code: i32) -> (String, String) {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert(
+        "test-cmd".to_string(),
+        command("test-cmd", &format!("exit {code}")),
+    );
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        switch_workflow("test-cmd"),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "switch run should finish, events were: {collected:?}"
+    );
+    collected
+        .iter()
+        .find_map(|e| match e {
+            WorkflowEvent::BranchTaken {
+                branch, edge_id, ..
+            } => Some((branch.clone(), edge_id.clone())),
+            _ => None,
+        })
+        .expect("a branchTaken event arrived")
+}
+
+#[tokio::test]
+async fn switch_takes_first_matching_case() {
+    // exit 0 matches `case:zero` (the first case), not `case:low`.
+    let (branch, edge_id) = run_switch_with_exit(0).await;
+    assert_eq!(branch, "case:zero");
+    assert_eq!(edge_id, "e_zero");
+}
+
+#[tokio::test]
+async fn switch_matches_later_case_when_first_fails() {
+    // exit 5 fails `case:zero` (== 0) but matches `case:low` (< 10).
+    let (branch, edge_id) = run_switch_with_exit(5).await;
+    assert_eq!(branch, "case:low");
+    assert_eq!(edge_id, "e_low");
+}
+
+#[tokio::test]
+async fn switch_falls_through_to_default_branch() {
+    // exit 42 matches no case → the `default` edge is taken.
+    let (branch, edge_id) = run_switch_with_exit(42).await;
+    assert_eq!(branch, "default");
+    assert_eq!(edge_id, "e_default");
+}
+
+// ---- §4 loop end-to-end ----------------------------------------------------
+
+/// A counted loop running a body command N times:
+///
+/// start → loop ──body→ step(cmd) ──out→ loop   (back-edge)
+///              └─done→ end
+///
+/// The body's `out` edge targets the loop node again, so the loop is
+/// re-entered until its `count` is reached, then `done` exits.
+fn counted_loop_workflow(body_command_id: &str, count: u32, max: u32) -> WorkflowRecord {
+    let loop_node = WorkflowNodeRecord {
+        id: "lp".into(),
+        kind: "loop".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: Some(LoopConfigRecord {
+            count: Some(count),
+            while_condition: None,
+            max_iterations: max,
+        }),
+        retry: None,
+        data: Vec::new(),
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    WorkflowRecord {
+        id: "wf-loop".into(),
+        name: "loop".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            loop_node,
+            node("step", "command", Some(body_command_id)),
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "lp", "out"),
+            edge("e_body", "lp", "step", "body"),
+            edge("e_back", "step", "lp", "out"),
+            edge("e_done", "lp", "end", "done"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    }
+}
+
+#[tokio::test]
+async fn loop_runs_body_exactly_count_times() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("body".to_string(), command("body", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        counted_loop_workflow("body", 3, 100),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    // The body command (node "step") must have finished exactly 3 times.
+    let body_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "step"))
+        .count();
+    assert_eq!(
+        body_runs, 3,
+        "body should run 3 times, events: {collected:?}"
+    );
+
+    // Iteration events are 1-based and contiguous up to 3.
+    let iterations: Vec<u32> = collected
+        .iter()
+        .filter_map(|e| match e {
+            WorkflowEvent::LoopIteration { iteration, .. } => Some(*iteration),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(iterations, vec![1, 2, 3]);
+
+    // The loop must finish via the `done` branch.
+    assert!(collected.iter().any(|e| matches!(
+        e,
+        WorkflowEvent::BranchTaken { branch, .. } if branch == "done"
+    )));
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
+}
+
+#[tokio::test]
+async fn loop_aborts_with_error_when_max_iterations_exceeded() {
+    // count (10) exceeds max_iterations (3): the hard cap must stop the run
+    // with a workflow error rather than letting it run all 10.
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("body".to_string(), command("body", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        counted_loop_workflow("body", 10, 3),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    // Body ran at most max_iterations (3) times, never the requested 10.
+    let body_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "step"))
+        .count();
+    assert_eq!(
+        body_runs, 3,
+        "body capped at max_iterations, events: {collected:?}"
+    );
+
+    // The run ends in a workflow error (the LoopLimit), not a clean finish.
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "expected a workflow error from LoopLimit, events: {collected:?}"
+    );
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "a LoopLimit run must not also finish cleanly"
+    );
+}
+
+// ---- §5 try/catch + retry end-to-end ---------------------------------------
+
+/// A try node routing on the final attempt's outcome:
+///
+/// start → try(cmd, retry) ──ok→ end_ok
+///                          └catch→ end_catch
+fn try_workflow(test_command_id: &str, retries: u32) -> WorkflowRecord {
+    let try_node = WorkflowNodeRecord {
+        id: "tr".into(),
+        kind: "try".into(),
+        command_id: Some(test_command_id.into()),
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: None,
+        retry: Some(RetryConfigRecord {
+            retries,
+            // Tiny backoff keeps the test fast while still exercising the
+            // (cancellable) sleep path between attempts.
+            backoff_ms: Some(10),
+        }),
+        data: Vec::new(),
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    WorkflowRecord {
+        id: "wf-try".into(),
+        name: "try".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            try_node,
+            node("end_ok", "end", None),
+            node("end_catch", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "tr", "out"),
+            edge("e_ok", "tr", "end_ok", "ok"),
+            edge("e_catch", "tr", "end_catch", "catch"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    }
+}
+
+#[tokio::test]
+async fn try_takes_ok_branch_on_first_success() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("cmd".to_string(), command("cmd", "exit 0"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        try_workflow("cmd", 3),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    // Succeeded first try → `ok` branch, no retries emitted.
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::BranchTaken { branch, .. } if branch == "ok")));
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::NodeRetry { .. })),
+        "a first-try success must not retry"
+    );
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
+}
+
+#[tokio::test]
+async fn try_takes_catch_branch_after_exhausting_retries() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    // Always fails: 1 initial + 2 retries = 3 attempts, then `catch`.
+    commands.insert("cmd".to_string(), command("cmd", "exit 1"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        try_workflow("cmd", 2),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    // The command ran 3 times (initial + 2 retries).
+    let runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "tr"))
+        .count();
+    assert_eq!(runs, 3, "1 initial + 2 retries, events: {collected:?}");
+
+    // Two `nodeRetry` events, for attempts 2 and 3.
+    let attempts: Vec<u32> = collected
+        .iter()
+        .filter_map(|e| match e {
+            WorkflowEvent::NodeRetry { attempt, .. } => Some(*attempt),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(attempts, vec![2, 3]);
+
+    // Exhausted → `catch`, and the run still finishes (catch is a normal exit).
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::BranchTaken { branch, .. } if branch == "catch")));
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
+}
+
+#[tokio::test]
+async fn try_succeeds_on_a_later_retry() {
+    let (app, exec_state, wf_state, events) = make_app();
+
+    // A command that fails until a temp counter file reaches 3, then succeeds.
+    // Each attempt appends a byte and counts; on the 3rd it exits 0. This
+    // proves the retry loop re-runs the command and stops on first success.
+    let marker = std::env::temp_dir().join(format!("procmix-try-{}", uuid_like()));
+    let script = format!(
+        "n=$(cat '{m}' 2>/dev/null | wc -c); echo -n x >> '{m}'; [ \"$n\" -ge 2 ]",
+        m = marker.display()
+    );
+    let mut commands = HashMap::new();
+    commands.insert("cmd".to_string(), command("cmd", &script));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        try_workflow("cmd", 5),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    let _ = std::fs::remove_file(&marker);
+
+    // Failed twice (counter 0,1) then succeeded on the 3rd attempt → `ok`.
+    let runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "tr"))
+        .count();
+    assert_eq!(
+        runs, 3,
+        "two failures then a success, events: {collected:?}"
+    );
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::BranchTaken { branch, .. } if branch == "ok")));
+}
+
+/// Cheap unique-ish suffix for the temp marker file (avoids pulling uuid into
+/// the test's direct deps; collisions across a single test run are impossible).
+fn uuid_like() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+}
+
+// ---- §6 condition predicate + data node end-to-end -------------------------
+
+/// A condition node carrying a stdout `contains` predicate:
+///
+/// start → condition(cmd, predicate) ──then→ end_then
+///                                    └─else→ end_else
+///
+/// The predicate is the SOLE brancher — the command exits 0 either way, so a
+/// branch other than what the exit code alone implies proves the predicate ran.
+fn predicated_condition_workflow(test_command_id: &str, predicate: Condition) -> WorkflowRecord {
+    let cond_node = WorkflowNodeRecord {
+        id: "cond".into(),
+        kind: "condition".into(),
+        command_id: Some(test_command_id.into()),
+        label: None,
+        condition: Some(predicate),
+        cases: Vec::new(),
+        loop_config: None,
+        retry: None,
+        data: Vec::new(),
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    WorkflowRecord {
+        id: "wf-cond-pred".into(),
+        name: "cond-pred".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            cond_node,
+            node("end_then", "end", None),
+            node("end_else", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "cond", "out"),
+            edge("e_then", "cond", "end_then", "then"),
+            edge("e_else", "cond", "end_else", "else"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    }
+}
+
+#[tokio::test]
+async fn condition_predicate_branches_on_stdout_not_exit_code() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    // Exits 0 (so the exit-code default would be `then`) but prints SKIP.
+    commands.insert("cmd".to_string(), command("cmd", "echo SKIP; exit 0"));
+
+    // Predicate: stdout contains "DEPLOY" — false here, so `else` despite exit 0.
+    let predicate = Condition {
+        subject: Subject::Stdout,
+        op: Op::Contains,
+        value: "DEPLOY".into(),
+    };
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        predicated_condition_workflow("cmd", predicate),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    let branch = collected
+        .iter()
+        .find_map(|e| match e {
+            WorkflowEvent::BranchTaken { branch, .. } => Some(branch.clone()),
+            _ => None,
+        })
+        .expect("a branchTaken event arrived");
+    // The predicate (stdout) won over the exit-code default.
+    assert_eq!(branch, "else", "events: {collected:?}");
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
+}
+
+#[tokio::test]
+async fn data_node_assignment_flows_into_downstream_command() {
+    let (app, exec_state, wf_state, events) = make_app();
+
+    // The data node sets `who=world`; the downstream command exits 0 only when
+    // `${who}` substitutes to `world`, proving the assignment reached it.
+    let mut commands = HashMap::new();
+    commands.insert("check".to_string(), command_with_var("check", None));
+
+    let data_node = WorkflowNodeRecord {
+        id: "set".into(),
+        kind: "data".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: None,
+        retry: None,
+        data: vec![DataAssignmentRecord {
+            name: "who".into(),
+            value: "world".into(),
+        }],
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    let workflow = WorkflowRecord {
+        id: "wf-data".into(),
+        name: "data".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            data_node,
+            node("check", "command", Some("check")),
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "set", "out"),
+            edge("e_set", "set", "check", "out"),
+            edge("e_check", "check", "end", "out"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    };
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        workflow,
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    // The downstream command (node "check") must have exited 0 — only possible
+    // if the data node's `who=world` reached it via data-flow.
+    let check_exit = collected.iter().find_map(|e| match e {
+        WorkflowEvent::NodeFinished {
+            node_id, exit_code, ..
+        } if node_id == "check" => Some(*exit_code),
+        _ => None,
+    });
+    assert_eq!(
+        check_exit,
+        Some(Some(0)),
+        "data assignment must reach the command, events: {collected:?}"
+    );
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
 }

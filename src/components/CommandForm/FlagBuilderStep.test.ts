@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assembleScript } from "./FlagBuilder";
+import { assembleScript } from "./flagBuilderUtils";
 import type { ParsedFlag } from "../../types";
 
 function boolFlag(flags: string[], description = ""): ParsedFlag {

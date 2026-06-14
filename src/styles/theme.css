@@ -4152,6 +4152,24 @@ select {
   height: 100%;
 }
 
+/* Editor section header: the dynamic title block on the left and the
+   form-level actions (Properties / Save / Delete) on the right. Sits above
+   the canvas (`.wf-editor`), so these actions are clearly OUTSIDE the editing
+   surface — unlike the run-related controls that stay on the canvas toolbar. */
+.wf-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wf-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .wf-editor {
   display: flex;
   flex: 1;
@@ -4288,13 +4306,73 @@ select {
   border-color: var(--color-primary);
 }
 
+.wf-node--switch {
+  border-color: var(--color-primary);
+}
+
+.wf-node--loop {
+  border-color: var(--app-color-run);
+}
+
+.wf-node--try {
+  border-color: var(--color-danger);
+}
+
+.wf-node--data {
+  border-color: var(--color-text-muted);
+}
+
 .wf-node__branches {
+  /* Stack the labels vertically (not side-by-side) so each sits on its own
+     line, reading top→bottom in the SAME order as the stacked output handles
+     (`then` above `else`). A horizontal row put both labels on one level and
+     made it ambiguous which handle each referred to. */
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
   margin-top: 6px;
   font-size: 10px;
   color: var(--color-text-muted);
+}
+
+/* Per-branch label colors: a SUCCESS exit (`then` on a condition, `ok` on a
+   try) is green; a FAILURE exit (`else` / `catch`) is red. So the label's
+   meaning is legible at a glance and matches its handle marker. */
+.wf-branch-label--then,
+.wf-branch-label--ok {
+  color: var(--app-color-run);
+  font-weight: 600;
+}
+
+.wf-branch-label--else,
+.wf-branch-label--catch {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+/* Color the output handle markers (dot + chevron) to match their branch
+   label. reactflow stamps each handle with `data-handleid`, so the success
+   handles (`then` / `ok`) are green and the failure handles (`else` /
+   `catch`) are red. */
+.wf-node .react-flow__handle[data-handleid="then"],
+.wf-node .react-flow__handle[data-handleid="ok"] {
+  background: var(--app-color-run);
+}
+
+.wf-node .react-flow__handle[data-handleid="then"]::after,
+.wf-node .react-flow__handle[data-handleid="ok"]::after {
+  border-left-color: var(--app-color-run);
+}
+
+.wf-node .react-flow__handle[data-handleid="else"],
+.wf-node .react-flow__handle[data-handleid="catch"] {
+  background: var(--color-danger);
+}
+
+.wf-node .react-flow__handle[data-handleid="else"]::after,
+.wf-node .react-flow__handle[data-handleid="catch"]::after {
+  border-left-color: var(--color-danger);
 }
 
 .wf-node.is-unbound {
@@ -4466,6 +4544,22 @@ select {
   font-size: 12px;
   color: var(--color-text-muted);
   margin: 0 0 12px;
+}
+
+/* A horizontal row of controls inside the inspector (e.g. a case-id input
+   next to its remove button, or a data assignment's name/value/remove). */
+.wf-inspector__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A grouped block inside an editable list (e.g. one switch case: its id row
+   plus its condition editor), separated from the next item. */
+.wf-inspector__list-item {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .wf-inspector__actions {

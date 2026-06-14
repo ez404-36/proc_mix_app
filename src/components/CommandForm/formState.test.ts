@@ -9,6 +9,8 @@ import {
   pickCreateModeShell,
   rowsToVariableSpecs,
   specsToVariableRows,
+  syncScriptDefaultsToRows,
+  syncVariableDefaultToScript,
 } from "./formState";
 import type { FormState, VariableRow } from "./formState";
 
@@ -96,19 +98,47 @@ describe("computeVariableErrors", () => {
 });
 
 describe("rowsToVariableSpecs / specsToVariableRows", () => {
-  it("omits defaultValue when prompting at runtime", () => {
+  it("persists BOTH defaultValue AND promptAtRuntime when the user combines them", () => {
     const spec = rowsToVariableSpecs([
       makeRow({ name: "TOKEN", promptAtRuntime: true, defaultValue: "x" }),
     ])[0];
-    expect(spec).not.toHaveProperty("defaultValue");
-    expect(spec).toMatchObject({ name: "TOKEN", sensitive: false });
+    expect(spec).toMatchObject({
+      name: "TOKEN",
+      sensitive: false,
+      defaultValue: "x",
+      promptAtRuntime: true,
+    });
   });
 
-  it("keeps an explicit (even empty) defaultValue", () => {
+  it("omits defaultValue when prompting at runtime with an empty default (no pre-fill)", () => {
+    const spec = rowsToVariableSpecs([
+      makeRow({ name: "TOKEN", promptAtRuntime: true, defaultValue: "" }),
+    ])[0];
+    expect(spec).not.toHaveProperty("defaultValue");
+    // promptAtRuntime is implicit when defaultValue is absent, so the
+    // explicit field is omitted to keep wire payloads compact.
+    expect(spec).not.toHaveProperty("promptAtRuntime");
+  });
+
+  it("keeps an explicit (even empty) defaultValue when not prompting", () => {
     const spec = rowsToVariableSpecs([
       makeRow({ name: "HOST", promptAtRuntime: false, defaultValue: "" }),
     ])[0];
     expect(spec.defaultValue).toBe("");
+    expect(spec).not.toHaveProperty("promptAtRuntime");
+  });
+
+  it("omits promptAtRuntime when it agrees with the legacy convention", () => {
+    // Case A: prompting with no default → promptAtRuntime is implicit.
+    const a = rowsToVariableSpecs([
+      makeRow({ name: "A", promptAtRuntime: true, defaultValue: "" }),
+    ])[0];
+    expect(a).not.toHaveProperty("promptAtRuntime");
+    // Case B: not prompting with a default → no prompt is implicit.
+    const b = rowsToVariableSpecs([
+      makeRow({ name: "B", promptAtRuntime: false, defaultValue: "v" }),
+    ])[0];
+    expect(b).not.toHaveProperty("promptAtRuntime");
   });
 
   it("includes a non-blank description only", () => {
@@ -126,6 +156,45 @@ describe("rowsToVariableSpecs / specsToVariableRows", () => {
       promptAtRuntime: true,
       defaultValue: "",
       nameTouched: true,
+    });
+  });
+
+  it("round-trips: a spec with default + promptAtRuntime restores both", () => {
+    const rows = specsToVariableRows([
+      { name: "HOST", defaultValue: "localhost", promptAtRuntime: true },
+    ]);
+    expect(rows[0]).toMatchObject({
+      name: "HOST",
+      defaultValue: "localhost",
+      promptAtRuntime: true,
+    });
+  });
+
+  it("round-trips: a spec with default and no explicit prompt flag stays non-prompt (legacy)", () => {
+    const rows = specsToVariableRows([
+      { name: "HOST", defaultValue: "localhost" },
+    ]);
+    expect(rows[0]).toMatchObject({
+      name: "HOST",
+      defaultValue: "localhost",
+      promptAtRuntime: false,
+    });
+  });
+
+  it("round-trips through rowsToVariableSpecs → specsToVariableRows preserving promptAtRuntime + default", () => {
+    const original = makeRow({
+      name: "HOST",
+      defaultValue: "localhost",
+      promptAtRuntime: true,
+    });
+    const spec = rowsToVariableSpecs([original])[0];
+    expect(spec).toBeDefined();
+    if (!spec) return;
+    const restored = specsToVariableRows([spec])[0];
+    expect(restored).toMatchObject({
+      name: "HOST",
+      defaultValue: "localhost",
+      promptAtRuntime: true,
     });
   });
 });
@@ -228,5 +297,120 @@ describe("buildInitialState", () => {
       timeoutSeconds: "5",
     });
     expect(state.variables[0]).toMatchObject({ name: "DIR", promptAtRuntime: false });
+  });
+});
+
+describe("syncScriptDefaultsToRows", () => {
+  it("updates row defaultValue from ${name:default} in script", () => {
+    const rows = [makeRow({ name: "HOST", defaultValue: "" })];
+    const result = syncScriptDefaultsToRows("ssh ${HOST:localhost}", rows);
+    expect(result[0].defaultValue).toBe("localhost");
+  });
+
+  it("does not change promptAtRuntime when inline default is non-empty", () => {
+    const rowTrue = makeRow({ name: "HOST", defaultValue: "", promptAtRuntime: true });
+    const rowFalse = makeRow({ name: "HOST", defaultValue: "", promptAtRuntime: false });
+    expect(syncScriptDefaultsToRows("ssh ${HOST:localhost}", [rowTrue])[0].promptAtRuntime).toBe(true);
+    expect(syncScriptDefaultsToRows("ssh ${HOST:localhost}", [rowFalse])[0].promptAtRuntime).toBe(false);
+  });
+
+  it("sets promptAtRuntime=true when inline default is empty string", () => {
+    const rows = [makeRow({ name: "HOST", defaultValue: "old", promptAtRuntime: false })];
+    const result = syncScriptDefaultsToRows("ssh ${HOST:}", rows);
+    expect(result[0].promptAtRuntime).toBe(true);
+  });
+
+  it("forces promptAtRuntime=true on empty inline default EVEN WHEN the row default is already empty (Bug 1)", () => {
+    // Regression: the previous early-return on `inlineDefault === row.defaultValue`
+    // skipped the promptAtRuntime correction. The rule "empty default ⇒ prompt
+    // always" must hold regardless of whether defaultValue itself changed.
+    const rows = [makeRow({ name: "HOST", defaultValue: "", promptAtRuntime: false })];
+    const result = syncScriptDefaultsToRows("ssh ${HOST:}", rows);
+    expect(result[0].defaultValue).toBe("");
+    expect(result[0].promptAtRuntime).toBe(true);
+  });
+
+  it("leaves row unchanged when script has ${name} without inline default", () => {
+    const rows = [makeRow({ name: "HOST", defaultValue: "old" })];
+    const result = syncScriptDefaultsToRows("ssh ${HOST}", rows);
+    expect(result[0].defaultValue).toBe("old");
+  });
+
+  it("leaves row unchanged when name does not appear in script", () => {
+    const rows = [makeRow({ name: "HOST", defaultValue: "old" })];
+    const result = syncScriptDefaultsToRows("echo hello", rows);
+    expect(result[0].defaultValue).toBe("old");
+  });
+
+  it("returns the same row reference when nothing changes", () => {
+    const rows = [makeRow({ name: "HOST", defaultValue: "localhost" })];
+    const result = syncScriptDefaultsToRows("ssh ${HOST:localhost}", rows);
+    expect(result[0]).toBe(rows[0]);
+  });
+
+  // Reference-equality regression: the previous implementation always
+  // allocated a new array via `.map`, busting every downstream useMemo
+  // keyed on `form.variables` on EVERY keystroke. On Linux this
+  // saturated the GTK/IBus input queue and froze keyboard input.
+  it("returns the SAME array reference when no rows need updating", () => {
+    const rows = [
+      makeRow({ name: "HOST", defaultValue: "localhost" }),
+      makeRow({ name: "PORT", defaultValue: "22" }),
+    ];
+    const result = syncScriptDefaultsToRows("ssh ${HOST:localhost} ${PORT:22}", rows);
+    expect(result).toBe(rows);
+  });
+
+  it("returns the SAME array reference when the script has no inline defaults", () => {
+    const rows = [makeRow({ name: "HOST", defaultValue: "old" })];
+    const result = syncScriptDefaultsToRows("echo no variables here", rows);
+    expect(result).toBe(rows);
+  });
+
+  it("returns the SAME array reference when the script references variables without inline defaults", () => {
+    const rows = [makeRow({ name: "HOST", defaultValue: "old" })];
+    const result = syncScriptDefaultsToRows("ssh ${HOST}", rows);
+    expect(result).toBe(rows);
+  });
+});
+
+describe("syncVariableDefaultToScript", () => {
+  it("replaces ${name} with ${name:default} when default is non-empty", () => {
+    expect(syncVariableDefaultToScript("ssh ${HOST}", "HOST", "localhost")).toBe(
+      "ssh ${HOST:localhost}",
+    );
+  });
+
+  it("updates ${name:old} to ${name:new}", () => {
+    expect(syncVariableDefaultToScript("ssh ${HOST:old}", "HOST", "new")).toBe(
+      "ssh ${HOST:new}",
+    );
+  });
+
+  it("strips the inline default when new default is empty", () => {
+    expect(syncVariableDefaultToScript("ssh ${HOST:localhost}", "HOST", "")).toBe(
+      "ssh ${HOST}",
+    );
+  });
+
+  it("does not touch references to other variables", () => {
+    expect(
+      syncVariableDefaultToScript("${A:x} ${B:y}", "A", "z"),
+    ).toBe("${A:z} ${B:y}");
+  });
+
+  // Reference-equality regression: the previous implementation always
+  // ran a regex replace, returning a fresh string even when nothing
+  // matched. Returning the same string reference lets React's setState
+  // short-circuit on the script field, which matters because this
+  // helper fires on every keystroke in the row's defaultValue input.
+  it("returns the SAME string reference when the script doesn't reference the variable", () => {
+    const script = "echo hello world";
+    expect(syncVariableDefaultToScript(script, "HOST", "anything")).toBe(script);
+  });
+
+  it("returns the SAME string reference when the replacement would be a no-op", () => {
+    const script = "ssh ${HOST:localhost}";
+    expect(syncVariableDefaultToScript(script, "HOST", "localhost")).toBe(script);
   });
 });

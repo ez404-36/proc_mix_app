@@ -437,6 +437,86 @@ describe("triggerCommandRun — variable-prompt flow", () => {
     ];
     expect(runOpts.variableValues).toEqual({ x: "" });
   });
+
+  // `promptAtRuntime: true` with a default → the runner MUST prompt and
+  // pass the default to the modal as a pre-fill via the `preset` arg.
+  // The submitted value (which may equal the default) wins in the
+  // final variableValues map.
+  it("prompts WITH the default pre-filled when promptAtRuntime is true and a default is set", async () => {
+    promptForVariablesMock.mockResolvedValueOnce({ host: "prod.example.com" });
+    invokeRunMock.mockResolvedValueOnce(undefined);
+    const cmd = makeCommand({
+      variables: [
+        { name: "host", defaultValue: "localhost", promptAtRuntime: true },
+      ],
+    });
+
+    const result = await triggerCommandRun(cmd);
+
+    expect(result).toBe(usedExecutionId());
+    expect(promptForVariablesMock).toHaveBeenCalledTimes(1);
+    const [promptedSpecs, preset] = promptForVariablesMock.mock.calls[0] as [
+      Array<{ name: string }>,
+      Record<string, string>,
+    ];
+    expect(promptedSpecs.map((s) => s.name)).toEqual(["host"]);
+    // The default is forwarded to the modal as the pre-fill value.
+    expect(preset).toEqual({ host: "localhost" });
+    const [, runOpts] = invokeRunMock.mock.calls[0] as [
+      unknown,
+      { variableValues: Record<string, string> },
+    ];
+    expect(runOpts.variableValues).toEqual({ host: "prod.example.com" });
+  });
+
+  // Even with `promptAtRuntime: true`, a caller-supplied value
+  // (workflows, schedules) MUST skip the prompt — non-interactive code
+  // paths can never block on a modal.
+  it("skips the prompt when the caller supplies a value, even with promptAtRuntime", async () => {
+    invokeRunMock.mockResolvedValueOnce(undefined);
+    const cmd = makeCommand({
+      variables: [
+        { name: "host", defaultValue: "localhost", promptAtRuntime: true },
+      ],
+    });
+
+    const result = await triggerCommandRun(cmd, {
+      variableValues: { host: "scheduled.host" },
+    });
+
+    expect(result).toBe(usedExecutionId());
+    expect(promptForVariablesMock).not.toHaveBeenCalled();
+    const [, runOpts] = invokeRunMock.mock.calls[0] as [
+      unknown,
+      { variableValues: Record<string, string> },
+    ];
+    expect(runOpts.variableValues).toEqual({ host: "scheduled.host" });
+  });
+
+  // Mixed specs: one prompted with a default (pre-fill), one with a
+  // plain default (no prompt). The preset map MUST only contain the
+  // prompted specs — bleeding non-prompted defaults into the modal
+  // would surface variables the user didn't expect to see.
+  it("only puts prompted specs' defaults in the preset map", async () => {
+    promptForVariablesMock.mockResolvedValueOnce({ host: "user-host" });
+    invokeRunMock.mockResolvedValueOnce(undefined);
+    const cmd = makeCommand({
+      variables: [
+        { name: "host", defaultValue: "localhost", promptAtRuntime: true },
+        { name: "port", defaultValue: "22" },
+      ],
+    });
+
+    await triggerCommandRun(cmd);
+
+    const [promptedSpecs, preset] = promptForVariablesMock.mock.calls[0] as [
+      Array<{ name: string }>,
+      Record<string, string>,
+    ];
+    expect(promptedSpecs.map((s) => s.name)).toEqual(["host"]);
+    expect(preset).toEqual({ host: "localhost" });
+    expect("port" in preset).toBe(false);
+  });
 });
 
 describe("triggerCommandRun — inline-escalation advisory (Class B)", () => {

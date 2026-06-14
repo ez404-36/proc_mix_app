@@ -13,34 +13,151 @@
  *     single `out` edge.
  *   - "command"   → runs a referenced `Command` (by `commandId`). Picks
  *     its single `out` edge once the command finishes.
- *   - "condition" → branches on the previous command's exit code:
- *     exit 0 takes the `then` edge, any non-zero takes the `else` edge.
+ *   - "condition" → runs its referenced command as a test, then branches:
+ *     when a `condition` predicate is set it is evaluated, otherwise it
+ *     falls back to the exit code (exit 0 → `then`, non-zero → `else`).
+ *   - "switch"    → runs its command, then takes the first matching `case`
+ *     edge (by its `condition`), or `default` when none match. (v0.7.0)
+ *   - "loop"      → repeats its `body` subgraph a bounded number of times
+ *     (count or while-condition), then takes `done`. (v0.7.0)
+ *   - "try"       → runs its command with retries; `ok` on success, `catch`
+ *     once retries are exhausted. (v0.7.0)
+ *   - "data"      → pure transformation node: derives data-flow variables
+ *     without spawning a process. (v0.7.0)
  *   - "end"       → terminal node; stops traversal. A workflow may have
  *     several end nodes (e.g. one per branch).
+ *
+ * The kinds tagged (v0.7.0) are the advanced-workflow additions; they
+ * mirror the Rust `NodeKind` in `core/workflow.rs`. The storage layer keeps
+ * `kind` a plain string, so adding a kind needs no DB migration.
  */
-export type WorkflowNodeKind = "start" | "command" | "condition" | "end";
+export type WorkflowNodeKind =
+  | "start"
+  | "command"
+  | "condition"
+  | "switch"
+  | "loop"
+  | "try"
+  | "data"
+  | "end";
 
 /**
- * Branch label on an edge leaving a node. `out` is the default single
- * exit (start / command nodes). `then` / `else` are the two exits of a
- * `condition` node, selected by the upstream exit code (see
- * {@link WorkflowNodeKind}).
+ * Branch label on an edge leaving a node. Mirrors the Rust `Branch` mapping
+ * in `core/workflow.rs`:
+ *   - `out`              → single exit (start / command / data nodes).
+ *   - `then` / `else`    → the two exits of a `condition` node.
+ *   - `case:${id}`       → a `switch` case, matched in declaration order.
+ *   - `default`          → a `switch`'s fallback when no case matches.
+ *   - `body` / `done`    → a `loop`'s iteration entry / completion exit.
+ *   - `ok` / `catch`     → a `try`'s success / retries-exhausted exits.
  */
-export type WorkflowEdgeBranch = "out" | "then" | "else";
+export type WorkflowEdgeBranch =
+  | "out"
+  | "then"
+  | "else"
+  | `case:${string}`
+  | "default"
+  | "body"
+  | "done"
+  | "ok"
+  | "catch";
+
+/**
+ * What a {@link WorkflowCondition} compares against. Mirrors the Rust
+ * `Subject` enum (`core/workflow_condition.rs`), serialised `{ kind, … }`.
+ */
+export type ConditionSubject =
+  | { kind: "exitCode" }
+  | { kind: "variable"; name: string }
+  | { kind: "stdout" };
+
+/** Comparison operator. Mirrors the Rust `Op` enum. */
+export type ConditionOp = "eq" | "ne" | "contains" | "regex" | "gt" | "lt";
+
+/**
+ * A single predicate the runner evaluates to choose a branch. Used by
+ * `condition` (optional — falls back to exit code when absent), `switch`
+ * cases, and a `loop`'s while-guard. Mirrors the Rust `Condition` struct.
+ */
+export interface WorkflowCondition {
+  subject: ConditionSubject;
+  op: ConditionOp;
+  /** Right-hand operand; the pattern source for `regex`. Defaults to "". */
+  value: string;
+}
+
+/**
+ * Bounded-iteration config for a `loop` node. Exactly one of `count` /
+ * `while` drives termination; `maxIterations` is the hard safety cap the
+ * runner enforces regardless (mirrors the Rust `LoopLimit`).
+ */
+export interface LoopConfig {
+  /** Fixed iteration count. Mutually exclusive with `while`. */
+  count?: number;
+  /** Repeat while this predicate holds. Mutually exclusive with `count`. */
+  while?: WorkflowCondition;
+  /** Hard upper bound on iterations; the runner aborts past this. */
+  maxIterations: number;
+}
+
+/**
+ * Retry config for a `try` (or retrying `command`) node. `retries` is the
+ * number of ADDITIONAL attempts after the first; `backoffMs` is the pause
+ * between attempts. Mirrors the Rust retry handling.
+ */
+export interface RetryConfig {
+  retries: number;
+  backoffMs?: number;
+}
+
+/**
+ * One assignment performed by a `data` node: set the data-flow variable
+ * `name` to `value`. `value` may reference upstream data-flow fields with
+ * `${ref}` (a missing reference resolves to empty). Mirrors the Rust
+ * `DataAssignmentRecord`.
+ */
+export interface DataAssignment {
+  name: string;
+  value: string;
+}
+
+/**
+ * One case of a `switch` node: a predicate plus the id used to label its
+ * outgoing edge (`case:${id}`). Evaluated in array order; the first match
+ * wins, else the `default` edge is taken. Mirrors the Rust `SwitchCaseRecord`.
+ */
+export interface SwitchCase {
+  id: string;
+  condition: WorkflowCondition;
+}
 
 /**
  * A single node in the graph. `position` is canvas coordinates owned by
  * the visual editor (reactflow); the runner ignores it. `commandId` is
- * required for `command` nodes and absent for every other kind — the
- * editor validates this before save (Phase 5).
+ * required for command-running kinds (`command` / `condition` / `switch` /
+ * `try`) and absent for the rest — the editor validates this before save.
  */
 export interface WorkflowNode {
   id: string;
   kind: WorkflowNodeKind;
-  /** Reference to the `Command` this node runs. `command` nodes only. */
+  /** Reference to the `Command` this node runs. Command-running kinds only. */
   commandId?: string;
   /** Optional human label shown on the canvas; falls back to the kind. */
   label?: string;
+  /**
+   * Branch predicate for a `condition` node. When omitted, the node falls
+   * back to exit-code branching (`then`/`else`), preserving MVP behaviour.
+   */
+  condition?: WorkflowCondition;
+  /** Per-case predicates for a `switch` node, keyed by the case id used in
+   * its `case:${id}` edge. Evaluated in insertion order. */
+  cases?: SwitchCase[];
+  /** Loop config for a `loop` node. */
+  loop?: LoopConfig;
+  /** Retry config for a `try` (or retrying `command`) node. */
+  retry?: RetryConfig;
+  /** Variable assignments performed by a `data` node, in order. */
+  data?: DataAssignment[];
   /** Canvas coordinates for the visual editor. */
   position: { x: number; y: number };
 }
@@ -77,6 +194,8 @@ export type WorkflowEventKind =
   | "nodeStarted"
   | "nodeFinished"
   | "branchTaken"
+  | "loopIteration"
+  | "nodeRetry"
   | "workflowFinished"
   | "workflowCancelled"
   | "workflowError";
@@ -109,11 +228,27 @@ export interface WorkflowNodeFinishedEvent extends WorkflowEventBase {
 
 export interface WorkflowBranchTakenEvent extends WorkflowEventBase {
   kind: "branchTaken";
-  /** The condition node whose branch was selected. */
+  /** The condition / switch / loop node whose branch was selected. */
   nodeId: string;
   branch: WorkflowEdgeBranch;
   /** The edge id that was followed. */
   edgeId: string;
+}
+
+export interface WorkflowLoopIterationEvent extends WorkflowEventBase {
+  kind: "loopIteration";
+  /** The loop node entering its body. */
+  nodeId: string;
+  /** 1-based iteration number (the first body entry is 1). */
+  iteration: number;
+}
+
+export interface WorkflowNodeRetryEvent extends WorkflowEventBase {
+  kind: "nodeRetry";
+  /** The try node about to retry its command. */
+  nodeId: string;
+  /** 1-based number of the attempt about to run (first retry is 2). */
+  attempt: number;
 }
 
 export interface WorkflowFinishedEvent extends WorkflowEventBase {
@@ -134,6 +269,8 @@ export type WorkflowEvent =
   | WorkflowNodeStartedEvent
   | WorkflowNodeFinishedEvent
   | WorkflowBranchTakenEvent
+  | WorkflowLoopIterationEvent
+  | WorkflowNodeRetryEvent
   | WorkflowFinishedEvent
   | WorkflowCancelledEvent
   | WorkflowErrorEvent;

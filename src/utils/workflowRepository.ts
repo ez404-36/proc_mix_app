@@ -15,7 +15,12 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  DataAssignment,
+  LoopConfig,
+  RetryConfig,
+  SwitchCase,
   Workflow,
+  WorkflowCondition,
   WorkflowEdge,
   WorkflowEdgeBranch,
   WorkflowNode,
@@ -25,30 +30,59 @@ import type {
 /** Set of node kinds the runner understands — used as a type-narrowing
  * guard when decoding a record whose `kind` column is an arbitrary string.
  * An unknown value falls back to "command" so a malformed node never
- * crashes the decoder; the editor's validation (Phase 5) surfaces the
- * real problem to the user. */
+ * crashes the decoder; the editor's validation surfaces the real problem
+ * to the user. Must stay in lock-step with the Rust `NodeKind::parse`. */
 const KNOWN_NODE_KINDS: ReadonlySet<WorkflowNodeKind> =
-  new Set<WorkflowNodeKind>(["start", "command", "condition", "end"]);
+  new Set<WorkflowNodeKind>([
+    "start",
+    "command",
+    "condition",
+    "switch",
+    "loop",
+    "try",
+    "data",
+    "end",
+  ]);
 
 function isNodeKind(value: string): value is WorkflowNodeKind {
   return KNOWN_NODE_KINDS.has(value as WorkflowNodeKind);
 }
 
+/** Whether a decoded edge branch is one the runner understands. A `case:<id>`
+ * branch is dynamic (the id is user-authored), so it is matched by prefix
+ * rather than membership. An unrecognised value falls back to "out". Must
+ * stay in lock-step with the Rust `Branch` mapping. */
 const KNOWN_BRANCHES: ReadonlySet<WorkflowEdgeBranch> =
-  new Set<WorkflowEdgeBranch>(["out", "then", "else"]);
+  new Set<WorkflowEdgeBranch>([
+    "out",
+    "then",
+    "else",
+    "default",
+    "body",
+    "done",
+    "ok",
+    "catch",
+  ]);
 
 function isBranch(value: string): value is WorkflowEdgeBranch {
+  if (value.startsWith("case:")) return true;
   return KNOWN_BRANCHES.has(value as WorkflowEdgeBranch);
 }
 
 /** Wire format of a single node, matching the Rust `WorkflowNodeRecord`.
  * Optional fields are `T | null` because serde serialises `Option::None`
- * as JSON `null`. */
+ * as JSON `null`; the advanced-node config vectors are omitted when empty
+ * (Rust `skip_serializing_if`), so they are optional here too. */
 export interface WorkflowNodeRecord {
   id: string;
   kind: string;
   commandId: string | null;
   label: string | null;
+  condition?: WorkflowCondition | null;
+  cases?: SwitchCase[];
+  loop?: LoopConfig | null;
+  retry?: RetryConfig | null;
+  data?: DataAssignment[];
   position: { x: number; y: number };
 }
 
@@ -88,6 +122,13 @@ function nodeToRecord(n: WorkflowNode): WorkflowNodeRecord {
     kind: n.kind,
     commandId: n.commandId ?? null,
     label: n.label ?? null,
+    // Advanced-node config. Empty vectors are sent as-is (Rust drops them on
+    // serialise); `undefined` collapses to `null` for the optional structs.
+    condition: n.condition ?? null,
+    cases: n.cases ?? [],
+    loop: n.loop ?? null,
+    retry: n.retry ?? null,
+    data: n.data ?? [],
     position: { x: n.position.x, y: n.position.y },
   };
 }
@@ -98,6 +139,13 @@ function recordToNode(r: WorkflowNodeRecord): WorkflowNode {
     kind: isNodeKind(r.kind) ? r.kind : "command",
     commandId: r.commandId ?? undefined,
     label: r.label ?? undefined,
+    condition: r.condition ?? undefined,
+    // Absent / null vectors decode to `undefined` so the node stays minimal;
+    // an empty array also collapses to `undefined` to avoid noise on the node.
+    cases: r.cases && r.cases.length > 0 ? r.cases : undefined,
+    loop: r.loop ?? undefined,
+    retry: r.retry ?? undefined,
+    data: r.data && r.data.length > 0 ? r.data : undefined,
     position: { x: r.position.x, y: r.position.y },
   };
 }

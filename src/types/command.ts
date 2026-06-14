@@ -47,11 +47,25 @@ export interface VariableSpec {
    * Default value used when the runtime is given no explicit value for
    * this variable.
    *
-   * Use `undefined` (omit the key) to force a prompt at run time.
-   * An empty string `""` is a *valid* default and will NOT trigger a
-   * prompt — pass `undefined` if you want the user to be asked.
+   * Use `undefined` (omit the key) to force a prompt at run time WITH
+   * NO pre-fill. An empty string `""` is a *valid* default and, on its
+   * own, does NOT trigger a prompt.
+   *
+   * Combine with `promptAtRuntime: true` to force a prompt while pre-
+   * filling its input with this default — useful for "suggest a value
+   * but let the user override it on every run".
    */
   defaultValue?: string;
+  /**
+   * When `true`, the runner ALWAYS opens the variable-prompt modal for
+   * this spec, even when `defaultValue` is set. The default value (if
+   * any) is pre-filled into the modal input as the suggested value.
+   *
+   * When `undefined`/`false`, prompting is implicit: it happens only
+   * when `defaultValue` is `undefined`. This keeps round-trip parity
+   * with older command records that predate this field.
+   */
+  promptAtRuntime?: boolean;
   description?: string;
   sensitive?: boolean;
 }

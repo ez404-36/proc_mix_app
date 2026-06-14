@@ -101,6 +101,7 @@ async fn sensitive_variable_value_is_redacted_in_stdout() {
         variables: vec![VariableSpec {
             name: "token".into(),
             default_value: None,
+            prompt_at_runtime: false,
             description: None,
             sensitive: true,
         }],
@@ -151,6 +152,7 @@ async fn non_sensitive_variable_value_is_not_redacted() {
         variables: vec![VariableSpec {
             name: "name".into(),
             default_value: None,
+            prompt_at_runtime: false,
             description: None,
             sensitive: false,
         }],

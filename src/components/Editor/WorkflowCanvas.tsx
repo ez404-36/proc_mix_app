@@ -17,6 +17,7 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useCommandStore } from "../../stores/commandStore";
+import { useScheduleStore } from "../../stores/scheduleStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { useWorkflowRunStore } from "../../stores/workflowRunStore";
@@ -24,7 +25,12 @@ import {
   buildDraftForTarget,
   useEditorDraftStore,
 } from "../../stores/editorDraftStore";
+import type { WorkflowNodeKind } from "../../types";
 import { getCommandName } from "../../utils/commandLabels";
+import {
+  checkWorkflowBlockers,
+  type DeleteBlocker,
+} from "../../utils/usageCheck";
 import {
   APPEND_GAP_X,
   applyRunStateToNodes,
@@ -38,11 +44,19 @@ import {
   type WorkflowFlowNode,
   type WorkflowNodeData,
 } from "../../utils/workflowGraph";
+
+/**
+ * Node kinds the palette can create. Every kind except `start` (which is
+ * created once by `makeInitialFlow` and never added) can be placed.
+ */
+type PaletteNodeKind = Exclude<WorkflowNodeKind, "start">;
+import { deleteWorkflow } from "../../services/workflowActions";
 import { workflowNodeTypes } from "./nodes";
 import { NodeInspector } from "./NodeInspector";
 import { WorkflowMetaModal } from "./WorkflowMetaModal";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { CancelIcon, RunIcon, SaveIcon } from "../icons";
+import { BlockedDeleteDialog } from "../BlockedDeleteDialog/BlockedDeleteDialog";
+import { CancelIcon, RunIcon, SaveIcon, TrashIcon } from "../icons";
 import { useWorkflowCanvasPersistence } from "./useWorkflowCanvasPersistence";
 import { useWorkflowCanvasDnD } from "./useWorkflowCanvasDnD";
 
@@ -55,6 +69,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const { t } = useTranslation();
   const commands = useCommandStore((s) => s.commands);
   const workflows = useWorkflowStore((s) => s.workflows);
+  const schedules = useScheduleStore((s) => s.schedules);
   const setEditorWorkflowId = useUIStore((s) => s.setEditorWorkflowId);
   const setView = useUIStore((s) => s.setView);
 
@@ -77,6 +92,11 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
 
   const [metaModalOpen, setMetaModalOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  // Schedules referencing this workflow, populated when the user requests a
+  // delete. Non-empty → the blocked-delete dialog is shown instead of the
+  // destructive confirm, mirroring the Library's workflow delete.
+  const [deleteBlockers, setDeleteBlockers] = useState<DeleteBlocker[]>([]);
 
   const flowWrapperRef = useRef<HTMLDivElement | null>(null);
   const rfInstanceRef = useRef<ReactFlowInstance<
@@ -146,7 +166,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
 
   const makeNode = useCallback(
     (
-      kind: "command" | "condition" | "end",
+      kind: PaletteNodeKind,
       commandId: string | undefined,
       position: { x: number; y: number },
     ): WorkflowFlowNode => ({
@@ -160,7 +180,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
 
   const addNode = useCallback(
     (
-      kind: "command" | "condition" | "end",
+      kind: PaletteNodeKind,
       commandId: string | undefined,
       position: { x: number; y: number },
     ) => {
@@ -174,7 +194,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   // "+ End" button. Falls back to a fixed spot + unconnected when there is no
   // attachable tail (shouldn't happen — there is always a `start`).
   const appendNodeToTail = useCallback(
-    (kind: "command" | "condition" | "end", commandId: string | undefined) => {
+    (kind: PaletteNodeKind, commandId: string | undefined) => {
       const { nodes: curNodes, edges: curEdges } =
         useEditorDraftStore.getState();
       const tailId = findLastNode(curNodes, curEdges);
@@ -271,7 +291,10 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const displayNodes = useMemo(
     () =>
       markInsertNeighbors(
-        applyRunStateToNodes(nodes, activeRun?.nodes),
+        applyRunStateToNodes(nodes, activeRun?.nodes, {
+          loopIterations: activeRun?.loopIterations,
+          retryAttempts: activeRun?.retryAttempts,
+        }),
         edges,
         dropTargetEdgeId,
       ),
@@ -317,6 +340,20 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     [setNodes],
   );
 
+  // Generic per-node config patch used by the inspector's advanced-kind forms
+  // (switch cases, loop, retry, data assignments, condition predicate). Merges
+  // the patch into the node's `data`; `flowNodeToNode` persists those fields.
+  const handleNodeDataChange = useCallback(
+    (nodeId: string, patch: Partial<WorkflowNodeData>): void => {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n,
+        ),
+      );
+    },
+    [setNodes],
+  );
+
   const handleDeleteNode = useCallback(
     (nodeId: string): void => {
       // Re-stitch the deleted node's neighbours: bridge each predecessor to
@@ -347,8 +384,78 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     setClearConfirmOpen(false);
   }, [reset, currentId, workflows, setActiveRunId]);
 
+  // Stage a delete of the workflow being edited (existing only). First check
+  // for schedules that target it: if any exist, deletion is BLOCKED and the
+  // blocked-delete dialog is shown (the user must detach those schedules
+  // first); otherwise the destructive confirm dialog opens. Mirrors the
+  // Library's workflow delete exactly.
+  const requestDelete = useCallback((): void => {
+    if (currentId === null) return;
+    const blockers = checkWorkflowBlockers(currentId, schedules);
+    if (blockers.length > 0) {
+      setDeleteBlockers(blockers);
+    } else {
+      setDeleteBlockers([]);
+      setDeleteConfirmOpen(true);
+    }
+  }, [currentId, schedules]);
+
+  // Perform the delete and return to the library. Routed through the
+  // history-recording `deleteWorkflow` service so the removal is restorable
+  // from the History view, like a deletion from the library list.
+  const confirmDelete = useCallback((): void => {
+    if (currentId !== null) {
+      deleteWorkflow(currentId);
+    }
+    setDeleteConfirmOpen(false);
+    setActiveRunId(null);
+    setView("library");
+  }, [currentId, setActiveRunId, setView]);
+
+  // Dynamic header title: a fresh draft reads "New workflow"; editing an
+  // existing one reads the generic "Editing workflow" (the name is shown in
+  // the Properties dialog, not duplicated in the header).
+  const headerTitle = isEditingExisting
+    ? t("editor.editingTitle")
+    : t("editor.newWorkflow");
+
   return (
-    <div className="wf-editor">
+    <>
+      <header className="view-header wf-header">
+        <div>
+          <h1 className="view-title">{headerTitle}</h1>
+          <p className="view-subtitle">{t("editor.subtitle")}</p>
+        </div>
+        <div className="wf-header__actions">
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => setMetaModalOpen(true)}
+          >
+            {t("editor.details")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary command-form__action"
+            onClick={save}
+          >
+            <SaveIcon />
+            {t("common.save")}
+          </button>
+          {isEditingExisting ? (
+            <button
+              type="button"
+              className="btn btn--danger"
+              onClick={requestDelete}
+            >
+              <TrashIcon />
+              {t("common.delete")}
+            </button>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="wf-editor">
       <aside className="wf-palette">
         <div className="wf-palette__section">
           <h3 className="wf-palette__title">{t("editor.palette.nodes")}</h3>
@@ -360,6 +467,34 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             }
           >
             + {t("editor.nodes.condition")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            onClick={() => addNode("switch", undefined, { x: 240, y: 200 })}
+          >
+            + {t("editor.nodes.switch")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            onClick={() => addNode("loop", undefined, { x: 240, y: 200 })}
+          >
+            + {t("editor.nodes.loop")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            onClick={() => addNode("try", undefined, { x: 240, y: 200 })}
+          >
+            + {t("editor.nodes.try")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            onClick={() => appendNodeToTail("data", undefined)}
+          >
+            + {t("editor.nodes.data")}
           </button>
           <button
             type="button"
@@ -405,13 +540,6 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
           <div className="wf-toolbar__spacer" />
           <button
             type="button"
-            className="btn btn--ghost"
-            onClick={() => setMetaModalOpen(true)}
-          >
-            {t("editor.details")}
-          </button>
-          <button
-            type="button"
             className="btn command-form__action command-form__action--run"
             disabled={!hasSteps}
             onClick={() => {
@@ -432,14 +560,6 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
               <CancelIcon />
             </span>
             {isEditingExisting ? t("editor.cancel") : t("editor.clear")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--primary command-form__action"
-            onClick={save}
-          >
-            <SaveIcon />
-            {t("common.save")}
           </button>
         </div>
         <ReactFlow
@@ -488,6 +608,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
           node={selectedNode}
           commands={commands}
           onCommandChange={handleNodeCommandChange}
+          onNodeDataChange={handleNodeDataChange}
           onDelete={handleDeleteNode}
           onClose={() => setSelectedNodeId(null)}
         />
@@ -518,7 +639,30 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         onConfirm={confirmClear}
         onCancel={() => setClearConfirmOpen(false)}
       />
-    </div>
+
+      {deleteBlockers.length > 0 ? (
+        <BlockedDeleteDialog
+          objectName={
+            meta.name.trim() === "" ? t("editor.untitled") : meta.name
+          }
+          blockers={deleteBlockers}
+          onClose={() => setDeleteBlockers([])}
+        />
+      ) : (
+        <ConfirmDialog
+          open={deleteConfirmOpen}
+          title={t("editor.deleteConfirmTitle")}
+          message={t("editor.deleteConfirm", {
+            name: meta.name.trim() === "" ? t("editor.untitled") : meta.name,
+          })}
+          confirmLabel={t("common.delete")}
+          danger
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteConfirmOpen(false)}
+        />
+      )}
+      </div>
+    </>
   );
 }
 

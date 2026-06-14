@@ -1,5 +1,4 @@
 import type { ReactElement } from "react";
-import { useTranslation } from "react-i18next";
 import { useUIStore } from "../../stores/uiStore";
 import { WorkflowCanvas } from "./WorkflowCanvas";
 
@@ -16,18 +15,13 @@ import { WorkflowCanvas } from "./WorkflowCanvas";
  * remount would defeat the state-preservation requirement.
  */
 export function Editor(): ReactElement {
-  const { t } = useTranslation();
   const editorWorkflowId = useUIStore((s) => s.editorWorkflowId);
 
+  // The header (dynamic title + the form-level actions Properties / Save /
+  // Delete) is rendered by WorkflowCanvas, which owns the draft state those
+  // actions operate on. This view is just the column shell.
   return (
     <div className="editor-view">
-      <header className="view-header">
-        <div>
-          <h1 className="view-title">{t("editor.title")}</h1>
-          <p className="view-subtitle">{t("editor.subtitle")}</p>
-        </div>
-      </header>
-
       <WorkflowCanvas workflowId={editorWorkflowId} />
     </div>
   );

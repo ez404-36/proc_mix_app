@@ -44,6 +44,15 @@ pub const MAX_CAPTURE_BUFFER_BYTES: usize = 256 * 1024;
 /// Bounds memory for a command that prints many tiny lines.
 pub const MAX_CAPTURE_LINES: usize = 5_000;
 
+/// Hard cap on the number of trailing stdout bytes retained in
+/// [`NodeOutcome::stdout_tail`] for workflow-node condition evaluation. A
+/// `Stdout`-subject condition (`core::workflow_condition`) matches on this
+/// bounded tail, never the unbounded stream, so a node that prints megabytes
+/// cannot blow up memory just to be branched on. Kept small (64 KiB) because a
+/// branch predicate inspects a recent slice — typically the final summary
+/// line(s) of a build/test run.
+pub const MAX_STDOUT_TAIL_BYTES: usize = 64 * 1024;
+
 /// Sentinel error returned by [`spawn_execution`] when an elevated run
 /// is requested on Unix but no admin password is stored in the OS
 /// keychain yet. The frontend looks for this exact string (via
@@ -440,6 +449,14 @@ pub struct NodeOutcome {
     /// for every other run (no buffer is allocated). Bounded at capture time
     /// by [`MAX_CAPTURE_BUFFER_BYTES`] / [`MAX_CAPTURE_LINES`].
     pub output: Option<Vec<CapturedLine>>,
+    /// Trailing slice of the run's (sensitive-redacted) stdout, retained ONLY
+    /// for workflow nodes so the runner can evaluate `Stdout`-subject
+    /// conditions (see `core::workflow_condition`). Bounded to the last
+    /// [`MAX_STDOUT_TAIL_BYTES`] bytes. `None` for every non-workflow run (no
+    /// extra buffering happens) and for workflow runs that produced no stdout.
+    /// Already redacted — the streaming reader redacts each line before it is
+    /// buffered — so a `sensitive` value never lands here verbatim.
+    pub stdout_tail: Option<String>,
 }
 
 /// Which child stream a [`CapturedLine`] came from. Kept a small enum (rather
@@ -871,12 +888,14 @@ mod wire_format_tests {
                 VariableSpec {
                     name: "token".into(),
                     default_value: None,
+                    prompt_at_runtime: false,
                     description: None,
                     sensitive: true,
                 },
                 VariableSpec {
                     name: "name".into(),
                     default_value: None,
+                    prompt_at_runtime: false,
                     description: None,
                     sensitive: false,
                 },

@@ -105,10 +105,19 @@ async function recordRunStart(
  *   3. Prompt result — overrides everything (the user explicitly
  *      filled the value in the modal).
  *
- * The prompt is opened only for specs that have BOTH no default AND
- * no caller-supplied value — exposing already-resolved variables in
- * the modal would be annoying UX and would also let the user
- * accidentally override a programmatic value they're not aware of.
+ * The prompt is opened for a spec when EITHER:
+ *   - it has no caller-supplied value AND no default (legacy
+ *     "implicit prompt" case), OR
+ *   - it has no caller-supplied value AND `promptAtRuntime === true`
+ *     (explicit "always ask the user, but pre-fill with the default"
+ *     case — added so a spec can declare both a default value and a
+ *     prompt that uses the default as a pre-fill suggestion).
+ *
+ * Caller-supplied values are still honored unconditionally — a script
+ * triggered programmatically with `{ name: 'value' }` skips the prompt
+ * for that spec regardless of `promptAtRuntime`. This preserves the
+ * non-interactive run path (workflows, schedules) which must never
+ * block on a modal.
  */
 export async function resolveVariableValues(
   cmd: Command,
@@ -117,16 +126,26 @@ export async function resolveVariableValues(
   const specs: ReadonlyArray<VariableSpec> = cmd.variables ?? [];
   const merged: Record<string, string> = {};
   const specsNeedingPrompt: VariableSpec[] = [];
+  // Pre-fill values passed to the prompt modal so the user sees the
+  // spec's default in each input as a starting point. Only populated
+  // for specs that will actually be prompted.
+  const promptPreset: Record<string, string> = {};
   for (const spec of specs) {
     if (spec.defaultValue !== undefined) {
       // Empty-string defaults are preserved here — only `undefined`
-      // (key absent) triggers a prompt. See VariableSpec docs.
+      // (key absent) triggers an implicit prompt. See VariableSpec docs.
       merged[spec.name] = spec.defaultValue;
     }
-    if (callerSupplied[spec.name] === undefined) {
-      // No caller value AND no default → must prompt.
-      if (spec.defaultValue === undefined) {
-        specsNeedingPrompt.push(spec);
+    if (callerSupplied[spec.name] !== undefined) {
+      // Caller value short-circuits prompting for this spec.
+      continue;
+    }
+    const mustPrompt =
+      spec.defaultValue === undefined || spec.promptAtRuntime === true;
+    if (mustPrompt) {
+      specsNeedingPrompt.push(spec);
+      if (spec.defaultValue !== undefined) {
+        promptPreset[spec.name] = spec.defaultValue;
       }
     }
   }
@@ -138,7 +157,10 @@ export async function resolveVariableValues(
   if (specsNeedingPrompt.length === 0) {
     return merged;
   }
-  const promptResult = await promptForVariables(specsNeedingPrompt);
+  const promptResult = await promptForVariables(
+    specsNeedingPrompt,
+    promptPreset,
+  );
   if (promptResult === null) {
     return null;
   }

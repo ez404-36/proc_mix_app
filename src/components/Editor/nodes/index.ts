@@ -2,6 +2,10 @@ import type { NodeTypes } from "reactflow";
 import { StartNode } from "./StartNode";
 import { CommandNode } from "./CommandNode";
 import { ConditionNode } from "./ConditionNode";
+import { SwitchNode } from "./SwitchNode";
+import { LoopNode } from "./LoopNode";
+import { TryNode } from "./TryNode";
+import { DataNode } from "./DataNode";
 import { EndNode } from "./EndNode";
 
 /**
@@ -15,7 +19,20 @@ export const workflowNodeTypes: NodeTypes = {
   start: StartNode,
   command: CommandNode,
   condition: ConditionNode,
+  switch: SwitchNode,
+  loop: LoopNode,
+  try: TryNode,
+  data: DataNode,
   end: EndNode,
 };
 
-export { StartNode, CommandNode, ConditionNode, EndNode };
+export {
+  StartNode,
+  CommandNode,
+  ConditionNode,
+  SwitchNode,
+  LoopNode,
+  TryNode,
+  DataNode,
+  EndNode,
+};

@@ -113,6 +113,7 @@
     "comingSoonTitle": "Visual workflow editor",
     "comingSoonSubtitle": "Coming in v0.5.0",
     "editingWorkflow": "Editing \"{{name}}\"",
+    "editingTitle": "Editing workflow",
     "newWorkflow": "New workflow",
     "unknownWorkflow": "Workflow not found",
     "untitled": "Untitled workflow",
@@ -126,13 +127,29 @@
     "clearConfirmTitle": "Clear editor?",
     "cancelConfirm": "Discard unsaved changes? This reverts the workflow to its last saved version.",
     "cancelConfirmTitle": "Discard changes?",
+    "deleteConfirm": "Delete the workflow \"{{name}}\"? You can restore it from the History view, though older entries are eventually purged.",
+    "deleteConfirmTitle": "Delete workflow?",
     "nodes": {
       "start": "Start",
       "command": "Command",
       "condition": "Condition",
       "end": "End",
+      "switch": "Switch",
+      "loop": "Loop",
+      "try": "Try",
+      "data": "Data",
       "then": "then",
       "else": "else",
+      "default": "default",
+      "body": "body",
+      "done": "done",
+      "ok": "ok",
+      "catch": "catch",
+      "loopCount": "Loop ×{{count}}",
+      "loopWhile": "Loop while",
+      "loopProgress": "Iteration {{n}}",
+      "retryProgress": "retry {{n}}",
+      "dataSummary": "{{count}} assignment(s)",
       "unboundCommand": "Pick a command…"
     },
     "palette": {
@@ -146,9 +163,50 @@
       "command": "Command",
       "pickCommand": "Pick a command…",
       "deleteNode": "Delete",
+      "subject": {
+        "exitCode": "Exit code",
+        "variable": "Variable",
+        "stdout": "Output"
+      },
+      "op": {
+        "eq": "equals",
+        "ne": "not equals",
+        "contains": "contains",
+        "regex": "matches regex",
+        "gt": "greater than",
+        "lt": "less than"
+      },
+      "condition": {
+        "usePredicate": "Use a predicate"
+      },
+      "variableName": "Variable name",
+      "value": "Value",
+      "switch": {
+        "addCase": "+ Add case",
+        "caseId": "Case id",
+        "defaultHint": "An unmatched run takes the default branch."
+      },
+      "loop": {
+        "mode": "Mode",
+        "count": "Iterations",
+        "while": "While condition",
+        "maxIterations": "Max iterations"
+      },
+      "try": {
+        "retries": "Retries",
+        "backoffMs": "Backoff (ms)"
+      },
+      "data": {
+        "addAssignment": "+ Add assignment",
+        "name": "Name",
+        "value": "Value"
+      },
+      "remove": "Remove",
       "hint": {
         "start": "Entry point of the workflow.",
-        "end": "Terminal node — execution stops here."
+        "end": "Terminal node — execution stops here.",
+        "loop": "Configure the loop's iterations below.",
+        "data": "Add variable assignments below."
       },
       "title": "Node"
     },
@@ -167,7 +225,11 @@
       "endUnreachable": "No End node is reachable from Start.",
       "nodeMissingCommand": "Node \"{{label}}\" has no command assigned.",
       "danglingEdge": "An edge (\"{{id}}\") connects to a node that no longer exists.",
-      "conditionBranches": "Condition \"{{label}}\" should wire both the then and else branches."
+      "conditionBranches": "Condition \"{{label}}\" should wire both the then and else branches.",
+      "switchBranches": "Switch node \"{{label}}\" has unwired case or default branches.",
+      "loopBranches": "Loop node \"{{label}}\" is missing its body or done branch.",
+      "loopConfig": "Loop node \"{{label}}\" must set exactly one of count or while.",
+      "tryBranches": "Try node \"{{label}}\" is missing its ok or catch branch."
     }
   },
   "workflow": {
@@ -386,7 +448,7 @@
     },
     "about": {
       "title": "About",
-      "version": "v0.6.0",
+      "version": "v0.6.1",
       "description": "Cross-platform command and workflow automation tool.",
       "license": "Open source. MIT License.",
       "copyright": "© 2026 Zenkin Egor Andreevich"

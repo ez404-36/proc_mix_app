@@ -26,8 +26,12 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{oneshot, Mutex};
 
 use crate::core::executor::{self, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus};
+use crate::core::workflow_condition::{self, EvalContext};
 use crate::storage::commands::CommandRecord;
-use crate::storage::workflows::{WorkflowEdgeRecord, WorkflowNodeRecord, WorkflowRecord};
+use crate::storage::workflows::{
+    DataAssignmentRecord, LoopConfigRecord, RetryConfigRecord, SwitchCaseRecord,
+    WorkflowEdgeRecord, WorkflowNodeRecord, WorkflowRecord,
+};
 
 pub const WORKFLOW_EVENT: &str = "workflow-event";
 
@@ -40,19 +44,45 @@ const MAX_STEPS: usize = 10_000;
 
 /// Branch discriminator on an edge. Mirrors the TS `WorkflowEdgeBranch`
 /// union and the `branch` string stored on `WorkflowEdgeRecord`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Case` carries the user-authored case id and renders as `case:<id>`, so
+/// `Branch` is NOT `Copy` (it owns a `String`); it is passed by reference to
+/// [`edge_for_branch`] and cloned only when an event needs to own the label.
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Branch {
     Out,
     Then,
     Else,
+    /// A `switch` case selected by its predicate. Edge label: `case:<id>`.
+    Case(String),
+    /// A `switch`'s fallback when no case matched. Edge label: `default`.
+    Default,
+    /// A `loop`'s iteration entry — enters the body sub-graph. Edge: `body`.
+    Body,
+    /// A `loop`'s completion exit, taken when iteration stops. Edge: `done`.
+    Done,
+    /// A `try`'s success exit (command finished exit 0). Edge: `ok`.
+    Ok,
+    /// A `try`'s failure exit, taken once retries are exhausted. Edge: `catch`.
+    Catch,
 }
 
 impl Branch {
-    fn as_str(self) -> &'static str {
+    /// The exact string this branch is stored as on `WorkflowEdgeRecord.branch`
+    /// (and emitted on `BranchTaken.branch`). Mirrors the TS
+    /// `WorkflowEdgeBranch` rendering: `case:<id>` for a switch case, the bare
+    /// lowercase name otherwise.
+    fn to_branch_string(&self) -> String {
         match self {
-            Branch::Out => "out",
-            Branch::Then => "then",
-            Branch::Else => "else",
+            Branch::Out => "out".to_string(),
+            Branch::Then => "then".to_string(),
+            Branch::Else => "else".to_string(),
+            Branch::Case(id) => format!("case:{id}"),
+            Branch::Default => "default".to_string(),
+            Branch::Body => "body".to_string(),
+            Branch::Done => "done".to_string(),
+            Branch::Ok => "ok".to_string(),
+            Branch::Catch => "catch".to_string(),
         }
     }
 }
@@ -65,6 +95,10 @@ enum NodeKind {
     Start,
     Command,
     Condition,
+    Switch,
+    Loop,
+    Try,
+    Data,
     End,
 }
 
@@ -74,6 +108,10 @@ impl NodeKind {
             "start" => Some(NodeKind::Start),
             "command" => Some(NodeKind::Command),
             "condition" => Some(NodeKind::Condition),
+            "switch" => Some(NodeKind::Switch),
+            "loop" => Some(NodeKind::Loop),
+            "try" => Some(NodeKind::Try),
+            "data" => Some(NodeKind::Data),
             "end" => Some(NodeKind::End),
             _ => None,
         }
@@ -100,8 +138,20 @@ pub enum WorkflowError {
     UnknownNodeKind(String, String),
     #[error("condition node {0} is missing its {1} branch")]
     MissingBranch(String, String),
+    #[error("node {0} has more than one outgoing edge on the {1} branch")]
+    AmbiguousBranch(String, String),
     #[error("command node {0} has no outgoing edge")]
     NoOutgoingEdge(String),
+    #[error("switch node {0} has no default branch and no case matched")]
+    NoMatchingCase(String),
+    #[error("node {0} has an invalid condition: {1}")]
+    ConditionEval(String, String),
+    #[error("loop node {0} is missing its loop config")]
+    LoopMissingConfig(String),
+    #[error("loop node {0} must set exactly one of `count` or `while`")]
+    LoopMisconfigured(String),
+    #[error("loop node {0} exceeded its maximum of {1} iterations")]
+    LoopLimit(String, u32),
     #[error("workflow exceeded the maximum step count (possible cycle)")]
     Cycle,
     #[error("failed to spawn command for node {0}: {1}")]
@@ -147,6 +197,28 @@ pub enum WorkflowEvent {
         node_id: String,
         branch: String,
         edge_id: String,
+    },
+    /// Emitted by a `loop` node each time it enters its body (one per
+    /// iteration), so the editor can show iteration progress. `iteration` is
+    /// 1-based (the first body entry is iteration 1). Not emitted on the final
+    /// `done` exit.
+    #[serde(rename = "loopIteration")]
+    LoopIteration {
+        run_id: String,
+        workflow_id: String,
+        node_id: String,
+        iteration: u32,
+    },
+    /// Emitted by a `try` node before each retry attempt, after a failed
+    /// attempt and before the backoff pause. `attempt` is the 1-based number of
+    /// the attempt ABOUT TO RUN (so the first retry is `attempt: 2`). Lets the
+    /// editor show "retrying (2/4)…". Not emitted before the first attempt.
+    #[serde(rename = "nodeRetry")]
+    NodeRetry {
+        run_id: String,
+        workflow_id: String,
+        node_id: String,
+        attempt: u32,
     },
     #[serde(rename = "workflowFinished")]
     WorkflowFinished {
@@ -292,22 +364,39 @@ fn find_start(nodes: &[WorkflowNodeRecord]) -> Result<usize, WorkflowError> {
 }
 
 /// Find the edge leaving `node_id` on the given branch, validating that
-/// its target exists. Returns `(edge_id, target_node_id)`.
+/// its target exists and that the branch is unambiguous. Returns
+/// `(edge_id, target_node_id)`.
+///
+/// A node must have AT MOST ONE outgoing edge per branch: the traversal is
+/// strictly sequential, so two `out` edges (or two `then` edges) from the
+/// same node have no defined meaning. The MVP silently took the first match
+/// by storage order, making a hand-edited / buggy graph route
+/// nondeterministically. We now reject a second match on the same
+/// `(source, branch)` with `AmbiguousBranch` so the fault is surfaced
+/// instead of hidden.
 fn edge_for_branch(
     edges: &[WorkflowEdgeRecord],
     node_index: &HashMap<String, usize>,
     node_id: &str,
-    branch: Branch,
+    branch: &Branch,
 ) -> Result<Option<(String, String)>, WorkflowError> {
+    let branch_str = branch.to_branch_string();
+    let mut found: Option<(String, String)> = None;
     for e in edges {
-        if e.source == node_id && e.branch == branch.as_str() {
+        if e.source == node_id && e.branch == branch_str {
             if !node_index.contains_key(&e.target) {
                 return Err(WorkflowError::DanglingEdge(e.id.clone(), e.target.clone()));
             }
-            return Ok(Some((e.id.clone(), e.target.clone())));
+            if found.is_some() {
+                return Err(WorkflowError::AmbiguousBranch(
+                    node_id.to_string(),
+                    branch_str,
+                ));
+            }
+            found = Some((e.id.clone(), e.target.clone()));
         }
     }
-    Ok(None)
+    Ok(found)
 }
 
 /// The two run-scoped identifiers a node execution is tagged with: the
@@ -437,6 +526,301 @@ fn merge_variable_values(
     merged
 }
 
+/// Build the pure [`EvalContext`] a condition is evaluated against from a
+/// finished node's outcome: its exit code, its extracted output fields (the
+/// same projection data-flow uses, so `Variable`-subject conditions see the
+/// same names a downstream `${name}` would), and its bounded stdout tail.
+/// Keeping this a free function lets it be unit-tested without an executor.
+fn build_eval_context(outcome: &NodeOutcome) -> EvalContext {
+    EvalContext {
+        exit_code: outcome.exit_code,
+        variables: extracted_to_values(outcome),
+        stdout: outcome.stdout_tail.clone(),
+    }
+}
+
+/// Choose the branch a `condition` node takes. When the node carries an
+/// explicit `predicate`, it is evaluated against the test command's outcome:
+/// true → `then`, false → `else`. When it is `None`, the node falls back to
+/// the MVP exit-code rule (exit 0 → `then`, non-zero → `else`). A malformed
+/// predicate (bad regex) surfaces as `ConditionEval`, not a silent `else`.
+/// Pure — no executor, fully unit-testable.
+fn select_condition_branch(
+    node_id: &str,
+    predicate: Option<&workflow_condition::Condition>,
+    ctx: &EvalContext,
+) -> Result<Branch, WorkflowError> {
+    let took_then = match predicate {
+        Some(cond) => workflow_condition::evaluate(cond, ctx)
+            .map_err(|e| WorkflowError::ConditionEval(node_id.to_string(), e.to_string()))?,
+        None => ctx.exit_code == Some(0),
+    };
+    Ok(if took_then {
+        Branch::Then
+    } else {
+        Branch::Else
+    })
+}
+
+/// Expand `${name}` references in `template` against `vars`. A reference to a
+/// name not present in `vars` resolves to the EMPTY string — the same lenient
+/// rule a `Variable`-subject condition uses for a missing data-flow field, so
+/// the engine treats "missing field" uniformly across conditions and data
+/// nodes. `$$` is a literal `$`. Non-reference text (including multibyte UTF-8)
+/// passes through unchanged.
+///
+/// This is intentionally a small, self-contained expander rather than a reuse
+/// of `parser::substitute`: that one is command-oriented (consults
+/// `VariableSpec` defaults and ERRORS on a missing variable), which is the
+/// wrong contract for a data node's lenient, spec-less assignment.
+fn expand_refs(template: &str, vars: &BTreeMap<String, String>) -> String {
+    let bytes = template.as_bytes();
+    let mut out = String::with_capacity(template.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'$' {
+            // Copy this byte's char. Find the next `$` and copy the whole span
+            // at once so multibyte sequences are never split.
+            let next = template[i..]
+                .find('$')
+                .map(|off| i + off)
+                .unwrap_or(template.len());
+            out.push_str(&template[i..next]);
+            i = next;
+            continue;
+        }
+        // At a `$`.
+        if i + 1 < bytes.len() && bytes[i + 1] == b'$' {
+            out.push('$');
+            i += 2;
+            continue;
+        }
+        if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            if let Some(close_off) = template[i + 2..].find('}') {
+                let name = &template[i + 2..i + 2 + close_off];
+                if let Some(v) = vars.get(name) {
+                    out.push_str(v);
+                }
+                // Missing → empty (push nothing).
+                i = i + 2 + close_off + 1;
+                continue;
+            }
+        }
+        // A lone `$` (or malformed `${` with no `}`) is kept verbatim.
+        out.push('$');
+        i += 1;
+    }
+    out
+}
+
+/// Apply a `data` node's assignments to the data-flow map, in order. Each
+/// assignment's `value` is `${ref}`-expanded against the data-flow as it
+/// stands AT THAT POINT, so a later assignment can reference an earlier one in
+/// the same node. Pure — no executor, fully unit-testable.
+fn apply_data_assignments(
+    assignments: &[DataAssignmentRecord],
+    data_flow: &mut BTreeMap<String, String>,
+) {
+    for a in assignments {
+        let value = expand_refs(&a.value, data_flow);
+        data_flow.insert(a.name.clone(), value);
+    }
+}
+
+/// Choose the branch a `switch` node takes from its cases and the test
+/// command's outcome: the FIRST case whose predicate evaluates true (in
+/// declaration order) yields `Branch::Case(id)`; if none match, `Branch::
+/// Default`. A malformed predicate (bad regex) is surfaced as a
+/// `ConditionEval` error rather than silently skipped, so the author learns
+/// the case never fires. Pure — no executor, fully unit-testable.
+fn select_switch_branch(
+    node_id: &str,
+    cases: &[SwitchCaseRecord],
+    ctx: &EvalContext,
+) -> Result<Branch, WorkflowError> {
+    for case in cases {
+        let matched = workflow_condition::evaluate(&case.condition, ctx)
+            .map_err(|e| WorkflowError::ConditionEval(node_id.to_string(), e.to_string()))?;
+        if matched {
+            return Ok(Branch::Case(case.id.clone()));
+        }
+    }
+    Ok(Branch::Default)
+}
+
+/// Decide whether a `loop` node continues (→ `Branch::Body`) or stops
+/// (→ `Branch::Done`), given its config, the number of iterations ALREADY
+/// completed, and the data-flow context the `while` predicate evaluates
+/// against. Pure — no executor, fully unit-testable.
+///
+/// Rules, in order:
+///  1. **Hard cap first.** If `completed >= max_iterations`, return `LoopLimit`
+///     — the safety bound is checked BEFORE the mode logic so a runaway
+///     `while` loop (or a `count` larger than the cap) can never spin past it.
+///  2. **Exactly one mode.** Exactly one of `count` / `while` must be set;
+///     neither or both is a `LoopMisconfigured` authoring error.
+///  3. **count mode:** continue while `completed < count`.
+///  4. **while mode:** continue while the predicate holds (a bad regex
+///     surfaces as `ConditionEval`, not a silent stop).
+fn loop_should_continue(
+    node_id: &str,
+    cfg: &LoopConfigRecord,
+    completed: u32,
+    ctx: &EvalContext,
+) -> Result<Branch, WorkflowError> {
+    if completed >= cfg.max_iterations {
+        return Err(WorkflowError::LoopLimit(
+            node_id.to_string(),
+            cfg.max_iterations,
+        ));
+    }
+    match (cfg.count, cfg.while_condition.as_ref()) {
+        (Some(count), None) => {
+            if completed < count {
+                Ok(Branch::Body)
+            } else {
+                Ok(Branch::Done)
+            }
+        }
+        (None, Some(cond)) => {
+            let keep_going = workflow_condition::evaluate(cond, ctx)
+                .map_err(|e| WorkflowError::ConditionEval(node_id.to_string(), e.to_string()))?;
+            if keep_going {
+                Ok(Branch::Body)
+            } else {
+                Ok(Branch::Done)
+            }
+        }
+        // Neither or both set → an authoring error, not a guess.
+        _ => Err(WorkflowError::LoopMisconfigured(node_id.to_string())),
+    }
+}
+
+/// Sleep for `backoff_ms`, but abort early if the run is cancelled. Returns
+/// `Err(Cancelled)` if the cancel signal fires during the pause so the retry
+/// loop stops cleanly instead of waiting out a long backoff. A `0`/`None`
+/// backoff is a no-op (immediate retry).
+async fn cancellable_backoff(
+    backoff_ms: Option<u64>,
+    node_id: &str,
+    cancel_rx: &mut oneshot::Receiver<()>,
+) -> Result<(), WorkflowError> {
+    let ms = backoff_ms.unwrap_or(0);
+    if ms == 0 {
+        // Still observe an already-delivered cancel so a 0-backoff retry loop
+        // can't ignore a cancel that arrived between attempts.
+        return match cancel_rx.try_recv() {
+            Ok(()) => Err(WorkflowError::Cancelled),
+            Err(_) => Ok(()),
+        };
+    }
+    tokio::select! {
+        biased;
+        _ = &mut *cancel_rx => Err(WorkflowError::Cancelled),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(ms)) => {
+            let _ = node_id; // node_id reserved for future per-node trace spans
+            Ok(())
+        }
+    }
+}
+
+/// Run a node that executes its referenced command (`command` / `condition` /
+/// `switch` / `try`), shared by every command-running arm so the resolve →
+/// run → emit `NodeFinished` → cancel-check → carry-data-flow sequence lives in
+/// ONE place.
+///
+/// Resolves the node's `commandId`, merges the upstream `data_flow` under the
+/// node's own values, runs it through [`run_command_node`], emits the
+/// `NodeFinished` event, maps a cancellation to `WorkflowError::Cancelled`, and
+/// overwrites `data_flow` with this node's extracted fields for the next node.
+/// Returns the terminal [`NodeOutcome`] so the caller can pick its branch.
+///
+/// When `retry` is `Some`, a non-zero exit triggers up to `retries` additional
+/// attempts, each preceded by a `NodeRetry` event and a cancellable backoff;
+/// the FINAL attempt's outcome is returned (the caller's `ok`/`catch` choice
+/// reads its exit code). A hard `Spawn` / `LostOutcome` error is NOT retried —
+/// it means the command could not run at all, which a retry won't fix — so it
+/// propagates immediately. `None` runs exactly once (command/condition/switch).
+#[allow(clippy::too_many_arguments)]
+async fn run_command_bearing_node<R: Runtime>(
+    app: &AppHandle<R>,
+    executor_state: &Arc<ExecutorState>,
+    commands: &HashMap<String, CommandRecord>,
+    node: &WorkflowNodeRecord,
+    node_variable_values: &HashMap<String, BTreeMap<String, String>>,
+    data_flow: &mut BTreeMap<String, String>,
+    ctx: RunContext<'_>,
+    retry: Option<&RetryConfigRecord>,
+    cancel_rx: &mut oneshot::Receiver<()>,
+) -> Result<NodeOutcome, WorkflowError> {
+    let command_id = node
+        .command_id
+        .as_ref()
+        .ok_or_else(|| WorkflowError::MissingCommandId(node.id.clone()))?;
+    let cmd = commands
+        .get(command_id)
+        .ok_or_else(|| WorkflowError::UnknownCommand(node.id.clone(), command_id.clone()))?;
+
+    // Total attempts = 1 (first run) + retries. `retries == 0` (or no config)
+    // means a single attempt, identical to the pre-retry behaviour.
+    let max_retries = retry.map(|r| r.retries).unwrap_or(0);
+    let backoff_ms = retry.and_then(|r| r.backoff_ms);
+
+    let mut attempt: u32 = 1;
+    loop {
+        let values = merge_variable_values(data_flow, node_variable_values.get(&node.id));
+        let outcome = run_command_node(
+            app,
+            executor_state.clone(),
+            cmd,
+            &node.id,
+            ctx,
+            values,
+            cancel_rx,
+        )
+        .await?;
+
+        emit_unless_silent(
+            app,
+            ctx.silent,
+            &WorkflowEvent::NodeFinished {
+                run_id: ctx.run_id.to_string(),
+                workflow_id: ctx.workflow_id.to_string(),
+                node_id: node.id.clone(),
+                exit_code: outcome.exit_code,
+            },
+        );
+
+        if outcome.status == TerminalStatus::Cancelled {
+            return Err(WorkflowError::Cancelled);
+        }
+
+        // Success, or no retries left → this is the final outcome. Carry its
+        // extracted fields and return.
+        let succeeded = outcome.exit_code == Some(0);
+        if succeeded || attempt > max_retries {
+            *data_flow = extracted_to_values(&outcome);
+            return Ok(outcome);
+        }
+
+        // Failed with attempts remaining: announce the upcoming retry, wait the
+        // (cancellable) backoff, then loop. `attempt + 1` is the number of the
+        // attempt about to run.
+        attempt += 1;
+        emit_unless_silent(
+            app,
+            ctx.silent,
+            &WorkflowEvent::NodeRetry {
+                run_id: ctx.run_id.to_string(),
+                workflow_id: ctx.workflow_id.to_string(),
+                node_id: node.id.clone(),
+                attempt,
+            },
+        );
+        cancellable_backoff(backoff_ms, &node.id, cancel_rx).await?;
+    }
+}
+
 /// Drive a workflow to completion. Internal core shared by the public
 /// [`execute_workflow`]; separated so the traversal can return a
 /// `Result` and the caller emits the single terminal event. `cancel_rx`
@@ -477,6 +861,12 @@ async fn traverse<R: Runtime>(
     // own extracted fields.
     let mut data_flow: BTreeMap<String, String> = BTreeMap::new();
 
+    // Per-`loop`-node count of COMPLETED iterations within this run. A loop
+    // node is re-entered each time its body sub-graph flows back to it; this
+    // map is how the otherwise-stateless traversal remembers how many times
+    // each loop has gone round. Keyed by node id (loops never share state).
+    let mut loop_iterations: HashMap<String, u32> = HashMap::new();
+
     loop {
         steps += 1;
         if steps > MAX_STEPS {
@@ -495,115 +885,168 @@ async fn traverse<R: Runtime>(
                 return Ok(());
             }
             NodeKind::Start => Branch::Out,
+            NodeKind::Data => {
+                // A `data` node runs NO command: it derives data-flow variables
+                // via `${ref}`-expanded assignments, then continues on its
+                // single `out` edge. Pure and instant — it emits no per-node
+                // events (there is no execution to report), just mutates the
+                // carry and moves on. Like `start`, it is not a branching node.
+                apply_data_assignments(&node.data, &mut data_flow);
+                Branch::Out
+            }
             NodeKind::Command => {
-                let command_id = node
-                    .command_id
-                    .as_ref()
-                    .ok_or_else(|| WorkflowError::MissingCommandId(node.id.clone()))?;
-                let cmd = commands.get(command_id).ok_or_else(|| {
-                    WorkflowError::UnknownCommand(node.id.clone(), command_id.clone())
-                })?;
-
-                let values = merge_variable_values(&data_flow, node_variable_values.get(&node.id));
-                let outcome = run_command_node(
+                run_command_bearing_node(
                     app,
-                    executor_state.clone(),
-                    cmd,
-                    &node.id,
+                    &executor_state,
+                    commands,
+                    node,
+                    node_variable_values,
+                    &mut data_flow,
                     ctx,
-                    values,
+                    None,
                     &mut cancel_rx,
                 )
                 .await?;
-
-                emit_unless_silent(
-                    app,
-                    silent,
-                    &WorkflowEvent::NodeFinished {
-                        run_id: run_id.to_string(),
-                        workflow_id: workflow.id.clone(),
-                        node_id: node.id.clone(),
-                        exit_code: outcome.exit_code,
-                    },
-                );
-
-                if outcome.status == TerminalStatus::Cancelled {
-                    return Err(WorkflowError::Cancelled);
-                }
-                // Carry this node's extracted fields to the next node.
-                data_flow = extracted_to_values(&outcome);
                 Branch::Out
             }
             NodeKind::Condition => {
-                // MVP semantics: a `condition` node runs its OWN
-                // referenced command (the "test") and branches on that
-                // command's exit code — exit 0 → `then`, any non-zero →
-                // `else`. This keeps the engine stateless (no need to
-                // remember the previous node's outcome) and matches the
-                // editor's model where a condition is an explicit test
-                // step, not a passive inspector of upstream state.
-                let command_id = node
-                    .command_id
-                    .as_ref()
-                    .ok_or_else(|| WorkflowError::MissingCommandId(node.id.clone()))?;
-                let cmd = commands.get(command_id).ok_or_else(|| {
-                    WorkflowError::UnknownCommand(node.id.clone(), command_id.clone())
-                })?;
-
-                let values = merge_variable_values(&data_flow, node_variable_values.get(&node.id));
-                let outcome = run_command_node(
+                // A `condition` node runs its OWN referenced command (the
+                // "test"), then branches: when a `condition` predicate is set
+                // it is evaluated against the outcome (`then`/`else`), otherwise
+                // it falls back to the exit code (exit 0 → `then`, non-zero →
+                // `else`) — preserving exact MVP behaviour for predicate-less
+                // nodes.
+                let outcome = run_command_bearing_node(
                     app,
-                    executor_state.clone(),
-                    cmd,
-                    &node.id,
+                    &executor_state,
+                    commands,
+                    node,
+                    node_variable_values,
+                    &mut data_flow,
                     ctx,
-                    values,
+                    None,
                     &mut cancel_rx,
                 )
                 .await?;
-
-                emit_unless_silent(
+                let eval_ctx = build_eval_context(&outcome);
+                select_condition_branch(&node.id, node.condition.as_ref(), &eval_ctx)?
+            }
+            NodeKind::Switch => {
+                // A `switch` node runs its referenced command as a test, then
+                // takes the first `case` whose predicate matches (in
+                // declaration order), or `default` when none match.
+                let outcome = run_command_bearing_node(
                     app,
-                    silent,
-                    &WorkflowEvent::NodeFinished {
-                        run_id: run_id.to_string(),
-                        workflow_id: workflow.id.clone(),
-                        node_id: node.id.clone(),
-                        exit_code: outcome.exit_code,
-                    },
-                );
-
-                if outcome.status == TerminalStatus::Cancelled {
-                    return Err(WorkflowError::Cancelled);
-                }
-                // Carry this node's extracted fields to the next node.
-                data_flow = extracted_to_values(&outcome);
-                if outcome.exit_code == Some(0) {
-                    Branch::Then
+                    &executor_state,
+                    commands,
+                    node,
+                    node_variable_values,
+                    &mut data_flow,
+                    ctx,
+                    None,
+                    &mut cancel_rx,
+                )
+                .await?;
+                let eval_ctx = build_eval_context(&outcome);
+                select_switch_branch(&node.id, &node.cases, &eval_ctx)?
+            }
+            NodeKind::Loop => {
+                // A `loop` node runs NO command of its own: it is a control
+                // point re-entered each time its body sub-graph flows back to
+                // it. It decides — from its config, the iterations already
+                // completed, and the current data-flow — whether to enter the
+                // body again (`body`) or finish (`done`). The `while` predicate
+                // inspects the data-flow the body produced (exit code / stdout
+                // belong to body commands, not the loop node), so the context
+                // carries only `variables`.
+                let cfg = node
+                    .loop_config
+                    .as_ref()
+                    .ok_or_else(|| WorkflowError::LoopMissingConfig(node.id.clone()))?;
+                let completed = *loop_iterations.get(&node.id).unwrap_or(&0);
+                let eval_ctx = EvalContext {
+                    exit_code: None,
+                    variables: data_flow.clone(),
+                    stdout: None,
+                };
+                let branch = loop_should_continue(&node.id, cfg, completed, &eval_ctx)?;
+                if branch == Branch::Body {
+                    // Entering the body: record the new (1-based) iteration and
+                    // announce it so the editor can show progress.
+                    let iteration = completed + 1;
+                    loop_iterations.insert(node.id.clone(), iteration);
+                    emit_unless_silent(
+                        app,
+                        silent,
+                        &WorkflowEvent::LoopIteration {
+                            run_id: run_id.to_string(),
+                            workflow_id: workflow.id.clone(),
+                            node_id: node.id.clone(),
+                            iteration,
+                        },
+                    );
                 } else {
-                    Branch::Else
+                    // Leaving the loop: clear its counter so a re-entry later in
+                    // the SAME run (e.g. an outer loop wrapping this one) starts
+                    // a fresh iteration count rather than resuming the old one.
+                    loop_iterations.remove(&node.id);
+                }
+                branch
+            }
+            NodeKind::Try => {
+                // A `try` node runs its referenced command with retries (its
+                // `retry` config). The final attempt's exit code decides the
+                // exit: success (exit 0) → `ok`, failure after retries → `catch`.
+                let outcome = run_command_bearing_node(
+                    app,
+                    &executor_state,
+                    commands,
+                    node,
+                    node_variable_values,
+                    &mut data_flow,
+                    ctx,
+                    node.retry.as_ref(),
+                    &mut cancel_rx,
+                )
+                .await?;
+                if outcome.exit_code == Some(0) {
+                    Branch::Ok
+                } else {
+                    Branch::Catch
                 }
             }
         };
 
-        let edge = edge_for_branch(&workflow.edges, &node_index, &node.id, next_branch)?;
-        let (edge_id, target) = match (kind, next_branch, edge) {
-            (_, _, Some(found)) => found,
-            (NodeKind::Condition, branch, None) => {
-                return Err(WorkflowError::MissingBranch(
-                    node.id.clone(),
-                    branch.as_str().to_string(),
-                ));
+        // Whether this node makes an explicit branch choice (condition /
+        // switch / loop / try). Used both to pick the right "no edge" error and
+        // to decide whether to emit a `BranchTaken` event for the editor.
+        let is_branching = matches!(
+            kind,
+            NodeKind::Condition | NodeKind::Switch | NodeKind::Loop | NodeKind::Try
+        );
+        let branch_label = next_branch.to_branch_string();
+
+        let edge = edge_for_branch(&workflow.edges, &node_index, &node.id, &next_branch)?;
+        let (edge_id, target) = match edge {
+            Some(found) => found,
+            None if matches!(kind, NodeKind::Switch) => {
+                // A switch with no matching case AND no `default` edge has
+                // nowhere to go — a more specific error than a bare missing
+                // edge so the author knows to add a default.
+                return Err(WorkflowError::NoMatchingCase(node.id.clone()));
             }
-            (_, _, None) => {
+            None if is_branching => {
+                return Err(WorkflowError::MissingBranch(node.id.clone(), branch_label));
+            }
+            None => {
                 return Err(WorkflowError::NoOutgoingEdge(node.id.clone()));
             }
         };
 
-        // For a condition node, record which branch was taken so the
-        // editor can highlight the path. Start / command nodes have a
-        // single `out` edge and don't need the annotation.
-        if kind == NodeKind::Condition {
+        // For a branching node (condition / switch), record which branch was
+        // taken so the editor can highlight the path. Start / command nodes
+        // have a single `out` edge and don't need the annotation.
+        if is_branching {
             emit_unless_silent(
                 app,
                 silent,
@@ -611,7 +1054,7 @@ async fn traverse<R: Runtime>(
                     run_id: run_id.to_string(),
                     workflow_id: workflow.id.clone(),
                     node_id: node.id.clone(),
-                    branch: next_branch.as_str().to_string(),
+                    branch: branch_label,
                     edge_id,
                 },
             );
@@ -802,6 +1245,38 @@ mod wire_format_tests {
     }
 
     #[test]
+    fn loop_iteration_wire_format_is_camelcase() {
+        let e = WorkflowEvent::LoopIteration {
+            run_id: "r1".into(),
+            workflow_id: "w1".into(),
+            node_id: "lp".into(),
+            iteration: 2,
+        };
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["kind"], "loopIteration");
+        assert_eq!(json["runId"], "r1");
+        assert_eq!(json["workflowId"], "w1");
+        assert_eq!(json["nodeId"], "lp");
+        assert_eq!(json["iteration"], 2);
+        assert!(json.get("node_id").is_none());
+    }
+
+    #[test]
+    fn node_retry_wire_format_is_camelcase() {
+        let e = WorkflowEvent::NodeRetry {
+            run_id: "r1".into(),
+            workflow_id: "w1".into(),
+            node_id: "tr".into(),
+            attempt: 2,
+        };
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["kind"], "nodeRetry");
+        assert_eq!(json["nodeId"], "tr");
+        assert_eq!(json["attempt"], 2);
+        assert!(json.get("node_id").is_none());
+    }
+
+    #[test]
     fn workflow_finished_wire_format_is_camelcase() {
         let e = WorkflowEvent::WorkflowFinished {
             run_id: "r1".into(),
@@ -845,6 +1320,11 @@ mod graph_tests {
             kind: kind.into(),
             command_id: command_id.map(Into::into),
             label: None,
+            condition: None,
+            cases: Vec::new(),
+            loop_config: None,
+            retry: None,
+            data: Vec::new(),
             position: NodePosition { x: 0.0, y: 0.0 },
         }
     }
@@ -886,7 +1366,7 @@ mod graph_tests {
     fn edge_for_branch_detects_dangling_target() {
         let edges = vec![edge("e1", "a", "ghost", "out")];
         let index: HashMap<String, usize> = [("a".to_string(), 0)].into_iter().collect();
-        let res = edge_for_branch(&edges, &index, "a", Branch::Out);
+        let res = edge_for_branch(&edges, &index, "a", &Branch::Out);
         assert_eq!(
             res,
             Err(WorkflowError::DanglingEdge("e1".into(), "ghost".into()))
@@ -899,7 +1379,7 @@ mod graph_tests {
         let index: HashMap<String, usize> = [("a".to_string(), 0), ("b".to_string(), 1)]
             .into_iter()
             .collect();
-        let res = edge_for_branch(&edges, &index, "a", Branch::Else).unwrap();
+        let res = edge_for_branch(&edges, &index, "a", &Branch::Else).unwrap();
         assert!(res.is_none());
     }
 
@@ -916,10 +1396,349 @@ mod graph_tests {
         ]
         .into_iter()
         .collect();
-        let (eid, target) = edge_for_branch(&edges, &index, "cond", Branch::Else)
+        let (eid, target) = edge_for_branch(&edges, &index, "cond", &Branch::Else)
             .unwrap()
             .unwrap();
         assert_eq!(eid, "e_else");
         assert_eq!(target, "fail");
+    }
+
+    #[test]
+    fn edge_for_branch_rejects_two_edges_on_same_branch() {
+        // Two `out` edges from the same node is ambiguous: a strictly
+        // sequential traversal has no defined way to pick one. The MVP took
+        // the first by storage order (nondeterministic). It must now error.
+        let edges = vec![edge("e1", "a", "b", "out"), edge("e2", "a", "c", "out")];
+        let index: HashMap<String, usize> = [
+            ("a".to_string(), 0),
+            ("b".to_string(), 1),
+            ("c".to_string(), 2),
+        ]
+        .into_iter()
+        .collect();
+        let res = edge_for_branch(&edges, &index, "a", &Branch::Out);
+        assert_eq!(
+            res,
+            Err(WorkflowError::AmbiguousBranch("a".into(), "out".into()))
+        );
+    }
+
+    #[test]
+    fn edge_for_branch_dangling_target_beats_ambiguity_check() {
+        // A dangling target on the FIRST matching edge is reported as a
+        // dangling edge, not masked by a later ambiguity — the dangling
+        // check runs per-edge before the duplicate check.
+        let edges = vec![edge("e1", "a", "ghost", "out")];
+        let index: HashMap<String, usize> = [("a".to_string(), 0)].into_iter().collect();
+        let res = edge_for_branch(&edges, &index, "a", &Branch::Out);
+        assert_eq!(
+            res,
+            Err(WorkflowError::DanglingEdge("e1".into(), "ghost".into()))
+        );
+    }
+
+    // ---- §3 switch routing -------------------------------------------------
+
+    use crate::core::workflow_condition::{Condition, Op, Subject};
+
+    fn case(id: &str, subject: Subject, op: Op, value: &str) -> SwitchCaseRecord {
+        SwitchCaseRecord {
+            id: id.into(),
+            condition: Condition {
+                subject,
+                op,
+                value: value.into(),
+            },
+        }
+    }
+
+    fn ctx_exit(code: Option<i32>) -> EvalContext {
+        EvalContext {
+            exit_code: code,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn branch_renders_case_with_id_and_named_branches() {
+        assert_eq!(Branch::Out.to_branch_string(), "out");
+        assert_eq!(Branch::Then.to_branch_string(), "then");
+        assert_eq!(Branch::Else.to_branch_string(), "else");
+        assert_eq!(Branch::Default.to_branch_string(), "default");
+        assert_eq!(Branch::Case("ok".into()).to_branch_string(), "case:ok");
+    }
+
+    #[test]
+    fn switch_takes_first_matching_case_in_order() {
+        // Two cases both match exit code 0; the FIRST in declaration order wins.
+        let cases = vec![
+            case("zero", Subject::ExitCode, Op::Eq, "0"),
+            case("also", Subject::ExitCode, Op::Lt, "10"),
+        ];
+        let branch = select_switch_branch("sw", &cases, &ctx_exit(Some(0))).unwrap();
+        assert_eq!(branch, Branch::Case("zero".into()));
+    }
+
+    #[test]
+    fn switch_falls_through_to_default_when_no_case_matches() {
+        let cases = vec![case("zero", Subject::ExitCode, Op::Eq, "0")];
+        let branch = select_switch_branch("sw", &cases, &ctx_exit(Some(7))).unwrap();
+        assert_eq!(branch, Branch::Default);
+    }
+
+    #[test]
+    fn switch_with_no_cases_is_default() {
+        let branch = select_switch_branch("sw", &[], &ctx_exit(Some(0))).unwrap();
+        assert_eq!(branch, Branch::Default);
+    }
+
+    #[test]
+    fn switch_surfaces_bad_regex_as_condition_eval_error() {
+        // An unmatched-paren regex must abort with a typed `ConditionEval`,
+        // not be silently treated as "no match".
+        let cases = vec![case("re", Subject::Stdout, Op::Regex, "(")];
+        let ctx = EvalContext {
+            stdout: Some("anything".into()),
+            ..Default::default()
+        };
+        let err = select_switch_branch("sw", &cases, &ctx).unwrap_err();
+        match err {
+            WorkflowError::ConditionEval(node, _) => assert_eq!(node, "sw"),
+            other => panic!("expected ConditionEval, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_eval_context_maps_exit_and_stdout_tail() {
+        // A finished node's exit code and stdout tail flow into the context the
+        // switch evaluates against. Build a minimal NodeOutcome directly.
+        let outcome = NodeOutcome {
+            status: TerminalStatus::Finished,
+            exit_code: Some(3),
+            extracted: None,
+            duration_ms: 1,
+            output: None,
+            stdout_tail: Some("2 passed, 1 failed\n".into()),
+        };
+        let ctx = build_eval_context(&outcome);
+        assert_eq!(ctx.exit_code, Some(3));
+        assert_eq!(ctx.stdout.as_deref(), Some("2 passed, 1 failed\n"));
+        assert!(ctx.variables.is_empty());
+    }
+
+    // ---- §4 loop decisions -------------------------------------------------
+
+    fn loop_count(count: u32, max: u32) -> LoopConfigRecord {
+        LoopConfigRecord {
+            count: Some(count),
+            while_condition: None,
+            max_iterations: max,
+        }
+    }
+
+    fn loop_while(cond: Condition, max: u32) -> LoopConfigRecord {
+        LoopConfigRecord {
+            count: None,
+            while_condition: Some(cond),
+            max_iterations: max,
+        }
+    }
+
+    #[test]
+    fn loop_count_enters_body_until_count_reached() {
+        let cfg = loop_count(3, 1000);
+        let ctx = EvalContext::default();
+        // completed 0,1,2 → body; 3 → done.
+        assert_eq!(loop_should_continue("lp", &cfg, 0, &ctx), Ok(Branch::Body));
+        assert_eq!(loop_should_continue("lp", &cfg, 2, &ctx), Ok(Branch::Body));
+        assert_eq!(loop_should_continue("lp", &cfg, 3, &ctx), Ok(Branch::Done));
+    }
+
+    #[test]
+    fn loop_while_enters_body_while_predicate_holds() {
+        // Continue while variable `go` == "1".
+        let cond = Condition {
+            subject: Subject::Variable { name: "go".into() },
+            op: Op::Eq,
+            value: "1".into(),
+        };
+        let cfg = loop_while(cond, 1000);
+
+        let mut yes = EvalContext::default();
+        yes.variables.insert("go".into(), "1".into());
+        assert_eq!(loop_should_continue("lp", &cfg, 0, &yes), Ok(Branch::Body));
+
+        let mut no = EvalContext::default();
+        no.variables.insert("go".into(), "0".into());
+        assert_eq!(loop_should_continue("lp", &cfg, 5, &no), Ok(Branch::Done));
+    }
+
+    #[test]
+    fn loop_limit_fires_before_mode_logic_even_for_while_true() {
+        // A `while` that never becomes false must still be stopped by the hard
+        // cap — and as a typed `LoopLimit`, not a silent `Done`.
+        let cond = Condition {
+            subject: Subject::Variable { name: "go".into() },
+            op: Op::Eq,
+            value: "1".into(),
+        };
+        let cfg = loop_while(cond, 10);
+        let mut ctx = EvalContext::default();
+        ctx.variables.insert("go".into(), "1".into());
+        assert_eq!(
+            loop_should_continue("lp", &cfg, 10, &ctx),
+            Err(WorkflowError::LoopLimit("lp".into(), 10))
+        );
+    }
+
+    #[test]
+    fn loop_count_above_max_is_capped_by_loop_limit() {
+        // A `count` larger than `max_iterations` cannot spin past the cap.
+        let cfg = loop_count(100, 5);
+        let ctx = EvalContext::default();
+        assert_eq!(loop_should_continue("lp", &cfg, 4, &ctx), Ok(Branch::Body));
+        assert_eq!(
+            loop_should_continue("lp", &cfg, 5, &ctx),
+            Err(WorkflowError::LoopLimit("lp".into(), 5))
+        );
+    }
+
+    #[test]
+    fn loop_misconfigured_when_neither_or_both_modes_set() {
+        let ctx = EvalContext::default();
+        let neither = LoopConfigRecord {
+            count: None,
+            while_condition: None,
+            max_iterations: 10,
+        };
+        assert_eq!(
+            loop_should_continue("lp", &neither, 0, &ctx),
+            Err(WorkflowError::LoopMisconfigured("lp".into()))
+        );
+        let both = LoopConfigRecord {
+            count: Some(3),
+            while_condition: Some(Condition {
+                subject: Subject::ExitCode,
+                op: Op::Eq,
+                value: "0".into(),
+            }),
+            max_iterations: 10,
+        };
+        assert_eq!(
+            loop_should_continue("lp", &both, 0, &ctx),
+            Err(WorkflowError::LoopMisconfigured("lp".into()))
+        );
+    }
+
+    #[test]
+    fn loop_branch_strings_render() {
+        assert_eq!(Branch::Body.to_branch_string(), "body");
+        assert_eq!(Branch::Done.to_branch_string(), "done");
+    }
+
+    // ---- §6 condition predicate -------------------------------------------
+
+    #[test]
+    fn condition_without_predicate_falls_back_to_exit_code() {
+        // No predicate → MVP rule: exit 0 → then, non-zero → else.
+        assert_eq!(
+            select_condition_branch("c", None, &ctx_exit(Some(0))),
+            Ok(Branch::Then)
+        );
+        assert_eq!(
+            select_condition_branch("c", None, &ctx_exit(Some(1))),
+            Ok(Branch::Else)
+        );
+    }
+
+    #[test]
+    fn condition_with_predicate_evaluates_it_over_exit_code() {
+        // A stdout `contains` predicate overrides the exit-code default: even
+        // with exit 0, a non-matching stdout takes `else`.
+        let pred = Condition {
+            subject: Subject::Stdout,
+            op: Op::Contains,
+            value: "OK".into(),
+        };
+        let mut hit = EvalContext {
+            exit_code: Some(0),
+            ..Default::default()
+        };
+        hit.stdout = Some("all OK here".into());
+        assert_eq!(
+            select_condition_branch("c", Some(&pred), &hit),
+            Ok(Branch::Then)
+        );
+
+        let miss = EvalContext {
+            exit_code: Some(0),
+            stdout: Some("nope".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            select_condition_branch("c", Some(&pred), &miss),
+            Ok(Branch::Else)
+        );
+    }
+
+    #[test]
+    fn condition_bad_regex_predicate_is_condition_eval_error() {
+        let pred = Condition {
+            subject: Subject::Stdout,
+            op: Op::Regex,
+            value: "(".into(),
+        };
+        let ctx = EvalContext {
+            stdout: Some("x".into()),
+            ..Default::default()
+        };
+        let err = select_condition_branch("cnode", Some(&pred), &ctx).unwrap_err();
+        match err {
+            WorkflowError::ConditionEval(node, _) => assert_eq!(node, "cnode"),
+            other => panic!("expected ConditionEval, got {other:?}"),
+        }
+    }
+
+    // ---- §6 data node ------------------------------------------------------
+
+    #[test]
+    fn expand_refs_substitutes_present_and_blanks_missing() {
+        let mut vars = BTreeMap::new();
+        vars.insert("name".into(), "world".into());
+        assert_eq!(expand_refs("hi ${name}!", &vars), "hi world!");
+        // Missing → empty.
+        assert_eq!(expand_refs("[${absent}]", &vars), "[]");
+        // `$$` is a literal `$`; a lone `$` survives.
+        assert_eq!(expand_refs("cost $$5 ${name}", &vars), "cost $5 world");
+        assert_eq!(expand_refs("price $ end", &vars), "price $ end");
+    }
+
+    #[test]
+    fn expand_refs_preserves_multibyte_text() {
+        let vars = BTreeMap::new();
+        // Cyrillic + emoji around a (missing) ref must pass through intact.
+        assert_eq!(expand_refs("Привет ${x}🚀", &vars), "Привет 🚀");
+    }
+
+    #[test]
+    fn apply_data_assignments_sets_and_chains() {
+        let mut df = BTreeMap::new();
+        df.insert("base".into(), "abc".into());
+        let assigns = vec![
+            DataAssignmentRecord {
+                name: "greeting".into(),
+                value: "hello ${base}".into(),
+            },
+            // A later assignment sees an earlier one in the same node.
+            DataAssignmentRecord {
+                name: "loud".into(),
+                value: "${greeting}!".into(),
+            },
+        ];
+        apply_data_assignments(&assigns, &mut df);
+        assert_eq!(df.get("greeting").map(String::as_str), Some("hello abc"));
+        assert_eq!(df.get("loud").map(String::as_str), Some("hello abc!"));
+        // The original field is untouched.
+        assert_eq!(df.get("base").map(String::as_str), Some("abc"));
     }
 }

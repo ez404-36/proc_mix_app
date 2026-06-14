@@ -1716,6 +1716,7 @@ mod compute_due_tests {
             extracted: None,
             duration_ms: 5,
             output: None,
+            stdout_tail: None,
         };
         assert!(map_captured_output(&none_outcome).is_none());
 
@@ -1734,6 +1735,7 @@ mod compute_due_tests {
                     line: "err".into(),
                 },
             ]),
+            stdout_tail: None,
         };
         let mapped = map_captured_output(&outcome).expect("output present");
         assert_eq!(mapped.len(), 2);
@@ -1761,6 +1763,7 @@ mod compute_due_tests {
             extracted: None,
             duration_ms: 5,
             output: Some(lines),
+            stdout_tail: None,
         };
         let mapped = map_captured_output(&outcome).expect("output present");
         // Last line is the truncation marker.

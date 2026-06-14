@@ -33,6 +33,68 @@ pub struct NodePosition {
 /// avoids a serde rename surface that would have to stay in lock-step with
 /// the TS `WorkflowNodeKind` union. The execution engine (Phase 2) owns the
 /// typed interpretation.
+/// One case of a `switch` node: a predicate plus the id used to label its
+/// outgoing edge (`case:<id>`). Evaluated in vector order; the first match
+/// wins, else the `default` edge is taken. Mirrors the TS
+/// `WorkflowNode.cases[]` element.
+///
+/// The predicate type is the pure `Condition` from `core::workflow_condition`
+/// (a serde-only DTO). This is a `storage → core` reference for the data
+/// shape ONLY; `core::workflow_condition` imports nothing from storage, so the
+/// dependency is acyclic.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchCaseRecord {
+    pub id: String,
+    pub condition: crate::core::workflow_condition::Condition,
+}
+
+/// Bounded-iteration config for a `loop` node. Exactly one of `count` /
+/// `while_condition` drives normal termination; `max_iterations` is the hard
+/// safety cap the runner enforces regardless (mirrors the engine's
+/// `WorkflowError::LoopLimit`). Mirrors the TS `LoopConfig`.
+///
+/// `while` is a Rust keyword, so the field is `while_condition` here and is
+/// renamed to the wire/`TS` name `while` via serde.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopConfigRecord {
+    /// Fixed iteration count. Mutually exclusive with `while_condition`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// Repeat while this predicate holds. Mutually exclusive with `count`.
+    #[serde(rename = "while", default, skip_serializing_if = "Option::is_none")]
+    pub while_condition: Option<crate::core::workflow_condition::Condition>,
+    /// Hard upper bound on iterations; the runner aborts past this with
+    /// `LoopLimit`.
+    pub max_iterations: u32,
+}
+
+/// Retry config for a `try` (or retrying `command`) node. `retries` is the
+/// number of ADDITIONAL attempts after the first; `backoff_ms` is the pause
+/// between attempts. Mirrors the TS `RetryConfig`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryConfigRecord {
+    /// Additional attempts after the first. `0` means run once (no retry).
+    pub retries: u32,
+    /// Pause between attempts, in milliseconds. `None`/0 = retry immediately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_ms: Option<u64>,
+}
+
+/// One assignment performed by a `data` node: set the data-flow variable
+/// `name` to `value`. `value` may reference upstream data-flow fields with
+/// `${ref}` (a missing reference resolves to empty, matching how a
+/// `Variable`-subject condition treats an absent field). Mirrors the TS
+/// `DataAssignment`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DataAssignmentRecord {
+    pub name: String,
+    pub value: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowNodeRecord {
@@ -42,6 +104,27 @@ pub struct WorkflowNodeRecord {
     pub command_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Optional branch predicate for a `condition` node. `None` → fall back to
+    /// exit-code branching (MVP behaviour). Wired in §6; carried here now so
+    /// the node record round-trips it. Mirrors the TS `WorkflowNode.condition`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<crate::core::workflow_condition::Condition>,
+    /// Per-case predicates for a `switch` node, evaluated in order. Empty /
+    /// absent for every other kind. Mirrors the TS `WorkflowNode.cases`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cases: Vec<SwitchCaseRecord>,
+    /// Iteration config for a `loop` node. `None` for every other kind.
+    /// Mirrors the TS `WorkflowNode.loop`.
+    #[serde(rename = "loop", default, skip_serializing_if = "Option::is_none")]
+    pub loop_config: Option<LoopConfigRecord>,
+    /// Retry config for a `try` node. `None` for every other kind.
+    /// Mirrors the TS `WorkflowNode.retry`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<RetryConfigRecord>,
+    /// Variable assignments performed by a `data` node, in order. Empty /
+    /// absent for every other kind. Mirrors the TS `WorkflowNode.data`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data: Vec<DataAssignmentRecord>,
     pub position: NodePosition,
 }
 
@@ -240,6 +323,11 @@ mod wire_format_tests {
                     kind: "start".into(),
                     command_id: None,
                     label: None,
+                    condition: None,
+                    cases: Vec::new(),
+                    loop_config: None,
+                    retry: None,
+                    data: Vec::new(),
                     position: NodePosition { x: 0.0, y: 0.0 },
                 },
                 WorkflowNodeRecord {
@@ -247,6 +335,11 @@ mod wire_format_tests {
                     kind: "command".into(),
                     command_id: Some("cmd-build".into()),
                     label: Some("Build".into()),
+                    condition: None,
+                    cases: Vec::new(),
+                    loop_config: None,
+                    retry: None,
+                    data: Vec::new(),
                     position: NodePosition { x: 120.0, y: 40.0 },
                 },
             ],
@@ -305,6 +398,11 @@ mod wire_format_tests {
             kind: "command".into(),
             command_id: Some("cmd-9".into()),
             label: Some("Run".into()),
+            condition: None,
+            cases: Vec::new(),
+            loop_config: None,
+            retry: None,
+            data: Vec::new(),
             position: NodePosition { x: 1.0, y: 2.0 },
         };
         let json = serde_json::to_value(&node).unwrap();
@@ -323,11 +421,71 @@ mod wire_format_tests {
             kind: "start".into(),
             command_id: None,
             label: None,
+            condition: None,
+            cases: Vec::new(),
+            loop_config: None,
+            retry: None,
+            data: Vec::new(),
             position: NodePosition { x: 0.0, y: 0.0 },
         };
         let json = serde_json::to_value(&node).unwrap();
         assert!(json.get("commandId").is_none());
         assert!(json.get("label").is_none());
+        // The advanced-node optionals are also omitted when empty/None.
+        assert!(json.get("condition").is_none());
+        assert!(json.get("cases").is_none());
+        assert!(json.get("loop").is_none());
+    }
+
+    /// A `loop` config serialises with the field renamed to the wire/TS name
+    /// `while` (not `whileCondition`) and round-trips back unchanged. A rename
+    /// regression here would silently break loaded loops.
+    #[test]
+    fn loop_config_uses_while_wire_name_and_round_trips() {
+        let cfg = LoopConfigRecord {
+            count: None,
+            while_condition: Some(crate::core::workflow_condition::Condition {
+                subject: crate::core::workflow_condition::Subject::ExitCode,
+                op: crate::core::workflow_condition::Op::Eq,
+                value: "0".into(),
+            }),
+            max_iterations: 50,
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert!(
+            json.get("while").is_some(),
+            "must use the `while` wire name"
+        );
+        assert!(json.get("whileCondition").is_none());
+        assert_eq!(json["maxIterations"], 50);
+        assert!(json.get("count").is_none(), "absent count is omitted");
+
+        let back: LoopConfigRecord = serde_json::from_value(json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    /// A `retry` config uses camelCase (`backoffMs`), omits an absent backoff,
+    /// and round-trips unchanged.
+    #[test]
+    fn retry_config_wire_format_is_camelcase_and_round_trips() {
+        let cfg = RetryConfigRecord {
+            retries: 3,
+            backoff_ms: Some(250),
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["retries"], 3);
+        assert_eq!(json["backoffMs"], 250);
+        assert!(json.get("backoff_ms").is_none());
+        let back: RetryConfigRecord = serde_json::from_value(json).unwrap();
+        assert_eq!(back, cfg);
+
+        // An absent backoff is omitted entirely.
+        let no_backoff = RetryConfigRecord {
+            retries: 1,
+            backoff_ms: None,
+        };
+        let json = serde_json::to_value(&no_backoff).unwrap();
+        assert!(json.get("backoffMs").is_none());
     }
 
     #[test]
@@ -410,6 +568,11 @@ mod sqlite_integration_tests {
                     kind: "start".into(),
                     command_id: None,
                     label: None,
+                    condition: None,
+                    cases: Vec::new(),
+                    loop_config: None,
+                    retry: None,
+                    data: Vec::new(),
                     position: NodePosition { x: 0.0, y: 0.0 },
                 },
                 WorkflowNodeRecord {
@@ -417,6 +580,11 @@ mod sqlite_integration_tests {
                     kind: "command".into(),
                     command_id: Some("cmd-1".into()),
                     label: Some("Run".into()),
+                    condition: None,
+                    cases: Vec::new(),
+                    loop_config: None,
+                    retry: None,
+                    data: Vec::new(),
                     position: NodePosition { x: 100.0, y: 0.0 },
                 },
             ],

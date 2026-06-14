@@ -56,6 +56,8 @@ import {
   makeRowId,
   parseTimeoutSeconds,
   rowsToVariableSpecs,
+  syncScriptDefaultsToRows,
+  syncVariableDefaultToScript,
 } from "./formState";
 import type {
   EnvRow,
@@ -792,12 +794,24 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
 
   const updateVariableRow = useCallback(
     (index: number, patch: Partial<VariableRow>): void => {
-      setForm((s) => ({
-        ...s,
-        variables: s.variables.map((row, i) =>
+      setForm((s) => {
+        const updatedVariables = s.variables.map((row, i) =>
           i === index ? { ...row, ...patch } : row,
-        ),
-      }));
+        );
+        // When the default value of a named variable changes, keep every
+        // ${name} / ${name:old} reference in the script in sync.
+        if ('defaultValue' in patch) {
+          const name = updatedVariables[index]?.name;
+          if (name) {
+            return {
+              ...s,
+              variables: updatedVariables,
+              script: syncVariableDefaultToScript(s.script, name, patch.defaultValue ?? ''),
+            };
+          }
+        }
+        return { ...s, variables: updatedVariables };
+      });
     },
     [],
   );
@@ -1396,7 +1410,13 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
              */}
             <ScriptEditor
               value={form.script}
-              onChange={(next) => setForm((s) => ({ ...s, script: next }))}
+              onChange={(next) =>
+                setForm((s) => ({
+                  ...s,
+                  script: next,
+                  variables: syncScriptDefaultsToRows(next, s.variables),
+                }))
+              }
               variables={scriptVariableSpecs}
               placeholder={t("commandForm.placeholders.script")}
               rows={8}
@@ -1574,11 +1594,13 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
                           type="text"
                           className="input command-form__variables-default"
                           value={row.defaultValue}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const val = e.target.value;
                             updateVariableRow(index, {
-                              defaultValue: e.target.value,
-                            })
-                          }
+                              defaultValue: val,
+                              ...(val === '' ? { promptAtRuntime: true } : {}),
+                            });
+                          }}
                           placeholder={t(
                             "commandForm.variables.defaultValuePlaceholder",
                           )}

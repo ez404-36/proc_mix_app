@@ -23,17 +23,29 @@ use crate::storage::DbPool;
 ///   - `None`               → no default; the runner MUST prompt the
 ///     user at run time unless a value was supplied programmatically.
 ///   - `Some("".to_string())` → empty string is a *valid* default and
-///     does NOT trigger a prompt.
+///     on its own does NOT trigger a prompt.
 ///   - `Some(non-empty)`    → used as the default value.
+///
+/// `prompt_at_runtime` is an explicit override:
+///   - `false` (the legacy convention) → prompt only when
+///     `default_value.is_none()`.
+///   - `true` → always prompt, even when a `default_value` is set;
+///     the default is pre-filled into the modal input as a suggestion
+///     that the user can accept or override on each run.
 ///
 /// `sensitive` is consumed by the executor for redaction in events
 /// and logs; storage does not treat sensitive values specially.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VariableSpec {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<String>,
+    /// Force a prompt at run time even when `default_value` is set.
+    /// Skipped from the wire payload when `false` so older records that
+    /// predate this field continue to round-trip identically.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prompt_at_runtime: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default)]
@@ -498,6 +510,7 @@ mod wire_format_tests {
             variables: vec![VariableSpec {
                 name: "who".into(),
                 default_value: Some("world".into()),
+                prompt_at_runtime: false,
                 description: Some("Greeting target".into()),
                 sensitive: false,
             }],
@@ -614,6 +627,7 @@ mod wire_format_tests {
         let spec = VariableSpec {
             name: "n".into(),
             default_value: Some("d".into()),
+            prompt_at_runtime: false,
             description: Some("desc".into()),
             sensitive: true,
         };
@@ -623,6 +637,46 @@ mod wire_format_tests {
         assert_eq!(json["description"], "desc");
         assert_eq!(json["sensitive"], true);
         assert!(json.get("default_value").is_none());
+        // promptAtRuntime: false is the legacy default — must be absent
+        // from the wire payload so older clients accept it unchanged.
+        assert!(json.get("promptAtRuntime").is_none());
+        assert!(json.get("prompt_at_runtime").is_none());
+    }
+
+    /// When `prompt_at_runtime: true`, the field MUST appear in the
+    /// wire payload as `promptAtRuntime: true` so the runner knows to
+    /// prompt even though a `defaultValue` is also present.
+    #[test]
+    fn variable_spec_serializes_prompt_at_runtime_when_true() {
+        let spec = VariableSpec {
+            name: "host".into(),
+            default_value: Some("localhost".into()),
+            prompt_at_runtime: true,
+            description: None,
+            sensitive: false,
+        };
+        let json = serde_json::to_value(&spec).unwrap();
+        assert_eq!(json["defaultValue"], "localhost");
+        assert_eq!(json["promptAtRuntime"], true);
+        // Round-trip: deserialize back and verify the field survives.
+        let back: VariableSpec = serde_json::from_value(json).unwrap();
+        assert_eq!(back, spec);
+    }
+
+    /// Older command records have no `promptAtRuntime` key. Deserializing
+    /// such records must succeed and default the field to `false`, so
+    /// the legacy "no default ⇒ prompt" convention continues to apply.
+    #[test]
+    fn variable_spec_deserializes_legacy_records_with_no_prompt_field() {
+        let legacy = serde_json::json!({
+            "name": "who",
+            "defaultValue": "world",
+            "sensitive": false,
+        });
+        let spec: VariableSpec = serde_json::from_value(legacy).unwrap();
+        assert_eq!(spec.name, "who");
+        assert_eq!(spec.default_value.as_deref(), Some("world"));
+        assert!(!spec.prompt_at_runtime);
     }
 
     /// Empty inline default `""` is a *valid* value distinct from `None`
@@ -634,12 +688,14 @@ mod wire_format_tests {
         let with_empty = VariableSpec {
             name: "x".into(),
             default_value: Some(String::new()),
+            prompt_at_runtime: false,
             description: None,
             sensitive: false,
         };
         let with_none = VariableSpec {
             name: "x".into(),
             default_value: None,
+            prompt_at_runtime: false,
             description: None,
             sensitive: false,
         };
@@ -752,12 +808,14 @@ mod sqlite_integration_tests {
             VariableSpec {
                 name: "token".into(),
                 default_value: Some("s3cr3t-default".into()),
+                prompt_at_runtime: false,
                 description: Some("API token".into()),
                 sensitive: true,
             },
             VariableSpec {
                 name: "host".into(),
                 default_value: Some("example.com".into()),
+                prompt_at_runtime: false,
                 description: None,
                 sensitive: false,
             },
@@ -892,18 +950,21 @@ mod sqlite_integration_tests {
             VariableSpec {
                 name: "alpha".into(),
                 default_value: Some("default-alpha".into()),
+                prompt_at_runtime: false,
                 description: Some("first var".into()),
                 sensitive: false,
             },
             VariableSpec {
                 name: "beta".into(),
                 default_value: None,
+                prompt_at_runtime: false,
                 description: None,
                 sensitive: true,
             },
             VariableSpec {
                 name: "gamma".into(),
                 default_value: Some(String::new()),
+                prompt_at_runtime: false,
                 description: None,
                 sensitive: false,
             },
@@ -924,6 +985,7 @@ mod sqlite_integration_tests {
         rec.variables = vec![VariableSpec {
             name: "alpha".into(),
             default_value: None,
+            prompt_at_runtime: false,
             description: None,
             sensitive: false,
         }];

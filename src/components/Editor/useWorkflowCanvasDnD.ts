@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import type { DragEvent as ReactDragEvent, RefObject } from "react";
 import type { ReactFlowInstance } from "reactflow";
+import type { WorkflowNodeKind } from "../../types";
 import { useEditorDraftStore } from "../../stores/editorDraftStore";
 import {
   connectTailToNode,
@@ -27,7 +28,7 @@ interface UseWorkflowCanvasDnDArgs {
     unknown
   > | null>;
   makeNode: (
-    kind: "command" | "condition" | "end",
+    kind: Exclude<WorkflowNodeKind, "start">,
     commandId: string | undefined,
     position: { x: number; y: number },
   ) => WorkflowFlowNode;

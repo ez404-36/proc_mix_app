@@ -26,7 +26,27 @@ use crate::storage::commands::OutputSchemaRecord;
 use super::emit_event;
 use super::types::{
     CaptureBuffer, CapturedLine, ExecutionEvent, NodeOutcome, RunningEntry, TerminalStatus,
+    MAX_STDOUT_TAIL_BYTES,
 };
+
+/// Take the trailing slice of `text` no larger than [`MAX_STDOUT_TAIL_BYTES`],
+/// snapped FORWARD to the next UTF-8 char boundary so the result is always
+/// valid UTF-8 (never splits a multi-byte character). Returns `None` for an
+/// empty string so a node that produced no stdout carries `stdout_tail: None`
+/// rather than an empty `Some`.
+fn stdout_tail(text: &str) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+    if text.len() <= MAX_STDOUT_TAIL_BYTES {
+        return Some(text.to_string());
+    }
+    let mut start = text.len() - MAX_STDOUT_TAIL_BYTES;
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    Some(text[start..].to_string())
+}
 
 #[cfg(unix)]
 use super::command_build::{libc_killpg, SIGKILL, SIGTERM};
@@ -195,11 +215,22 @@ pub(super) fn spawn_waiter<R: Runtime>(ctx: WaiterCtx<R>) {
         // frontend never appends output AFTER it has shown the terminal
         // status. This is the fix for "the command keeps printing after
         // the timeout error appears".
-        // Capture the buffered stdout (Some only when a schema requested
-        // it) so extraction can run on the complete output below.
+        // Capture the buffered stdout (Some when a schema OR a workflow node
+        // requested it) so extraction can run on the complete output below.
         let captured_stdout: Option<String> = match stdout_task {
             Some(task) => task.await.unwrap_or(None),
             None => None,
+        };
+
+        // Derive the bounded stdout tail the workflow runner uses for
+        // `Stdout`-subject condition evaluation — but ONLY for workflow nodes,
+        // so a direct run never retains it. Computed here, before the schema
+        // branch below moves `captured_stdout`. The buffered text is already
+        // sensitive-redacted (the streaming reader redacts each line first).
+        let node_stdout_tail: Option<String> = if wf_run_id_for_wait.is_some() {
+            captured_stdout.as_deref().and_then(stdout_tail)
+        } else {
+            None
         };
         if let Some(task) = stderr_task {
             let _ = task.await;
@@ -324,6 +355,7 @@ pub(super) fn spawn_waiter<R: Runtime>(ctx: WaiterCtx<R>) {
                             extracted: None,
                             duration_ms,
                             output: captured_output,
+                            stdout_tail: node_stdout_tail,
                         },
                     );
                     return;
@@ -350,6 +382,7 @@ pub(super) fn spawn_waiter<R: Runtime>(ctx: WaiterCtx<R>) {
                         extracted,
                         duration_ms,
                         output: captured_output,
+                        stdout_tail: node_stdout_tail,
                     },
                 );
             }
@@ -373,6 +406,7 @@ pub(super) fn spawn_waiter<R: Runtime>(ctx: WaiterCtx<R>) {
                         extracted: None,
                         duration_ms,
                         output: captured_output,
+                        stdout_tail: node_stdout_tail,
                     },
                 );
             }

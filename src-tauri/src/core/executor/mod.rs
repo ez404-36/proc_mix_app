@@ -334,8 +334,11 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
     // Stream stdout/stderr. We KEEP the JoinHandles so the waiter task
     // can drain them before emitting the terminal event — see the
     // streaming module and the waiter drain step for the ordering
-    // rationale. Buffer stdout for extraction ONLY when a schema is set.
-    let capture_stdout = req.output_schema.is_some();
+    // rationale. Buffer stdout when a schema is set (for extraction) OR when
+    // this is a workflow node (for the `stdout_tail` a `Stdout`-subject
+    // condition matches on). Direct library runs set neither, so they pay no
+    // buffering cost and stay byte-identical to before.
+    let capture_stdout = req.output_schema.is_some() || req.workflow_run_id.is_some();
     let stdout_task = streaming::spawn_stdout_reader(
         stdout,
         app.clone(),
@@ -447,6 +450,7 @@ mod build_variables_tests {
         VariableSpec {
             name: name.to_string(),
             default_value: default.map(|s| s.to_string()),
+            prompt_at_runtime: false,
             description: None,
             sensitive,
         }

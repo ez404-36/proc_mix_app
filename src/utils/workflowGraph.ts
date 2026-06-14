@@ -17,7 +17,12 @@
 
 import type { Edge, Node } from "reactflow";
 import type {
+  DataAssignment,
+  LoopConfig,
+  RetryConfig,
+  SwitchCase,
   Workflow,
+  WorkflowCondition,
   WorkflowEdge,
   WorkflowEdgeBranch,
   WorkflowNode,
@@ -34,10 +39,25 @@ export interface WorkflowNodeData {
   kind: WorkflowNodeKind;
   commandId?: string;
   label?: string;
+  /**
+   * Advanced-node config, carried verbatim so the inspector can edit it and
+   * `flowNodeToNode` can persist it. Each is meaningful for one kind only
+   * (`condition` → condition, `switch` → cases, `loop` → loop, `try` → retry,
+   * `data` → data); absent for every other kind.
+   */
+  condition?: WorkflowCondition;
+  cases?: SwitchCase[];
+  loop?: LoopConfig;
+  retry?: RetryConfig;
+  data?: DataAssignment[];
   /** Per-run lifecycle status, injected for live highlighting. */
   runStatus?: "pending" | "running" | "finished";
   /** Exit code once the node finished, for the node badge. */
   exitCode?: number | null;
+  /** Current loop iteration (1-based), injected for live highlighting. */
+  loopIteration?: number;
+  /** Current retry attempt (1-based), injected for live highlighting. */
+  retryAttempt?: number;
   /**
    * Transient flag set while a palette command is dragged over the edge
    * connecting this node to its neighbour: `true` marks the two nodes the
@@ -65,6 +85,11 @@ function nodeToFlowNode(node: WorkflowNode): WorkflowFlowNode {
       kind: node.kind,
       commandId: node.commandId,
       label: node.label,
+      condition: node.condition,
+      cases: node.cases,
+      loop: node.loop,
+      retry: node.retry,
+      data: node.data,
     },
   };
 }
@@ -104,15 +129,39 @@ function flowNodeToNode(node: WorkflowFlowNode): WorkflowNode {
     kind,
     commandId: node.data.commandId,
     label: node.data.label,
+    condition: node.data.condition,
+    cases: node.data.cases,
+    loop: node.data.loop,
+    retry: node.data.retry,
+    data: node.data.data,
     position: { x: node.position.x, y: node.position.y },
   };
 }
 
+/** Source-handle ids that map 1:1 to a static branch label. `case:<id>` is
+ * handled separately (dynamic id). Anything else falls back to `out`. */
+const STATIC_BRANCH_HANDLES: ReadonlySet<WorkflowEdgeBranch> =
+  new Set<WorkflowEdgeBranch>([
+    "out",
+    "then",
+    "else",
+    "default",
+    "body",
+    "done",
+    "ok",
+    "catch",
+  ]);
+
 function branchFromHandle(
   sourceHandle: string | null | undefined,
 ): WorkflowEdgeBranch {
-  if (sourceHandle === "then" || sourceHandle === "else") {
-    return sourceHandle;
+  if (sourceHandle == null) return DEFAULT_SOURCE_HANDLE;
+  // A `switch` case handle carries its user-authored id (`case:<id>`).
+  if (sourceHandle.startsWith("case:")) {
+    return sourceHandle as WorkflowEdgeBranch;
+  }
+  if (STATIC_BRANCH_HANDLES.has(sourceHandle as WorkflowEdgeBranch)) {
+    return sourceHandle as WorkflowEdgeBranch;
   }
   return DEFAULT_SOURCE_HANDLE;
 }
@@ -180,26 +229,51 @@ export interface NodeRunSnapshot {
 }
 
 /**
+ * Live-run overlays a node can receive, beyond its per-node lifecycle
+ * snapshot: the current `loop` iteration and `try` retry attempt, both keyed
+ * by node id. Bundled so `applyRunStateToNodes` keeps a small signature.
+ */
+export interface RunOverlays {
+  loopIterations?: Record<string, number>;
+  retryAttempts?: Record<string, number>;
+}
+
+/**
  * Overlay live run state onto the canvas nodes. Returns a NEW array with new
  * `data` objects only where the run state changed a node, leaving identity
  * stable for untouched nodes so reactflow can bail out of re-rendering them.
  * When `runNodes` is undefined (no active run) every node is stripped of any
- * stale `runStatus` so the canvas returns to its static appearance.
+ * stale `runStatus` / iteration / attempt so the canvas returns to its static
+ * appearance.
  */
 export function applyRunStateToNodes(
   nodes: WorkflowFlowNode[],
   runNodes: Record<string, NodeRunSnapshot> | undefined,
+  overlays?: RunOverlays,
 ): WorkflowFlowNode[] {
   return nodes.map((node) => {
     const snapshot = runNodes?.[node.id];
     const nextStatus = snapshot?.status;
     const nextExit = snapshot?.exitCode;
-    if (node.data.runStatus === nextStatus && node.data.exitCode === nextExit) {
+    const nextLoop = overlays?.loopIterations?.[node.id];
+    const nextRetry = overlays?.retryAttempts?.[node.id];
+    if (
+      node.data.runStatus === nextStatus &&
+      node.data.exitCode === nextExit &&
+      node.data.loopIteration === nextLoop &&
+      node.data.retryAttempt === nextRetry
+    ) {
       return node;
     }
     return {
       ...node,
-      data: { ...node.data, runStatus: nextStatus, exitCode: nextExit },
+      data: {
+        ...node.data,
+        runStatus: nextStatus,
+        exitCode: nextExit,
+        loopIteration: nextLoop,
+        retryAttempt: nextRetry,
+      },
     };
   });
 }
@@ -350,9 +424,11 @@ export function insertPreviewPoint(
 
 /**
  * Whether a node exposes a free single `out` source port — i.e. it is a
- * `start` or `command` node with no edge already leaving its `out` handle.
- * `condition` nodes are deliberately EXCLUDED: their `then`/`else` branches
- * are too ambiguous to auto-pick, so they are only wired manually or via
+ * single-exit kind (`start` / `command` / `data`) with no edge already
+ * leaving its `out` handle. Multi-exit / branching kinds (`condition`,
+ * `switch`, `loop`, `try`) are deliberately EXCLUDED: their branch ports
+ * (`then`/`else`, `case:*`/`default`, `body`/`done`, `ok`/`catch`) are too
+ * ambiguous to auto-pick, so they are only wired manually or via
  * edge-insertion. `end` nodes have no source port.
  */
 function hasFreeOutPort(
@@ -360,7 +436,7 @@ function hasFreeOutPort(
   edges: WorkflowFlowEdge[],
 ): boolean {
   const kind = node.type ?? node.data.kind;
-  if (kind !== "start" && kind !== "command") return false;
+  if (kind !== "start" && kind !== "command" && kind !== "data") return false;
   return !edges.some(
     (e) =>
       e.source === node.id &&

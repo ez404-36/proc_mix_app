@@ -42,6 +42,12 @@ export interface WorkflowRun {
   takenEdgeIds: string[];
   /** Branch chosen at each condition node, keyed by node id. */
   branches: Record<string, WorkflowEdgeBranch>;
+  /** Current iteration (1-based) of each `loop` node, keyed by node id.
+   * Updated on every `loopIteration` event for live progress display. */
+  loopIterations: Record<string, number>;
+  /** Current attempt (1-based) of each `try` node that is retrying, keyed by
+   * node id. Updated on every `nodeRetry` event. */
+  retryAttempts: Record<string, number>;
   /**
    * Maps each node id to the command id it runs, captured at run start
    * from the workflow graph. Lets consumers (e.g. the console step headers)
@@ -78,6 +84,8 @@ interface WorkflowRunState {
     branch: WorkflowEdgeBranch,
     edgeId: string,
   ) => void;
+  markLoopIteration: (runId: string, nodeId: string, iteration: number) => void;
+  markRetry: (runId: string, nodeId: string, attempt: number) => void;
   finishRun: (
     runId: string,
     status: Extract<WorkflowStatus, "success" | "error" | "cancelled">,
@@ -109,6 +117,8 @@ export const useWorkflowRunStore = create<WorkflowRunState>()((set) => ({
         nodes: {},
         takenEdgeIds: [],
         branches: {},
+        loopIterations: {},
+        retryAttempts: {},
         nodeCommandIds: nodeCommandIds ?? {},
       };
       return {
@@ -164,6 +174,36 @@ export const useWorkflowRunStore = create<WorkflowRunState>()((set) => ({
             takenEdgeIds: run.takenEdgeIds.includes(edgeId)
               ? run.takenEdgeIds
               : [...run.takenEdgeIds, edgeId],
+          },
+        },
+      };
+    }),
+
+  markLoopIteration: (runId, nodeId, iteration) =>
+    set((state) => {
+      const run = state.runs[runId];
+      if (!run) return {};
+      return {
+        runs: {
+          ...state.runs,
+          [runId]: {
+            ...run,
+            loopIterations: { ...run.loopIterations, [nodeId]: iteration },
+          },
+        },
+      };
+    }),
+
+  markRetry: (runId, nodeId, attempt) =>
+    set((state) => {
+      const run = state.runs[runId];
+      if (!run) return {};
+      return {
+        runs: {
+          ...state.runs,
+          [runId]: {
+            ...run,
+            retryAttempts: { ...run.retryAttempts, [nodeId]: attempt },
           },
         },
       };

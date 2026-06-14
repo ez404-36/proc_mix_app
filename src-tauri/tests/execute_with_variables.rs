@@ -151,6 +151,7 @@ async fn missing_variable_without_default_returns_typed_error_and_does_not_spawn
         variables: vec![VariableSpec {
             name: "other".to_string(),
             default_value: Some("ignored".to_string()),
+            prompt_at_runtime: false,
             description: None,
             sensitive: false,
         }],
@@ -207,6 +208,7 @@ async fn variable_default_value_is_used_when_no_value_supplied() {
         variables: vec![VariableSpec {
             name: "who".to_string(),
             default_value: Some("everyone".to_string()),
+            prompt_at_runtime: false,
             description: None,
             sensitive: false,
         }],

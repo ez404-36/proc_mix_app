@@ -27,6 +27,8 @@ export {
   INITIAL_RUN_RESULT,
   parseTimeoutSeconds,
   rowsToVariableSpecs,
+  syncScriptDefaultsToRows,
+  syncVariableDefaultToScript,
 } from "../../utils/commandFormState";
 
 /**
@@ -187,9 +189,13 @@ export function computeVariableErrors(
 
 /**
  * Hydrate the form state's variable rows from a persisted command's
- * spec list. The reverse of {@link rowsToVariableSpecs}: a missing
- * `defaultValue` becomes `promptAtRuntime: true` with an empty
- * `defaultValue` placeholder.
+ * spec list. The reverse of {@link rowsToVariableSpecs}.
+ *
+ * `promptAtRuntime` resolution:
+ *   - If the spec carries an explicit `promptAtRuntime` flag (new
+ *     records that combine default + prompt), use it verbatim.
+ *   - Otherwise fall back to the legacy convention: prompt iff
+ *     `defaultValue` is absent.
  */
 export function specsToVariableRows(
   specs: ReadonlyArray<VariableSpec>,
@@ -200,7 +206,10 @@ export function specsToVariableRows(
     defaultValue: spec.defaultValue ?? "",
     description: spec.description ?? "",
     sensitive: spec.sensitive ?? false,
-    promptAtRuntime: spec.defaultValue === undefined,
+    promptAtRuntime:
+      spec.promptAtRuntime !== undefined
+        ? spec.promptAtRuntime
+        : spec.defaultValue === undefined,
     // Hydrated rows already have a real name, so the touched flag is
     // true: showing a validation error on a persisted (necessarily
     // valid) name is fine, but more importantly it would surface

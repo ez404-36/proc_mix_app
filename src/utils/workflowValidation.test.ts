@@ -184,3 +184,162 @@ describe("validateWorkflow condition branches", () => {
     expect(result.runnable).toBe(true);
   });
 });
+
+describe("validateWorkflow advanced-node command binding", () => {
+  it.each(["switch", "try"] as const)(
+    "errors when a %s node has no command",
+    (kind) => {
+      const graph = {
+        nodes: [node("s", "start"), node("x", kind), node("e", "end")],
+        edges: [edge("e1", "s", "x")],
+      };
+      const result = validateWorkflow(graph);
+      expect(keys(result)).toContain("editor.validation.nodeMissingCommand");
+      expect(result.runnable).toBe(false);
+    },
+  );
+
+  it.each(["loop", "data"] as const)(
+    "does not require a command for a %s node",
+    (kind) => {
+      const extra =
+        kind === "loop" ? { loop: { count: 1, maxIterations: 10 } } : {};
+      const graph = {
+        nodes: [node("s", "start"), node("x", kind, extra), node("e", "end")],
+        edges: [edge("e1", "s", "x")],
+      };
+      const result = validateWorkflow(graph);
+      expect(keys(result)).not.toContain("editor.validation.nodeMissingCommand");
+    },
+  );
+});
+
+describe("validateWorkflow switch branches", () => {
+  it("warns when a declared case or the default branch is unwired", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("sw", "switch", {
+          commandId: "x",
+          label: "Pick",
+          cases: [
+            {
+              id: "a",
+              condition: { subject: { kind: "exitCode" }, op: "eq", value: "0" },
+            },
+          ],
+        }),
+        node("e", "end"),
+      ],
+      // Wire the case but NOT the default → warning.
+      edges: [edge("e1", "s", "sw"), edge("e2", "sw", "e", "case:a")],
+    };
+    const result = validateWorkflow(graph);
+    const problem = result.problems.find(
+      (p) => p.key === "editor.validation.switchBranches",
+    );
+    expect(problem?.severity).toBe("warning");
+    expect(result.runnable).toBe(true);
+  });
+
+  it("is clean when every case and the default are wired", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("sw", "switch", {
+          commandId: "x",
+          cases: [
+            {
+              id: "a",
+              condition: { subject: { kind: "exitCode" }, op: "eq", value: "0" },
+            },
+          ],
+        }),
+        node("e1n", "end"),
+        node("e2n", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "sw"),
+        edge("e2", "sw", "e1n", "case:a"),
+        edge("e3", "sw", "e2n", "default"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).not.toContain("editor.validation.switchBranches");
+  });
+});
+
+describe("validateWorkflow loop config + branches", () => {
+  it("errors when a loop sets neither count nor while", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("lp", "loop", { label: "L" }),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "lp"),
+        edge("e2", "lp", "e", "body"),
+        edge("e3", "lp", "e", "done"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).toContain("editor.validation.loopConfig");
+    expect(result.runnable).toBe(false);
+  });
+
+  it("errors when a loop sets BOTH count and while", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("lp", "loop", {
+          loop: {
+            count: 2,
+            while: { subject: { kind: "exitCode" }, op: "eq", value: "0" },
+            maxIterations: 10,
+          },
+        }),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "lp"),
+        edge("e2", "lp", "e", "body"),
+        edge("e3", "lp", "e", "done"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).toContain("editor.validation.loopConfig");
+  });
+
+  it("warns when body or done branch is missing", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("lp", "loop", { loop: { count: 1, maxIterations: 10 } }),
+        node("e", "end"),
+      ],
+      edges: [edge("e1", "s", "lp"), edge("e2", "lp", "e", "body")],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).toContain("editor.validation.loopBranches");
+  });
+});
+
+describe("validateWorkflow try branches", () => {
+  it("warns when ok or catch branch is missing", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("tr", "try", { commandId: "x" }),
+        node("e", "end"),
+      ],
+      edges: [edge("e1", "s", "tr"), edge("e2", "tr", "e", "ok")],
+    };
+    const result = validateWorkflow(graph);
+    const problem = result.problems.find(
+      (p) => p.key === "editor.validation.tryBranches",
+    );
+    expect(problem?.severity).toBe("warning");
+    expect(result.runnable).toBe(true);
+  });
+});

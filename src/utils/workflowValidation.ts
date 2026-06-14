@@ -86,9 +86,12 @@ export function validateWorkflow(
     });
   }
 
+  // Command-running kinds must reference a command. `data` / `loop` run no
+  // command; `start` / `end` never do.
+  const COMMAND_KINDS = new Set(["command", "condition", "switch", "try"]);
   for (const node of graph.nodes) {
     if (
-      (node.kind === "command" || node.kind === "condition") &&
+      COMMAND_KINDS.has(node.kind) &&
       (node.commandId === undefined || node.commandId === "")
     ) {
       problems.push({
@@ -111,20 +114,64 @@ export function validateWorkflow(
     }
   }
 
-  // condition nodes should wire both branches. We only count edges whose
-  // source node still exists, so a dangling edge does not mask a missing
-  // branch (it is already reported above).
+  // Branching nodes should wire every exit they can take, else that branch
+  // dead-ends at run time. We only count edges whose source node still
+  // exists, so a dangling edge does not mask a missing branch (it is already
+  // reported above). All branch-completeness problems are warnings: a
+  // half-wired branch runs but the missing path stops the workflow.
   for (const node of graph.nodes) {
-    if (node.kind !== "condition") continue;
     const outgoing = graph.edges.filter((e) => e.source === node.id);
-    const hasThen = outgoing.some((e) => e.branch === "then");
-    const hasElse = outgoing.some((e) => e.branch === "else");
-    if (!hasThen || !hasElse) {
-      problems.push({
-        key: "editor.validation.conditionBranches",
-        params: { label: node.label ?? node.id },
-        severity: "warning",
-      });
+    const has = (branch: string): boolean =>
+      outgoing.some((e) => e.branch === branch);
+
+    if (node.kind === "condition") {
+      if (!has("then") || !has("else")) {
+        problems.push({
+          key: "editor.validation.conditionBranches",
+          params: { label: node.label ?? node.id },
+          severity: "warning",
+        });
+      }
+    } else if (node.kind === "switch") {
+      // Every declared case needs its `case:<id>` edge, and a `default` edge
+      // is required (the runner errors with NoMatchingCase otherwise).
+      const cases = node.cases ?? [];
+      const everyCaseWired = cases.every((c) => has(`case:${c.id}`));
+      if (!everyCaseWired || !has("default")) {
+        problems.push({
+          key: "editor.validation.switchBranches",
+          params: { label: node.label ?? node.id },
+          severity: "warning",
+        });
+      }
+    } else if (node.kind === "loop") {
+      if (!has("body") || !has("done")) {
+        problems.push({
+          key: "editor.validation.loopBranches",
+          params: { label: node.label ?? node.id },
+          severity: "warning",
+        });
+      }
+      // A loop with neither/both of count & while is a hard misconfiguration
+      // (the runner rejects it with LoopMisconfigured).
+      const loop = node.loop;
+      const hasCount = loop?.count !== undefined;
+      const hasWhile = loop?.while !== undefined;
+      if (loop === undefined || hasCount === hasWhile) {
+        problems.push({
+          key: "editor.validation.loopConfig",
+          params: { label: node.label ?? node.id },
+          severity: "error",
+        });
+      }
+    } else if (node.kind === "try") {
+      if (!has("ok") || !has("catch")) {
+        problems.push({
+          key: "editor.validation.tryBranches",
+          params: { label: node.label ?? node.id },
+          severity: "warning",
+        });
+      }
     }
   }
 

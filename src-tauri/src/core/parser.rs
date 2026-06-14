@@ -278,6 +278,7 @@ mod tests {
         VariableSpec {
             name: name.to_string(),
             default_value: default.map(|s| s.to_string()),
+            prompt_at_runtime: false,
             description: None,
             sensitive,
         }

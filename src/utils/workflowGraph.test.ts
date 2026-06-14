@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Workflow } from "../types";
+import type { Workflow, WorkflowNode } from "../types";
 import {
   applyRunStateToNodes,
   collectDownstream,
@@ -153,6 +153,86 @@ describe("flowToWorkflow round-trip", () => {
     );
     expect(back.nodes[0]?.kind).toBe("condition");
   });
+
+  it("preserves advanced-node config (switch cases, loop, retry, data, predicate) through a flow round-trip", () => {
+    const switchNode: WorkflowNode = {
+      id: "sw",
+      kind: "switch",
+      commandId: "cmd",
+      cases: [
+        {
+          id: "ok",
+          condition: { subject: { kind: "exitCode" }, op: "eq", value: "0" },
+        },
+      ],
+      position: { x: 0, y: 0 },
+    };
+    const loopNode: WorkflowNode = {
+      id: "lp",
+      kind: "loop",
+      loop: { count: 3, maxIterations: 100 },
+      position: { x: 1, y: 1 },
+    };
+    const tryNode: WorkflowNode = {
+      id: "tr",
+      kind: "try",
+      commandId: "cmd",
+      retry: { retries: 2, backoffMs: 50 },
+      position: { x: 2, y: 2 },
+    };
+    const dataNode: WorkflowNode = {
+      id: "dt",
+      kind: "data",
+      data: [{ name: "who", value: "world" }],
+      position: { x: 3, y: 3 },
+    };
+    const condNode: WorkflowNode = {
+      id: "cn",
+      kind: "condition",
+      commandId: "cmd",
+      condition: { subject: { kind: "stdout" }, op: "contains", value: "OK" },
+      position: { x: 4, y: 4 },
+    };
+    const wf: Workflow = {
+      ...sampleWorkflow(),
+      nodes: [switchNode, loopNode, tryNode, dataNode, condNode],
+      edges: [],
+    };
+    const { nodes, edges } = workflowToFlow(wf);
+    const back = flowToWorkflow(
+      { name: wf.name, tags: wf.tags },
+      nodes,
+      edges,
+    );
+    expect(back.nodes).toEqual(wf.nodes);
+  });
+
+  it("round-trips a switch case:<id> branch through the source handle", () => {
+    const nodes: WorkflowFlowNode[] = [
+      { id: "sw", type: "switch", position: { x: 0, y: 0 }, data: { kind: "switch" } },
+      { id: "t", type: "end", position: { x: 1, y: 0 }, data: { kind: "end" } },
+    ];
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e", source: "sw", target: "t", sourceHandle: "case:prod" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
+    expect(back.edges[0]?.branch).toBe("case:prod");
+  });
+
+  it.each(["default", "body", "done", "ok", "catch"] as const)(
+    "round-trips the %s branch handle",
+    (branch) => {
+      const nodes: WorkflowFlowNode[] = [
+        { id: "a", type: "loop", position: { x: 0, y: 0 }, data: { kind: "loop" } },
+        { id: "b", type: "end", position: { x: 1, y: 0 }, data: { kind: "end" } },
+      ];
+      const edges: WorkflowFlowEdge[] = [
+        { id: "e", source: "a", target: "b", sourceHandle: branch },
+      ];
+      const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
+      expect(back.edges[0]?.branch).toBe(branch);
+    },
+  );
 });
 
 describe("makeGraphId", () => {

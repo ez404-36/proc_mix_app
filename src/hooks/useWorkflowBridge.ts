@@ -132,6 +132,12 @@ function handleEvent(event: WorkflowEvent): void {
         event.edgeId,
       );
       return;
+    case "loopIteration":
+      store.markLoopIteration(event.runId, event.nodeId, event.iteration);
+      return;
+    case "nodeRetry":
+      store.markRetry(event.runId, event.nodeId, event.attempt);
+      return;
     case "workflowFinished":
       store.finishRun(event.runId, "success", {
         durationMs: event.durationMs,
