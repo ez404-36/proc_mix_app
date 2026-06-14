@@ -4,10 +4,12 @@ import { useTranslation } from "react-i18next";
 import ReactFlow, {
   Background,
   Controls,
+  ControlButton,
   ReactFlowProvider,
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
+  useReactFlow,
   type Connection,
   type Edge,
   type EdgeChange,
@@ -17,7 +19,6 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useCommandStore } from "../../stores/commandStore";
-import { useScheduleStore } from "../../stores/scheduleStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { useWorkflowRunStore } from "../../stores/workflowRunStore";
@@ -28,19 +29,20 @@ import {
 import type { WorkflowNodeKind } from "../../types";
 import { getCommandName } from "../../utils/commandLabels";
 import {
-  checkWorkflowBlockers,
-  type DeleteBlocker,
-} from "../../utils/usageCheck";
-import {
   APPEND_GAP_X,
   applyRunStateToNodes,
   connectTailToNode,
+  findEdgeNearPoint,
   findLastNode,
+  findSinglePredecessor,
+  insertPreviewPoint,
+  isUnconnectedNode,
   makeGraphId,
   markDropTargetEdge,
   markInsertNeighbors,
   markTakenEdges,
   removeNodeReconnecting,
+  spliceExistingNodeOnEdge,
   type WorkflowFlowNode,
   type WorkflowNodeData,
 } from "../../utils/workflowGraph";
@@ -50,13 +52,19 @@ import {
  * created once by `makeInitialFlow` and never added) can be placed.
  */
 type PaletteNodeKind = Exclude<WorkflowNodeKind, "start">;
-import { deleteWorkflow } from "../../services/workflowActions";
 import { workflowNodeTypes } from "./nodes";
 import { NodeInspector } from "./NodeInspector";
 import { WorkflowMetaModal } from "./WorkflowMetaModal";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { BlockedDeleteDialog } from "../BlockedDeleteDialog/BlockedDeleteDialog";
-import { CancelIcon, RunIcon, SaveIcon, TrashIcon } from "../icons";
+import {
+  CancelIcon,
+  FitViewIcon,
+  FullscreenIcon,
+  RunIcon,
+  SaveIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
+} from "../icons";
 import { useWorkflowCanvasPersistence } from "./useWorkflowCanvasPersistence";
 import { useWorkflowCanvasDnD } from "./useWorkflowCanvasDnD";
 
@@ -65,11 +73,98 @@ interface WorkflowCanvasProps {
   workflowId: string | null;
 }
 
+interface WorkflowControlsProps {
+  interactive: boolean;
+  onToggleInteractive: () => void;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
+}
+
+/**
+ * Canvas controls bar — a localized replacement for reactflow's default
+ * `<Controls>` (whose button tooltips are hardcoded English). Reuses the
+ * reactflow `Controls` shell (positioning + styling) but disables its built-in
+ * buttons and renders our own `ControlButton`s with Russian labels + app
+ * icons, plus a fullscreen toggle that expands the whole editor. Rendered
+ * inside `<ReactFlow>` so `useReactFlow` (zoom / fit) has context.
+ */
+function WorkflowControls({
+  interactive,
+  onToggleInteractive,
+  fullscreen,
+  onToggleFullscreen,
+}: WorkflowControlsProps): ReactElement {
+  const { t } = useTranslation();
+  const { zoomIn, zoomOut, fitView } = useReactFlow();
+  return (
+    <Controls
+      showZoom={false}
+      showFitView={false}
+      showInteractive={false}
+    >
+      <ControlButton
+        onClick={() => zoomIn()}
+        title={t("editor.controls.zoomIn")}
+        aria-label={t("editor.controls.zoomIn")}
+      >
+        <ZoomInIcon />
+      </ControlButton>
+      <ControlButton
+        onClick={() => zoomOut()}
+        title={t("editor.controls.zoomOut")}
+        aria-label={t("editor.controls.zoomOut")}
+      >
+        <ZoomOutIcon />
+      </ControlButton>
+      <ControlButton
+        onClick={() => fitView()}
+        title={t("editor.controls.fitView")}
+        aria-label={t("editor.controls.fitView")}
+      >
+        <FitViewIcon />
+      </ControlButton>
+      <ControlButton
+        onClick={onToggleInteractive}
+        title={
+          interactive
+            ? t("editor.controls.lock")
+            : t("editor.controls.unlock")
+        }
+        aria-label={
+          interactive
+            ? t("editor.controls.lock")
+            : t("editor.controls.unlock")
+        }
+        aria-pressed={!interactive}
+      >
+        {/* Lock state reuses the eye-style affordance via text glyph kept by
+            reactflow's own button styling; the title conveys the action. */}
+        {interactive ? "🔓" : "🔒"}
+      </ControlButton>
+      <ControlButton
+        onClick={onToggleFullscreen}
+        title={
+          fullscreen
+            ? t("editor.controls.exitFullscreen")
+            : t("editor.controls.fullscreen")
+        }
+        aria-label={
+          fullscreen
+            ? t("editor.controls.exitFullscreen")
+            : t("editor.controls.fullscreen")
+        }
+        aria-pressed={fullscreen}
+      >
+        <FullscreenIcon active={fullscreen} />
+      </ControlButton>
+    </Controls>
+  );
+}
+
 function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const { t } = useTranslation();
   const commands = useCommandStore((s) => s.commands);
   const workflows = useWorkflowStore((s) => s.workflows);
-  const schedules = useScheduleStore((s) => s.schedules);
   const setEditorWorkflowId = useUIStore((s) => s.setEditorWorkflowId);
   const setView = useUIStore((s) => s.setView);
 
@@ -92,11 +187,21 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
 
   const [metaModalOpen, setMetaModalOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  // Schedules referencing this workflow, populated when the user requests a
-  // delete. Non-empty → the blocked-delete dialog is shown instead of the
-  // destructive confirm, mirroring the Library's workflow delete.
-  const [deleteBlockers, setDeleteBlockers] = useState<DeleteBlocker[]>([]);
+  // Canvas interactivity (the "pin"/lock control): when false, nodes can't be
+  // dragged / selected / connected — useful while panning a finished graph.
+  const [interactive, setInteractive] = useState(true);
+  // Whether the editor (palette + canvas) is expanded to fill the app window.
+  const [fullscreen, setFullscreen] = useState(false);
+  // The edge highlighted while an EXISTING free-floating node is dragged over
+  // it (the "insert here" hint for canvas node-drag, distinct from the palette
+  // drag hint owned by the DnD hook). Null when not over an insertable edge.
+  const [nodeDragEdgeId, setNodeDragEdgeId] = useState<string | null>(null);
+  // Screen-space (wrapper-relative) centre of the node-drag insert preview, so
+  // the same "вставить сюда" label the palette drag shows appears here too.
+  const [nodeDragPreviewPos, setNodeDragPreviewPos] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
 
   const flowWrapperRef = useRef<HTMLDivElement | null>(null);
   const rfInstanceRef = useRef<ReactFlowInstance<
@@ -120,6 +225,81 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       setEdges((eds) => applyEdgeChanges(changes, eds));
     },
     [setEdges],
+  );
+
+  // The flow-coordinate centre of a dragged reactflow node. `position` is its
+  // top-left; reactflow measures `width`/`height` after layout, so once known
+  // we offset to the centre (falls back to the top-left before measurement).
+  const nodeCenter = (node: Node<WorkflowNodeData>): { x: number; y: number } => ({
+    x: node.position.x + (node.width ?? 0) / 2,
+    y: node.position.y + (node.height ?? 0) / 2,
+  });
+
+  // While dragging an EXISTING free-floating node (one with no edges), show the
+  // "insert here" hint on the nearest edge — mirroring the palette-drop hint —
+  // so the user can splice it into the chain. Connected nodes just move.
+  const clearNodeDragHint = useCallback((): void => {
+    setNodeDragEdgeId(null);
+    setNodeDragPreviewPos(null);
+  }, []);
+
+  const onNodeDrag = useCallback(
+    (_event: unknown, node: Node<WorkflowNodeData>): void => {
+      const { nodes: curNodes, edges: curEdges } =
+        useEditorDraftStore.getState();
+      if (!isUnconnectedNode(node.id, curEdges)) {
+        clearNodeDragHint();
+        return;
+      }
+      const edgeId = findEdgeNearPoint(curNodes, curEdges, nodeCenter(node));
+      // Never target an edge that already touches the node (would self-loop).
+      const valid =
+        edgeId !== null &&
+        !curEdges.some(
+          (e) =>
+            e.id === edgeId && (e.source === node.id || e.target === node.id),
+        );
+      if (!valid || edgeId === null) {
+        clearNodeDragHint();
+        return;
+      }
+      setNodeDragEdgeId(edgeId);
+      // Position the "вставить сюда" label at the edge's midpoint, converted to
+      // canvas-wrapper-relative screen coords (same maths as the palette hint).
+      const instance = rfInstanceRef.current;
+      const wrapper = flowWrapperRef.current;
+      const flowPoint = insertPreviewPoint(curNodes, curEdges, edgeId);
+      if (instance === null || wrapper === null || flowPoint === null) {
+        setNodeDragPreviewPos(null);
+        return;
+      }
+      const screen = instance.flowToScreenPosition(flowPoint);
+      const rect = wrapper.getBoundingClientRect();
+      setNodeDragPreviewPos({ x: screen.x - rect.left, y: screen.y - rect.top });
+    },
+    [clearNodeDragHint],
+  );
+
+  // On drop: if the dragged free node is over an edge, splice it in (A → node
+  // → B). Otherwise the drag was a plain reposition — nothing to do.
+  const onNodeDragStop = useCallback(
+    (_event: unknown, node: Node<WorkflowNodeData>): void => {
+      const targetEdgeId = nodeDragEdgeId;
+      clearNodeDragHint();
+      if (targetEdgeId === null) return;
+      const { nodes: curNodes, edges: curEdges } =
+        useEditorDraftStore.getState();
+      const next = spliceExistingNodeOnEdge(
+        curNodes,
+        curEdges,
+        node.id,
+        targetEdgeId,
+      );
+      if (next === null) return;
+      setNodes(next.nodes);
+      setEdges(next.edges);
+    },
+    [nodeDragEdgeId, clearNodeDragHint, setNodes, setEdges],
   );
 
   const onConnect = useCallback(
@@ -234,6 +414,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     onDragLeave,
     onDrop,
     onPaletteDragStart,
+    onPaletteNodeDragStart,
   } = useWorkflowCanvasDnD({
     flowWrapperRef,
     rfInstanceRef,
@@ -288,25 +469,39 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     activeRunId === null ? undefined : s.runs[activeRunId],
   );
 
-  const displayNodes = useMemo(
-    () =>
-      markInsertNeighbors(
-        applyRunStateToNodes(nodes, activeRun?.nodes, {
-          loopIterations: activeRun?.loopIterations,
-          retryAttempts: activeRun?.retryAttempts,
-        }),
-        edges,
-        dropTargetEdgeId,
-      ),
-    [nodes, edges, activeRun, dropTargetEdgeId],
-  );
+  // The single edge to highlight as an insertion target: a palette drag (DnD
+  // hook) and a canvas node-drag are mutually exclusive, so either source can
+  // drive the hint.
+  const hintEdgeId = dropTargetEdgeId ?? nodeDragEdgeId;
+  // The "insert here" label position: from the palette drag (DnD hook) or the
+  // canvas node-drag, whichever is active (they are mutually exclusive).
+  const insertHintPos = insertPreviewPos ?? nodeDragPreviewPos;
+  const displayNodes = useMemo(() => {
+    const decorated = markInsertNeighbors(
+      applyRunStateToNodes(nodes, activeRun?.nodes, {
+        loopIterations: activeRun?.loopIterations,
+        retryAttempts: activeRun?.retryAttempts,
+      }),
+      edges,
+      hintEdgeId,
+    );
+    // Flag the inspected node as reactflow-`selected` so the wrapper gets the
+    // `.selected` class — CSS then highlights it (border + shadow) so the user
+    // sees which node the inspector is editing. Only the matching node's object
+    // identity changes, keeping the rest stable for reactflow.
+    return decorated.map((n) =>
+      n.selected === (n.id === selectedNodeId)
+        ? n
+        : { ...n, selected: n.id === selectedNodeId },
+    );
+  }, [nodes, edges, activeRun, hintEdgeId, selectedNodeId]);
   const displayEdges = useMemo(
     () =>
       markDropTargetEdge(
         markTakenEdges(edges, activeRun?.takenEdgeIds),
-        dropTargetEdgeId,
+        hintEdgeId,
       ),
-    [edges, activeRun, dropTargetEdgeId],
+    [edges, activeRun, hintEdgeId],
   );
 
   // A workflow is runnable only once it has at least one real step beyond the
@@ -325,6 +520,16 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const selectedNode = useMemo(
     () => nodes.find((n) => n.id === selectedNodeId) ?? null,
     [nodes, selectedNodeId],
+  );
+
+  // The selected node's single predecessor (or null when 0/many), so the
+  // inspector can offer a `data` node the right kind-specific value sources.
+  const selectedPredecessor = useMemo(
+    () =>
+      selectedNode === null
+        ? null
+        : findSinglePredecessor(selectedNode.id, nodes, edges),
+    [selectedNode, nodes, edges],
   );
 
   const handleNodeCommandChange = useCallback(
@@ -384,34 +589,6 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     setClearConfirmOpen(false);
   }, [reset, currentId, workflows, setActiveRunId]);
 
-  // Stage a delete of the workflow being edited (existing only). First check
-  // for schedules that target it: if any exist, deletion is BLOCKED and the
-  // blocked-delete dialog is shown (the user must detach those schedules
-  // first); otherwise the destructive confirm dialog opens. Mirrors the
-  // Library's workflow delete exactly.
-  const requestDelete = useCallback((): void => {
-    if (currentId === null) return;
-    const blockers = checkWorkflowBlockers(currentId, schedules);
-    if (blockers.length > 0) {
-      setDeleteBlockers(blockers);
-    } else {
-      setDeleteBlockers([]);
-      setDeleteConfirmOpen(true);
-    }
-  }, [currentId, schedules]);
-
-  // Perform the delete and return to the library. Routed through the
-  // history-recording `deleteWorkflow` service so the removal is restorable
-  // from the History view, like a deletion from the library list.
-  const confirmDelete = useCallback((): void => {
-    if (currentId !== null) {
-      deleteWorkflow(currentId);
-    }
-    setDeleteConfirmOpen(false);
-    setActiveRunId(null);
-    setView("library");
-  }, [currentId, setActiveRunId, setView]);
-
   // Dynamic header title: a fresh draft reads "New workflow"; editing an
   // existing one reads the generic "Editing workflow" (the name is shown in
   // the Properties dialog, not duplicated in the header).
@@ -429,10 +606,13 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         <div className="wf-header__actions">
           <button
             type="button"
-            className="btn btn--ghost"
-            onClick={() => setMetaModalOpen(true)}
+            className="btn command-form__action command-form__action--cancel"
+            onClick={() => setView("library")}
           >
-            {t("editor.details")}
+            <span className="command-form__action-icon--cancel">
+              <CancelIcon />
+            </span>
+            {t("common.close")}
           </button>
           <button
             type="button"
@@ -442,64 +622,72 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             <SaveIcon />
             {t("common.save")}
           </button>
-          {isEditingExisting ? (
-            <button
-              type="button"
-              className="btn btn--danger"
-              onClick={requestDelete}
-            >
-              <TrashIcon />
-              {t("common.delete")}
-            </button>
-          ) : null}
         </div>
       </header>
 
-      <div className="wf-editor">
+      <div className={`wf-editor${fullscreen ? " wf-editor--fullscreen" : ""}`}>
       <aside className="wf-palette">
         <div className="wf-palette__section">
           <h3 className="wf-palette__title">{t("editor.palette.nodes")}</h3>
           <button
             type="button"
             className="btn btn--ghost wf-palette__btn"
+            draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "condition")}
             onClick={() =>
               addNode("condition", undefined, { x: 240, y: 200 })
             }
+            title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.condition")}
           </button>
           <button
             type="button"
             className="btn btn--ghost wf-palette__btn"
+            draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "switch")}
             onClick={() => addNode("switch", undefined, { x: 240, y: 200 })}
+            title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.switch")}
           </button>
           <button
             type="button"
             className="btn btn--ghost wf-palette__btn"
+            draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "loop")}
             onClick={() => addNode("loop", undefined, { x: 240, y: 200 })}
+            title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.loop")}
           </button>
           <button
             type="button"
             className="btn btn--ghost wf-palette__btn"
+            draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "try")}
             onClick={() => addNode("try", undefined, { x: 240, y: 200 })}
+            title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.try")}
           </button>
           <button
             type="button"
             className="btn btn--ghost wf-palette__btn"
+            draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "data")}
             onClick={() => appendNodeToTail("data", undefined)}
+            title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.data")}
           </button>
           <button
             type="button"
             className="btn btn--ghost wf-palette__btn"
+            draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "end")}
             onClick={() => appendNodeToTail("end", undefined)}
+            title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.end")}
           </button>
@@ -537,6 +725,13 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
               ? t("editor.untitled")
               : meta.name}
           </span>
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => setMetaModalOpen(true)}
+          >
+            {t("editor.details")}
+          </button>
           <div className="wf-toolbar__spacer" />
           <button
             type="button"
@@ -567,6 +762,8 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
           edges={displayEdges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onNodeDrag={onNodeDrag}
+          onNodeDragStop={onNodeDragStop}
           onConnect={onConnect}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
@@ -579,19 +776,27 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
           onDragLeave={onDragLeave}
           nodeTypes={workflowNodeTypes}
           deleteKeyCode={["Backspace", "Delete"]}
+          nodesDraggable={interactive}
+          nodesConnectable={interactive}
+          elementsSelectable={interactive}
           fitView
           fitViewOptions={{ maxZoom: 0.8 }}
           proOptions={{ hideAttribution: true }}
         >
           <Background />
-          <Controls />
+          <WorkflowControls
+            interactive={interactive}
+            onToggleInteractive={() => setInteractive((v) => !v)}
+            fullscreen={fullscreen}
+            onToggleFullscreen={() => setFullscreen((v) => !v)}
+          />
         </ReactFlow>
-        {insertPreviewPos !== null ? (
+        {insertHintPos !== null ? (
           <div
             className="wf-insert-hint"
             style={{
-              left: insertPreviewPos.x,
-              top: insertPreviewPos.y,
+              left: insertHintPos.x,
+              top: insertHintPos.y,
             }}
             aria-hidden="true"
           >
@@ -606,6 +811,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       {selectedNode !== null ? (
         <NodeInspector
           node={selectedNode}
+          predecessor={selectedPredecessor}
           commands={commands}
           onCommandChange={handleNodeCommandChange}
           onNodeDataChange={handleNodeDataChange}
@@ -639,28 +845,6 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         onConfirm={confirmClear}
         onCancel={() => setClearConfirmOpen(false)}
       />
-
-      {deleteBlockers.length > 0 ? (
-        <BlockedDeleteDialog
-          objectName={
-            meta.name.trim() === "" ? t("editor.untitled") : meta.name
-          }
-          blockers={deleteBlockers}
-          onClose={() => setDeleteBlockers([])}
-        />
-      ) : (
-        <ConfirmDialog
-          open={deleteConfirmOpen}
-          title={t("editor.deleteConfirmTitle")}
-          message={t("editor.deleteConfirm", {
-            name: meta.name.trim() === "" ? t("editor.untitled") : meta.name,
-          })}
-          confirmLabel={t("common.delete")}
-          danger
-          onConfirm={confirmDelete}
-          onCancel={() => setDeleteConfirmOpen(false)}
-        />
-      )}
       </div>
     </>
   );

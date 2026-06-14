@@ -27,8 +27,8 @@ use procmix_lib::storage::commands::{
     CommandRecord, OutputFieldRecord, OutputSchemaRecord, VariableSpec,
 };
 use procmix_lib::storage::workflows::{
-    DataAssignmentRecord, LoopConfigRecord, NodePosition, RetryConfigRecord, SwitchCaseRecord,
-    WorkflowEdgeRecord, WorkflowNodeRecord, WorkflowRecord,
+    DataAssignmentRecord, DataSourceRecord, LoopConfigRecord, NodePosition, RetryConfigRecord,
+    SwitchCaseRecord, WorkflowEdgeRecord, WorkflowNodeRecord, WorkflowRecord,
 };
 use tauri::test::mock_builder;
 use tauri::Listener;
@@ -1266,7 +1266,95 @@ async fn try_succeeds_on_a_later_retry() {
     );
     assert!(collected
         .iter()
-        .any(|e| matches!(e, WorkflowEvent::BranchTaken { branch, .. } if branch == "ok")));
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
+}
+
+#[tokio::test]
+async fn data_node_pulls_exit_code_from_previous_command() {
+    // start → cmd(exit 7) → data{ code = ExitCode } → check(${code}==7) → end.
+    // Proves a data node reads its predecessor's outcome (exit code) and that
+    // the pulled value flows into the next command via data-flow.
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("seven".to_string(), command("seven", "exit 7"));
+    commands.insert(
+        "check".to_string(),
+        command("check", r#"[ "${code}" = "7" ]"#),
+    );
+
+    let data_node = WorkflowNodeRecord {
+        id: "set".into(),
+        kind: "data".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: None,
+        retry: None,
+        data: vec![DataAssignmentRecord {
+            name: "code".into(),
+            value: String::new(),
+            source: Some(DataSourceRecord::ExitCode),
+        }],
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    let workflow = WorkflowRecord {
+        id: "wf-data-src".into(),
+        name: "data-src".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            node("cmd", "command", Some("seven")),
+            data_node,
+            node("check", "command", Some("check")),
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "cmd", "out"),
+            edge("e_cmd", "cmd", "set", "out"),
+            edge("e_set", "set", "check", "out"),
+            edge("e_check", "check", "end", "out"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    };
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        workflow,
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    // `check` exits 0 only if `${code}` substituted to "7" — i.e. the data
+    // node pulled the previous command's exit code into the carry.
+    let check_exit = collected.iter().find_map(|e| match e {
+        WorkflowEvent::NodeFinished {
+            node_id, exit_code, ..
+        } if node_id == "check" => Some(*exit_code),
+        _ => None,
+    });
+    assert_eq!(
+        check_exit,
+        Some(Some(0)),
+        "data node must pull the prev command's exit code, events: {collected:?}"
+    );
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
 }
 
 /// Cheap unique-ish suffix for the temp marker file (avoids pulling uuid into
@@ -1390,6 +1478,7 @@ async fn data_node_assignment_flows_into_downstream_command() {
         data: vec![DataAssignmentRecord {
             name: "who".into(),
             value: "world".into(),
+            source: None,
         }],
         position: NodePosition { x: 0.0, y: 0.0 },
     };

@@ -33,13 +33,28 @@ vi.mock("reactflow", async () => {
     __esModule: true,
     default: Passthrough,
     Background: () => <div data-testid="rf-background" />,
-    Controls: () => <div data-testid="rf-controls" />,
+    Controls: ({ children }: { children?: ReactNode }) => (
+      <div data-testid="rf-controls">{children}</div>
+    ),
+    ControlButton: ({
+      children,
+      ...props
+    }: {
+      children?: ReactNode;
+    }): ReactElement => <button {...props}>{children}</button>,
     ReactFlowProvider: ({ children }: { children?: ReactNode }) => (
       <>{children}</>
     ),
     Handle: () => <div />,
     Position: { Left: "left", Right: "right", Top: "top", Bottom: "bottom" },
     addEdge: (edge: unknown, edges: unknown[]) => [...edges, edge],
+    applyNodeChanges: (_changes: unknown, nodes: unknown[]) => nodes,
+    applyEdgeChanges: (_changes: unknown, edges: unknown[]) => edges,
+    useReactFlow: () => ({
+      zoomIn: () => {},
+      zoomOut: () => {},
+      fitView: () => {},
+    }),
     useNodesState,
     useEdgesState,
   };

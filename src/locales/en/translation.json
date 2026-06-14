@@ -6,8 +6,10 @@
     "clear": "Clear",
     "close": "Close",
     "confirm": "Confirm",
+    "decrement": "Decrease",
     "delete": "Delete",
     "edit": "Edit",
+    "increment": "Increase",
     "loading": "Loading…",
     "reset": "Reset",
     "run": "Run",
@@ -120,6 +122,15 @@
     "details": "Properties",
     "saved": "Workflow saved",
     "insertPreview": "Insert here",
+    "controls": {
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "fitView": "Fit to view",
+      "lock": "Lock the canvas",
+      "unlock": "Unlock the canvas",
+      "fullscreen": "Fullscreen",
+      "exitFullscreen": "Exit fullscreen"
+    },
     "clear": "Clear",
     "cancel": "Cancel",
     "discard": "Discard",
@@ -140,6 +151,8 @@
       "data": "Data",
       "then": "then",
       "else": "else",
+      "yes": "yes",
+      "no": "no",
       "default": "default",
       "body": "body",
       "done": "done",
@@ -157,7 +170,12 @@
       "commands": "Commands",
       "dragHint": "Drag a command onto the canvas, or click it to append a step. Drop on a connection to insert between steps.",
       "clickHint": "Click to append after the last step",
+      "nodeDragHint": "Drag onto the canvas, or click to append. Drop on a connection to insert between steps.",
       "noCommands": "No commands yet. Create one in the Library first."
+    },
+    "conditionSummary": {
+      "contains": "contains",
+      "regex": "matches"
     },
     "inspector": {
       "command": "Command",
@@ -182,7 +200,7 @@
       "variableName": "Variable name",
       "value": "Value",
       "switch": {
-        "addCase": "+ Add case",
+        "addCase": "Add case",
         "caseId": "Case id",
         "defaultHint": "An unmatched run takes the default branch."
       },
@@ -197,9 +215,21 @@
         "backoffMs": "Backoff (ms)"
       },
       "data": {
-        "addAssignment": "+ Add assignment",
+        "addAssignment": "Add assignment",
         "name": "Name",
-        "value": "Value"
+        "value": "Value",
+        "source": {
+          "label": "Source",
+          "manual": "Enter a value manually",
+          "rawOutput": "Raw output",
+          "schemaOutput": "Output schema (all fields)",
+          "exitCode": "Exit code",
+          "field": "Field: {{field}}",
+          "retryCount": "Retry count",
+          "conditionResult": "Result (true/false)",
+          "matchedCase": "Matched case",
+          "loopIterations": "Iterations"
+        }
       },
       "remove": "Remove",
       "hint": {
@@ -448,7 +478,7 @@
     },
     "about": {
       "title": "About",
-      "version": "v0.6.1",
+      "version": "v0.7.0",
       "description": "Cross-platform command and workflow automation tool.",
       "license": "Open source. MIT License.",
       "copyright": "© 2026 Zenkin Egor Andreevich"

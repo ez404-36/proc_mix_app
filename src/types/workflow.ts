@@ -111,14 +111,47 @@ export interface RetryConfig {
 }
 
 /**
+ * Where a `data` node assignment gets its value. A tagged union mirroring the
+ * Rust `DataSourceRecord` (serialised `{ kind, … }`):
+ *   - `manual`       → a literal / `${ref}`-templated string the user typed.
+ *   - `rawOutput`    → the previous node's raw stdout (bounded tail).
+ *   - `schemaOutput` → the prev node's FULL extracted output-schema result as
+ *      one value (compact JSON of all fields); only offered when the prev
+ *      command has a schema.
+ *   - `exitCode`     → the previous node's process exit code.
+ *   - `field`        → a single named output-schema field of the prev node.
+ *   - `retryCount` → attempts a `try` predecessor made (1 = no retry).
+ *   - `conditionResult` → "true"/"false": did a `condition` predecessor pass.
+ *   - `matchedCase`     → the case id a `switch` predecessor took ("default"
+ *      when none matched).
+ *   - `loopIterations`  → completed iterations of a `loop` predecessor (count).
+ * Every non-`manual` source reads from the node executed immediately before
+ * this data node on the path that reached it (resolved at run time).
+ */
+export type DataSource =
+  | { kind: "manual"; value: string }
+  | { kind: "rawOutput" }
+  | { kind: "schemaOutput" }
+  | { kind: "exitCode" }
+  | { kind: "field"; field: string }
+  | { kind: "retryCount" }
+  | { kind: "conditionResult" }
+  | { kind: "matchedCase" }
+  | { kind: "loopIterations" };
+
+/**
  * One assignment performed by a `data` node: set the data-flow variable
- * `name` to `value`. `value` may reference upstream data-flow fields with
- * `${ref}` (a missing reference resolves to empty). Mirrors the Rust
+ * `name` to a value pulled from `source`. Mirrors the Rust
  * `DataAssignmentRecord`.
+ *
+ * `value` is RETAINED for backward compatibility: pre-source records (and the
+ * `manual` source) store the literal here, and `source` is omitted/`manual`.
+ * When `source` is present and non-`manual`, `value` is ignored at run time.
  */
 export interface DataAssignment {
   name: string;
   value: string;
+  source?: DataSource;
 }
 
 /**

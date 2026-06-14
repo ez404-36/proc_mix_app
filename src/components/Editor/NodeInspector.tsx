@@ -5,22 +5,28 @@ import type {
   ConditionOp,
   ConditionSubject,
   DataAssignment,
+  DataSource,
   LoopConfig,
   RetryConfig,
   SwitchCase,
   WorkflowCondition,
 } from "../../types";
 import { getCommandName } from "../../utils/commandLabels";
+import { dataSourceId, dataSourceOptions } from "../../utils/dataSourceOptions";
 import type {
   WorkflowFlowNode,
   WorkflowNodeData,
 } from "../../utils/workflowGraph";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
+import { NumberStepper } from "../NumberStepper";
 import { CheckIcon, PlusIcon, TrashIcon } from "../icons";
 
 interface NodeInspectorProps {
   node: WorkflowFlowNode;
+  /** The selected node's single predecessor (or null when 0/many), used to
+   * offer a `data` node its kind-specific value sources. */
+  predecessor: WorkflowFlowNode | null;
   commands: ReadonlyArray<Command>;
   onCommandChange: (nodeId: string, commandId: string | undefined) => void;
   onNodeDataChange: (nodeId: string, patch: Partial<WorkflowNodeData>) => void;
@@ -49,13 +55,6 @@ const DEFAULT_CONDITION: WorkflowCondition = {
   op: "eq",
   value: "0",
 };
-
-/** Parse a number input into a non-negative integer, or `undefined` when blank/invalid. */
-function parseOptionalInt(raw: string): number | undefined {
-  if (raw.trim() === "") return undefined;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isNaN(parsed) ? undefined : parsed;
-}
 
 /** Narrow a dropdown string back to a {@link ConditionOp} (options come from OPS). */
 function isConditionOp(value: string): value is ConditionOp {
@@ -155,6 +154,7 @@ function ConditionEditor({
  */
 export function NodeInspector({
   node,
+  predecessor,
   commands,
   onCommandChange,
   onNodeDataChange,
@@ -224,6 +224,20 @@ export function NodeInspector({
   const updateData = (next: DataAssignment[]): void => {
     onNodeDataChange(node.id, { data: next });
   };
+  // Value sources available to each assignment, derived from the data node's
+  // single predecessor (kind-specific). Recomputed per render; cheap.
+  const sourceOptions = dataSourceOptions(predecessor, commands);
+  const sourceDropdownOptions: DropdownOption[] = sourceOptions.map((o) => ({
+    value: o.id,
+    label:
+      o.field === undefined
+        ? t(o.labelKey)
+        : t(o.labelKey, { field: o.field }),
+  }));
+  // The effective source of an assignment (legacy records have no `source` →
+  // treated as manual, mirroring the Rust `effective_source`).
+  const effectiveSource = (a: DataAssignment): DataSource =>
+    a.source ?? { kind: "manual", value: a.value };
 
   return (
     <aside className="wf-inspector">
@@ -353,16 +367,16 @@ export function NodeInspector({
             onChange={(mode) => setLoopMode(mode === "while" ? "while" : "count")}
           />
           {loopMode === "count" ? (
-            <input
-              className="input"
-              type="number"
-              min={0}
-              value={loop?.count ?? ""}
-              placeholder={t("editor.inspector.loop.count")}
-              aria-label={t("editor.inspector.loop.count")}
-              onChange={(event) =>
+            <NumberStepper
+              value={loop?.count ?? 1}
+              min={1}
+              max={1_000_000}
+              ariaLabel={t("editor.inspector.loop.count")}
+              decrementLabel={t("common.decrement")}
+              incrementLabel={t("common.increment")}
+              onChange={(count) =>
                 updateLoop({
-                  count: parseOptionalInt(event.target.value) ?? 0,
+                  count,
                   maxIterations: loop?.maxIterations ?? 1000,
                 })
               }
@@ -382,18 +396,19 @@ export function NodeInspector({
           <label className="wf-inspector__label">
             {t("editor.inspector.loop.maxIterations")}
           </label>
-          <input
-            className="input"
-            type="number"
-            min={1}
+          <NumberStepper
             value={loop?.maxIterations ?? 1000}
-            aria-label={t("editor.inspector.loop.maxIterations")}
-            onChange={(event) =>
+            min={1}
+            max={1_000_000}
+            ariaLabel={t("editor.inspector.loop.maxIterations")}
+            decrementLabel={t("common.decrement")}
+            incrementLabel={t("common.increment")}
+            onChange={(maxIterations) =>
               updateLoop({
                 ...(loopMode === "while"
                   ? { while: loop?.while ?? { ...DEFAULT_CONDITION } }
-                  : { count: loop?.count ?? 0 }),
-                maxIterations: parseOptionalInt(event.target.value) ?? 1000,
+                  : { count: loop?.count ?? 1 }),
+                maxIterations,
               })
             }
           />
@@ -405,32 +420,31 @@ export function NodeInspector({
           <label className="wf-inspector__label">
             {t("editor.inspector.try.retries")}
           </label>
-          <input
-            className="input"
-            type="number"
-            min={0}
+          <NumberStepper
             value={retry.retries}
-            aria-label={t("editor.inspector.try.retries")}
-            onChange={(event) =>
-              updateRetry({
-                ...retry,
-                retries: parseOptionalInt(event.target.value) ?? 0,
-              })
-            }
+            min={0}
+            max={100}
+            ariaLabel={t("editor.inspector.try.retries")}
+            decrementLabel={t("common.decrement")}
+            incrementLabel={t("common.increment")}
+            onChange={(retries) => updateRetry({ ...retry, retries })}
           />
           <label className="wf-inspector__label">
             {t("editor.inspector.try.backoffMs")}
           </label>
-          <input
-            className="input"
-            type="number"
+          <NumberStepper
+            value={retry.backoffMs ?? 0}
             min={0}
-            value={retry.backoffMs ?? ""}
-            aria-label={t("editor.inspector.try.backoffMs")}
-            onChange={(event) =>
+            max={600_000}
+            step={100}
+            ariaLabel={t("editor.inspector.try.backoffMs")}
+            decrementLabel={t("common.decrement")}
+            incrementLabel={t("common.increment")}
+            onChange={(backoffMs) =>
               updateRetry({
                 retries: retry.retries,
-                backoffMs: parseOptionalInt(event.target.value),
+                // 0 = no pause (the runner treats Some(0) like None).
+                backoffMs: backoffMs === 0 ? undefined : backoffMs,
               })
             }
           />
@@ -439,50 +453,94 @@ export function NodeInspector({
 
       {kind === "data" ? (
         <div className="wf-inspector__field">
-          {data.map((assignment, index) => (
-            <div key={index} className="wf-inspector__row">
-              <input
-                className="input"
-                type="text"
-                value={assignment.name}
-                placeholder={t("editor.inspector.data.name")}
-                aria-label={t("editor.inspector.data.name")}
-                onChange={(event) =>
-                  updateData(
-                    data.map((a, i) =>
-                      i === index ? { ...a, name: event.target.value } : a,
-                    ),
-                  )
-                }
-              />
-              <input
-                className="input"
-                type="text"
-                value={assignment.value}
-                placeholder={t("editor.inspector.data.value")}
-                aria-label={t("editor.inspector.data.value")}
-                onChange={(event) =>
-                  updateData(
-                    data.map((a, i) =>
-                      i === index ? { ...a, value: event.target.value } : a,
-                    ),
-                  )
-                }
-              />
-              <button
-                type="button"
-                className="btn btn--icon"
-                aria-label={t("editor.inspector.remove")}
-                onClick={() => updateData(data.filter((_, i) => i !== index))}
-              >
-                <TrashIcon />
-              </button>
-            </div>
-          ))}
+          {data.map((assignment, index) => {
+            const source = effectiveSource(assignment);
+            return (
+              <div key={index} className="wf-inspector__list-item">
+                <div className="wf-inspector__row">
+                  <input
+                    className="input"
+                    type="text"
+                    value={assignment.name}
+                    placeholder={t("editor.inspector.data.name")}
+                    aria-label={t("editor.inspector.data.name")}
+                    onChange={(event) =>
+                      updateData(
+                        data.map((a, i) =>
+                          i === index
+                            ? { ...a, name: event.target.value }
+                            : a,
+                        ),
+                      )
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="btn btn--icon"
+                    aria-label={t("editor.inspector.remove")}
+                    onClick={() =>
+                      updateData(data.filter((_, i) => i !== index))
+                    }
+                  >
+                    <TrashIcon />
+                  </button>
+                </div>
+                <Dropdown
+                  value={dataSourceId(source)}
+                  options={sourceDropdownOptions}
+                  ariaLabel={t("editor.inspector.data.source.label")}
+                  onChange={(id) => {
+                    const picked = sourceOptions.find((o) => o.id === id);
+                    if (picked === undefined) return;
+                    // Switching to manual keeps any text already typed.
+                    const nextSource: DataSource =
+                      picked.source.kind === "manual"
+                        ? { kind: "manual", value: assignment.value }
+                        : picked.source;
+                    updateData(
+                      data.map((a, i) =>
+                        i === index ? { ...a, source: nextSource } : a,
+                      ),
+                    );
+                  }}
+                />
+                {source.kind === "manual" ? (
+                  <input
+                    className="input"
+                    type="text"
+                    value={assignment.value}
+                    placeholder={t("editor.inspector.data.value")}
+                    aria-label={t("editor.inspector.data.value")}
+                    onChange={(event) =>
+                      updateData(
+                        data.map((a, i) =>
+                          i === index
+                            ? {
+                                ...a,
+                                value: event.target.value,
+                                source: {
+                                  kind: "manual",
+                                  value: event.target.value,
+                                },
+                              }
+                            : a,
+                        ),
+                      )
+                    }
+                  />
+                ) : null}
+              </div>
+            );
+          })}
           <button
             type="button"
             className="btn btn--ghost"
-            onClick={() => updateData([...data, { name: "", value: "" }])}
+            onClick={() =>
+              updateData([
+                ...data,
+                { name: "", value: "", source: { kind: "manual", value: "" } },
+              ])
+            }
           >
             <PlusIcon />
             {t("editor.inspector.data.addAssignment")}

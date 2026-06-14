@@ -7,15 +7,19 @@ import {
   findAttachTail,
   findEdgeNearPoint,
   findLastNode,
+  findSinglePredecessor,
   flowToWorkflow,
   insertNodeOnEdge,
   INSERT_SHIFT_X,
+  isUnconnectedNode,
   makeGraphId,
   makeInitialFlow,
   markDropTargetEdge,
   markInsertNeighbors,
   markTakenEdges,
+  primaryOutHandle,
   removeNodeReconnecting,
+  spliceExistingNodeOnEdge,
   workflowToFlow,
   type WorkflowFlowEdge,
   type WorkflowFlowNode,
@@ -555,6 +559,143 @@ describe("insertNodeOnEdge", () => {
     const next = insertNodeOnEdge(nodes, [], node, "missing");
     expect(next.nodes.map((n) => n.id)).toContain("mid");
     expect(next.edges).toHaveLength(0);
+  });
+
+  it("continues the chain on a branching node's primary handle", () => {
+    // Inserting a `condition` between A and B: the A → cond edge keeps `out`,
+    // and the cond → B edge must leave the condition's `then` handle (it has
+    // no `out`), so the chain stays connected on the happy path.
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e1", source: "a", target: "b", sourceHandle: "out" },
+    ];
+    const cond: WorkflowFlowNode = {
+      id: "cond",
+      type: "condition",
+      position: { x: 0, y: 0 },
+      data: { kind: "condition" },
+    };
+    const next = insertNodeOnEdge(nodes, edges, cond, "e1");
+    const out = next.edges.find((e) => e.source === "cond");
+    expect(out?.sourceHandle).toBe("then");
+    expect(out?.target).toBe("b");
+  });
+});
+
+describe("primaryOutHandle", () => {
+  it("maps single-exit kinds to out", () => {
+    expect(primaryOutHandle("start")).toBe("out");
+    expect(primaryOutHandle("command")).toBe("out");
+    expect(primaryOutHandle("data")).toBe("out");
+    expect(primaryOutHandle("end")).toBe("out");
+  });
+
+  it("maps branching kinds to their happy-path branch", () => {
+    expect(primaryOutHandle("condition")).toBe("then");
+    expect(primaryOutHandle("switch")).toBe("default");
+    expect(primaryOutHandle("loop")).toBe("done");
+    expect(primaryOutHandle("try")).toBe("ok");
+  });
+});
+
+describe("findSinglePredecessor", () => {
+  const nodes: WorkflowFlowNode[] = [
+    flowNode("a", "command", 0, 0),
+    flowNode("b", "command", 100, 0),
+    flowNode("d", "command", 200, 0),
+  ];
+
+  it("returns the sole predecessor", () => {
+    const edges: WorkflowFlowEdge[] = [{ id: "e", source: "a", target: "d" }];
+    expect(findSinglePredecessor("d", nodes, edges)?.id).toBe("a");
+  });
+
+  it("returns null when there is no predecessor", () => {
+    expect(findSinglePredecessor("d", nodes, [])).toBeNull();
+  });
+
+  it("returns null when multiple distinct nodes converge", () => {
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e1", source: "a", target: "d" },
+      { id: "e2", source: "b", target: "d" },
+    ];
+    expect(findSinglePredecessor("d", nodes, edges)).toBeNull();
+  });
+
+  it("treats two edges from the SAME source as a single predecessor", () => {
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e1", source: "a", target: "d", sourceHandle: "then" },
+      { id: "e2", source: "a", target: "d", sourceHandle: "else" },
+    ];
+    expect(findSinglePredecessor("d", nodes, edges)?.id).toBe("a");
+  });
+});
+
+describe("isUnconnectedNode", () => {
+  const edges: WorkflowFlowEdge[] = [{ id: "e", source: "a", target: "b" }];
+  it("is true for a node touched by no edge", () => {
+    expect(isUnconnectedNode("free", edges)).toBe(true);
+  });
+  it("is false for a node that is an edge source or target", () => {
+    expect(isUnconnectedNode("a", edges)).toBe(false);
+    expect(isUnconnectedNode("b", edges)).toBe(false);
+  });
+});
+
+describe("spliceExistingNodeOnEdge", () => {
+  const nodes: WorkflowFlowNode[] = [
+    flowNode("a", "start", 0, 0),
+    flowNode("b", "command", 300, 0),
+    // A free-floating node the user added but never wired.
+    flowNode("free", "command", 150, 200),
+  ];
+  const edges: WorkflowFlowEdge[] = [
+    { id: "e1", source: "a", target: "b", sourceHandle: "out" },
+  ];
+
+  it("rewires A → node → B without duplicating the node", () => {
+    const next = spliceExistingNodeOnEdge(nodes, edges, "free", "e1");
+    expect(next).not.toBeNull();
+    if (next === null) return;
+    // No node added (same count) and the original edge replaced by two.
+    expect(next.nodes).toHaveLength(3);
+    expect(next.edges.find((e) => e.id === "e1")).toBeUndefined();
+    const into = next.edges.find((e) => e.target === "free");
+    const out = next.edges.find((e) => e.source === "free");
+    expect(into?.source).toBe("a");
+    expect(into?.sourceHandle).toBe("out");
+    expect(out?.target).toBe("b");
+  });
+
+  it("places the spliced node in B's slot and shifts B right (like palette insert)", () => {
+    const next = spliceExistingNodeOnEdge(nodes, edges, "free", "e1");
+    const free = next?.nodes.find((n) => n.id === "free");
+    const b = next?.nodes.find((n) => n.id === "b");
+    // The spliced node takes B's original slot (300,0)…
+    expect(free?.position).toEqual({ x: 300, y: 0 });
+    // …and B is pushed right by one insert step.
+    expect(b?.position.x).toBe(300 + INSERT_SHIFT_X);
+  });
+
+  it("uses a branching node's primary handle for the outgoing edge", () => {
+    const withCond: WorkflowFlowNode[] = [
+      ...nodes,
+      flowNode("cond", "condition", 150, 300),
+    ];
+    const next = spliceExistingNodeOnEdge(withCond, edges, "cond", "e1");
+    const out = next?.edges.find((e) => e.source === "cond");
+    expect(out?.sourceHandle).toBe("then");
+  });
+
+  it("returns null when the node is already connected", () => {
+    const connected: WorkflowFlowEdge[] = [
+      ...edges,
+      { id: "e2", source: "free", target: "b" },
+    ];
+    expect(spliceExistingNodeOnEdge(nodes, connected, "free", "e1")).toBeNull();
+  });
+
+  it("returns null for an unknown edge", () => {
+    expect(spliceExistingNodeOnEdge(nodes, edges, "free", "nope")).toBeNull();
   });
 });
 

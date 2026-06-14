@@ -29,7 +29,7 @@ use crate::core::executor::{self, ExecuteRequest, ExecutorState, NodeOutcome, Te
 use crate::core::workflow_condition::{self, EvalContext};
 use crate::storage::commands::CommandRecord;
 use crate::storage::workflows::{
-    DataAssignmentRecord, LoopConfigRecord, RetryConfigRecord, SwitchCaseRecord,
+    DataAssignmentRecord, DataSourceRecord, LoopConfigRecord, RetryConfigRecord, SwitchCaseRecord,
     WorkflowEdgeRecord, WorkflowNodeRecord, WorkflowRecord,
 };
 
@@ -613,16 +613,101 @@ fn expand_refs(template: &str, vars: &BTreeMap<String, String>) -> String {
     out
 }
 
-/// Apply a `data` node's assignments to the data-flow map, in order. Each
-/// assignment's `value` is `${ref}`-expanded against the data-flow as it
-/// stands AT THAT POINT, so a later assignment can reference an earlier one in
-/// the same node. Pure — no executor, fully unit-testable.
+/// Snapshot of the node executed immediately before the current one on the
+/// path the runner walked — everything a `data` node may pull a value from.
+/// Built after each executed node; `None` before the first one (and after a
+/// pure `data`/`start` node, which produce no outcome of their own).
+#[derive(Debug, Clone, Default)]
+struct PrevOutcome {
+    /// Bounded, redacted stdout tail (a command-bearing node), if any.
+    stdout_tail: Option<String>,
+    /// Process exit code, if the node ran a command.
+    exit_code: Option<i32>,
+    /// Named output-schema fields the node extracted (rendered as strings).
+    fields: BTreeMap<String, String>,
+    /// `try` node: attempts made (1 = first-try success). `None` otherwise.
+    retry_count: Option<u32>,
+    /// `condition` node: did its test pass. `None` for other kinds.
+    condition_result: Option<bool>,
+    /// `switch` node: the case id taken ("default" when none matched).
+    matched_case: Option<String>,
+    /// `loop` node: completed iterations at the point it exited via `done`.
+    loop_iterations: Option<u32>,
+}
+
+impl PrevOutcome {
+    /// Build the command-derived part (stdout / exit / fields) from a
+    /// finished node's outcome. Kind-specific extras are layered on by the
+    /// caller (`retry_count`, `condition_result`, …).
+    fn from_outcome(outcome: &NodeOutcome) -> Self {
+        PrevOutcome {
+            stdout_tail: outcome.stdout_tail.clone(),
+            exit_code: outcome.exit_code,
+            fields: extracted_to_values(outcome),
+            ..Default::default()
+        }
+    }
+}
+
+/// Resolve a single data-node source to its string value, reading from the
+/// previous node's outcome when needed. A source that doesn't apply to what
+/// actually ran (e.g. `RetryCount` after a plain command, or any non-`Manual`
+/// source with no predecessor) resolves to the EMPTY string — the same
+/// lenient "missing → empty" rule the rest of the engine uses, so a graph
+/// edited into an inapplicable state degrades gracefully instead of aborting.
+/// `Manual` is `${ref}`-expanded against the current data-flow (unchanged
+/// legacy behaviour). Pure — fully unit-testable.
+fn resolve_data_source(
+    source: &DataSourceRecord,
+    prev: Option<&PrevOutcome>,
+    data_flow: &BTreeMap<String, String>,
+) -> String {
+    match source {
+        DataSourceRecord::Manual { value } => expand_refs(value, data_flow),
+        DataSourceRecord::RawOutput => prev.and_then(|p| p.stdout_tail.clone()).unwrap_or_default(),
+        DataSourceRecord::SchemaOutput => match prev {
+            // The full extracted result as one value: a compact JSON object of
+            // every extracted field. Empty string when the prev node extracted
+            // nothing (no schema), matching the lenient "missing → empty" rule.
+            Some(p) if !p.fields.is_empty() => serde_json::to_string(&p.fields).unwrap_or_default(),
+            _ => String::new(),
+        },
+        DataSourceRecord::ExitCode => prev
+            .and_then(|p| p.exit_code)
+            .map(|c| c.to_string())
+            .unwrap_or_default(),
+        DataSourceRecord::Field { field } => prev
+            .and_then(|p| p.fields.get(field).cloned())
+            .unwrap_or_default(),
+        DataSourceRecord::RetryCount => prev
+            .and_then(|p| p.retry_count)
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+        DataSourceRecord::ConditionResult => prev
+            .and_then(|p| p.condition_result)
+            .map(|b| b.to_string())
+            .unwrap_or_default(),
+        DataSourceRecord::MatchedCase => prev
+            .and_then(|p| p.matched_case.clone())
+            .unwrap_or_default(),
+        DataSourceRecord::LoopIterations => prev
+            .and_then(|p| p.loop_iterations)
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+    }
+}
+
+/// Apply a `data` node's assignments to the data-flow map, in order, pulling
+/// each value from its source (see [`resolve_data_source`]). A later
+/// assignment sees an earlier one in the same node (the `Manual` `${ref}`
+/// expansion reads the live `data_flow`). Pure — fully unit-testable.
 fn apply_data_assignments(
     assignments: &[DataAssignmentRecord],
+    prev: Option<&PrevOutcome>,
     data_flow: &mut BTreeMap<String, String>,
 ) {
     for a in assignments {
-        let value = expand_refs(&a.value, data_flow);
+        let value = resolve_data_source(&a.effective_source(), prev, data_flow);
         data_flow.insert(a.name.clone(), value);
     }
 }
@@ -741,6 +826,10 @@ async fn cancellable_backoff(
 /// reads its exit code). A hard `Spawn` / `LostOutcome` error is NOT retried —
 /// it means the command could not run at all, which a retry won't fix — so it
 /// propagates immediately. `None` runs exactly once (command/condition/switch).
+///
+/// Returns `(outcome, attempts)` where `attempts` is the number of times the
+/// command actually ran (1 = succeeded / gave up on the first try); a `try`
+/// node exposes this as its `retryCount` data source.
 #[allow(clippy::too_many_arguments)]
 async fn run_command_bearing_node<R: Runtime>(
     app: &AppHandle<R>,
@@ -752,7 +841,7 @@ async fn run_command_bearing_node<R: Runtime>(
     ctx: RunContext<'_>,
     retry: Option<&RetryConfigRecord>,
     cancel_rx: &mut oneshot::Receiver<()>,
-) -> Result<NodeOutcome, WorkflowError> {
+) -> Result<(NodeOutcome, u32), WorkflowError> {
     let command_id = node
         .command_id
         .as_ref()
@@ -800,7 +889,7 @@ async fn run_command_bearing_node<R: Runtime>(
         let succeeded = outcome.exit_code == Some(0);
         if succeeded || attempt > max_retries {
             *data_flow = extracted_to_values(&outcome);
-            return Ok(outcome);
+            return Ok((outcome, attempt));
         }
 
         // Failed with attempts remaining: announce the upcoming retry, wait the
@@ -867,6 +956,12 @@ async fn traverse<R: Runtime>(
     // each loop has gone round. Keyed by node id (loops never share state).
     let mut loop_iterations: HashMap<String, u32> = HashMap::new();
 
+    // The outcome of the node executed immediately before the current one, so
+    // a `data` node can pull a value from its predecessor (raw output, exit
+    // code, retry count, …). `None` at the start; reset to `None` after a pure
+    // node (`data`/`start`) that produces no outcome of its own.
+    let mut prev: Option<PrevOutcome> = None;
+
     loop {
         steps += 1;
         if steps > MAX_STEPS {
@@ -884,18 +979,22 @@ async fn traverse<R: Runtime>(
             NodeKind::End => {
                 return Ok(());
             }
-            NodeKind::Start => Branch::Out,
+            NodeKind::Start => {
+                prev = None;
+                Branch::Out
+            }
             NodeKind::Data => {
                 // A `data` node runs NO command: it derives data-flow variables
-                // via `${ref}`-expanded assignments, then continues on its
-                // single `out` edge. Pure and instant — it emits no per-node
-                // events (there is no execution to report), just mutates the
-                // carry and moves on. Like `start`, it is not a branching node.
-                apply_data_assignments(&node.data, &mut data_flow);
+                // from each assignment's source — reading the PREVIOUS node's
+                // outcome for non-manual sources — then continues on its single
+                // `out` edge. Pure and instant; emits no per-node events. After
+                // it, there is no command outcome to carry, so `prev` is reset.
+                apply_data_assignments(&node.data, prev.as_ref(), &mut data_flow);
+                prev = None;
                 Branch::Out
             }
             NodeKind::Command => {
-                run_command_bearing_node(
+                let (outcome, _attempts) = run_command_bearing_node(
                     app,
                     &executor_state,
                     commands,
@@ -907,6 +1006,7 @@ async fn traverse<R: Runtime>(
                     &mut cancel_rx,
                 )
                 .await?;
+                prev = Some(PrevOutcome::from_outcome(&outcome));
                 Branch::Out
             }
             NodeKind::Condition => {
@@ -916,7 +1016,7 @@ async fn traverse<R: Runtime>(
                 // it falls back to the exit code (exit 0 → `then`, non-zero →
                 // `else`) — preserving exact MVP behaviour for predicate-less
                 // nodes.
-                let outcome = run_command_bearing_node(
+                let (outcome, _attempts) = run_command_bearing_node(
                     app,
                     &executor_state,
                     commands,
@@ -929,13 +1029,17 @@ async fn traverse<R: Runtime>(
                 )
                 .await?;
                 let eval_ctx = build_eval_context(&outcome);
-                select_condition_branch(&node.id, node.condition.as_ref(), &eval_ctx)?
+                let branch = select_condition_branch(&node.id, node.condition.as_ref(), &eval_ctx)?;
+                let mut p = PrevOutcome::from_outcome(&outcome);
+                p.condition_result = Some(branch == Branch::Then);
+                prev = Some(p);
+                branch
             }
             NodeKind::Switch => {
                 // A `switch` node runs its referenced command as a test, then
                 // takes the first `case` whose predicate matches (in
                 // declaration order), or `default` when none match.
-                let outcome = run_command_bearing_node(
+                let (outcome, _attempts) = run_command_bearing_node(
                     app,
                     &executor_state,
                     commands,
@@ -948,7 +1052,14 @@ async fn traverse<R: Runtime>(
                 )
                 .await?;
                 let eval_ctx = build_eval_context(&outcome);
-                select_switch_branch(&node.id, &node.cases, &eval_ctx)?
+                let branch = select_switch_branch(&node.id, &node.cases, &eval_ctx)?;
+                let mut p = PrevOutcome::from_outcome(&outcome);
+                p.matched_case = Some(match &branch {
+                    Branch::Case(id) => id.clone(),
+                    _ => "default".to_string(),
+                });
+                prev = Some(p);
+                branch
             }
             NodeKind::Loop => {
                 // A `loop` node runs NO command of its own: it is a control
@@ -972,7 +1083,9 @@ async fn traverse<R: Runtime>(
                 let branch = loop_should_continue(&node.id, cfg, completed, &eval_ctx)?;
                 if branch == Branch::Body {
                     // Entering the body: record the new (1-based) iteration and
-                    // announce it so the editor can show progress.
+                    // announce it so the editor can show progress. The loop node
+                    // itself produces no outcome — the body's nodes will — so
+                    // `prev` is cleared.
                     let iteration = completed + 1;
                     loop_iterations.insert(node.id.clone(), iteration);
                     emit_unless_silent(
@@ -985,10 +1098,16 @@ async fn traverse<R: Runtime>(
                             iteration,
                         },
                     );
+                    prev = None;
                 } else {
-                    // Leaving the loop: clear its counter so a re-entry later in
-                    // the SAME run (e.g. an outer loop wrapping this one) starts
-                    // a fresh iteration count rather than resuming the old one.
+                    // Leaving the loop: expose the completed-iteration count to a
+                    // downstream `data` node, then clear the counter so a re-entry
+                    // later in the SAME run (e.g. an outer loop wrapping this one)
+                    // starts a fresh count rather than resuming the old one.
+                    prev = Some(PrevOutcome {
+                        loop_iterations: Some(completed),
+                        ..Default::default()
+                    });
                     loop_iterations.remove(&node.id);
                 }
                 branch
@@ -997,7 +1116,7 @@ async fn traverse<R: Runtime>(
                 // A `try` node runs its referenced command with retries (its
                 // `retry` config). The final attempt's exit code decides the
                 // exit: success (exit 0) → `ok`, failure after retries → `catch`.
-                let outcome = run_command_bearing_node(
+                let (outcome, attempts) = run_command_bearing_node(
                     app,
                     &executor_state,
                     commands,
@@ -1009,11 +1128,15 @@ async fn traverse<R: Runtime>(
                     &mut cancel_rx,
                 )
                 .await?;
-                if outcome.exit_code == Some(0) {
+                let branch = if outcome.exit_code == Some(0) {
                     Branch::Ok
                 } else {
                     Branch::Catch
-                }
+                };
+                let mut p = PrevOutcome::from_outcome(&outcome);
+                p.retry_count = Some(attempts);
+                prev = Some(p);
+                branch
             }
         };
 
@@ -1720,25 +1843,162 @@ mod graph_tests {
         assert_eq!(expand_refs("Привет ${x}🚀", &vars), "Привет 🚀");
     }
 
+    fn manual_assign(name: &str, value: &str) -> DataAssignmentRecord {
+        DataAssignmentRecord {
+            name: name.into(),
+            value: value.into(),
+            source: None,
+        }
+    }
+
+    fn sourced_assign(name: &str, source: DataSourceRecord) -> DataAssignmentRecord {
+        DataAssignmentRecord {
+            name: name.into(),
+            value: String::new(),
+            source: Some(source),
+        }
+    }
+
     #[test]
-    fn apply_data_assignments_sets_and_chains() {
+    fn apply_data_assignments_manual_sets_and_chains() {
+        // A legacy (source-less) record behaves as a manual `${ref}` template.
         let mut df = BTreeMap::new();
         df.insert("base".into(), "abc".into());
         let assigns = vec![
-            DataAssignmentRecord {
-                name: "greeting".into(),
-                value: "hello ${base}".into(),
-            },
+            manual_assign("greeting", "hello ${base}"),
             // A later assignment sees an earlier one in the same node.
-            DataAssignmentRecord {
-                name: "loud".into(),
-                value: "${greeting}!".into(),
-            },
+            manual_assign("loud", "${greeting}!"),
         ];
-        apply_data_assignments(&assigns, &mut df);
+        apply_data_assignments(&assigns, None, &mut df);
         assert_eq!(df.get("greeting").map(String::as_str), Some("hello abc"));
         assert_eq!(df.get("loud").map(String::as_str), Some("hello abc!"));
-        // The original field is untouched.
         assert_eq!(df.get("base").map(String::as_str), Some("abc"));
+    }
+
+    #[test]
+    fn resolve_data_source_reads_previous_outcome() {
+        let prev = PrevOutcome {
+            stdout_tail: Some("the output\n".into()),
+            exit_code: Some(3),
+            fields: BTreeMap::from([("count".to_string(), "42".to_string())]),
+            retry_count: Some(2),
+            condition_result: Some(true),
+            matched_case: Some("prod".into()),
+            loop_iterations: Some(5),
+        };
+        let df = BTreeMap::new();
+        let r = |s: DataSourceRecord| resolve_data_source(&s, Some(&prev), &df);
+        assert_eq!(r(DataSourceRecord::RawOutput), "the output\n");
+        assert_eq!(r(DataSourceRecord::ExitCode), "3");
+        assert_eq!(
+            r(DataSourceRecord::Field {
+                field: "count".into()
+            }),
+            "42"
+        );
+        assert_eq!(r(DataSourceRecord::RetryCount), "2");
+        assert_eq!(r(DataSourceRecord::ConditionResult), "true");
+        assert_eq!(r(DataSourceRecord::MatchedCase), "prod");
+        assert_eq!(r(DataSourceRecord::LoopIterations), "5");
+    }
+
+    #[test]
+    fn resolve_data_source_schema_output_is_json_of_all_fields() {
+        let prev = PrevOutcome {
+            fields: BTreeMap::from([
+                ("count".to_string(), "42".to_string()),
+                ("name".to_string(), "build".to_string()),
+            ]),
+            ..Default::default()
+        };
+        let df = BTreeMap::new();
+        // BTreeMap → deterministic, key-sorted compact JSON object.
+        assert_eq!(
+            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&prev), &df),
+            r#"{"count":"42","name":"build"}"#
+        );
+        // No extracted fields (schema-less command) → empty, not "{}".
+        let empty = PrevOutcome {
+            exit_code: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&empty), &df),
+            ""
+        );
+    }
+
+    #[test]
+    fn resolve_data_source_inapplicable_is_empty_not_error() {
+        // No predecessor, or a source the prev outcome doesn't carry → empty.
+        let df = BTreeMap::new();
+        assert_eq!(
+            resolve_data_source(&DataSourceRecord::ExitCode, None, &df),
+            ""
+        );
+        let prev = PrevOutcome {
+            exit_code: Some(0),
+            ..Default::default()
+        };
+        // A plain command has no retry count → empty, not a crash.
+        assert_eq!(
+            resolve_data_source(&DataSourceRecord::RetryCount, Some(&prev), &df),
+            ""
+        );
+        // A missing field → empty.
+        assert_eq!(
+            resolve_data_source(
+                &DataSourceRecord::Field {
+                    field: "nope".into()
+                },
+                Some(&prev),
+                &df
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn apply_data_assignments_pulls_from_sources() {
+        let prev = PrevOutcome {
+            exit_code: Some(7),
+            stdout_tail: Some("hi".into()),
+            ..Default::default()
+        };
+        let mut df = BTreeMap::new();
+        let assigns = vec![
+            sourced_assign("code", DataSourceRecord::ExitCode),
+            sourced_assign("out", DataSourceRecord::RawOutput),
+            manual_assign("greeting", "code=${code}"),
+        ];
+        apply_data_assignments(&assigns, Some(&prev), &mut df);
+        assert_eq!(df.get("code").map(String::as_str), Some("7"));
+        assert_eq!(df.get("out").map(String::as_str), Some("hi"));
+        // Manual source sees an earlier sourced assignment via `${ref}`.
+        assert_eq!(df.get("greeting").map(String::as_str), Some("code=7"));
+    }
+
+    #[test]
+    fn data_source_record_wire_format_is_tagged_camelcase() {
+        let json = serde_json::to_value(DataSourceRecord::RawOutput).unwrap();
+        assert_eq!(json["kind"], "rawOutput");
+        let json = serde_json::to_value(DataSourceRecord::Field { field: "x".into() }).unwrap();
+        assert_eq!(json["kind"], "field");
+        assert_eq!(json["field"], "x");
+    }
+
+    #[test]
+    fn legacy_data_assignment_without_source_is_manual() {
+        // A record persisted before `source` existed decodes with `source:
+        // None` and its `effective_source` is the manual legacy value.
+        let json = serde_json::json!({ "name": "v", "value": "hello" });
+        let rec: DataAssignmentRecord = serde_json::from_value(json).unwrap();
+        assert_eq!(rec.source, None);
+        assert_eq!(
+            rec.effective_source(),
+            DataSourceRecord::Manual {
+                value: "hello".into()
+            }
+        );
     }
 }

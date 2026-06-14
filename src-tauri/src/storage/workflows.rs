@@ -83,16 +83,63 @@ pub struct RetryConfigRecord {
     pub backoff_ms: Option<u64>,
 }
 
+/// Where a `data` node assignment pulls its value from. Tagged union mirroring
+/// the TS `DataSource` (`{ kind, … }`). Every non-`Manual` source reads from
+/// the node executed immediately before this data node on the path that
+/// reached it (the runner tracks that "previous outcome").
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum DataSourceRecord {
+    /// A literal / `${ref}`-templated string the user typed.
+    Manual { value: String },
+    /// The previous node's raw stdout (bounded tail).
+    RawOutput,
+    /// The previous node's FULL extracted output-schema result as one value
+    /// (compact JSON of all fields). Only meaningful when the prev command
+    /// has a schema; empty otherwise.
+    SchemaOutput,
+    /// The previous node's process exit code.
+    ExitCode,
+    /// A single named output-schema field the previous node extracted.
+    Field { field: String },
+    /// Attempts a `try` predecessor made (1 = succeeded first try).
+    RetryCount,
+    /// "true" / "false": did a `condition` predecessor's test pass.
+    ConditionResult,
+    /// The case id a `switch` predecessor took ("default" when none matched).
+    MatchedCase,
+    /// Completed iterations of a `loop` predecessor (count).
+    LoopIterations,
+}
+
 /// One assignment performed by a `data` node: set the data-flow variable
-/// `name` to `value`. `value` may reference upstream data-flow fields with
-/// `${ref}` (a missing reference resolves to empty, matching how a
-/// `Variable`-subject condition treats an absent field). Mirrors the TS
-/// `DataAssignment`.
+/// `name` to a value pulled from `source`. Mirrors the TS `DataAssignment`.
+///
+/// `value` is RETAINED for backward compatibility: pre-`source` records (and
+/// the `Manual` source) carry the literal here. `source` defaults to
+/// `Manual { value }` when absent (old records), so existing data nodes keep
+/// working unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DataAssignmentRecord {
     pub name: String,
+    #[serde(default)]
     pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<DataSourceRecord>,
+}
+
+impl DataAssignmentRecord {
+    /// The effective source: explicit `source` when set, else a `Manual`
+    /// source wrapping the legacy `value` (so pre-`source` records behave
+    /// exactly as before).
+    pub fn effective_source(&self) -> DataSourceRecord {
+        self.source
+            .clone()
+            .unwrap_or_else(|| DataSourceRecord::Manual {
+                value: self.value.clone(),
+            })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

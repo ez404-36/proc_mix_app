@@ -474,6 +474,29 @@ function hasFreeOutPort(
 }
 
 /**
+ * The unique node feeding into `nodeId`, when there is exactly one. A `data`
+ * node pulls values from "the previous node"; the editor can only offer the
+ * right kind-specific source options when that predecessor is unambiguous.
+ *
+ * Returns the single predecessor node, or `null` when there are zero or many
+ * (converging branches) — in which case the inspector falls back to the
+ * universal sources (manual / raw output / exit code). At RUN time the engine
+ * always resolves the real previous node regardless of this static ambiguity.
+ */
+export function findSinglePredecessor(
+  nodeId: string,
+  nodes: WorkflowFlowNode[],
+  edges: WorkflowFlowEdge[],
+): WorkflowFlowNode | null {
+  const sources = edges
+    .filter((e) => e.target === nodeId)
+    .map((e) => e.source);
+  const unique = Array.from(new Set(sources));
+  if (unique.length !== 1) return null;
+  return nodes.find((n) => n.id === unique[0]) ?? null;
+}
+
+/**
  * Find the node to auto-attach a dropped command to: the `start`/`command`
  * node with a FREE `out` port whose output anchor is nearest to `point`.
  * Returns `null` when no such tail exists (the dropped node is then left
@@ -706,6 +729,84 @@ export function insertNodeOnEdge(
     nodes: [...shiftedNodes, placedNode],
     edges: [...remaining, intoNew, outOfNew],
   };
+}
+
+/**
+ * Whether `nodeId` is a free-floating node — present on the canvas but in no
+ * edge (neither source nor target). Only such a node may be spliced onto an
+ * edge by dragging it there: a node already wired into the graph keeps its
+ * connections (dragging it just repositions it).
+ */
+export function isUnconnectedNode(
+  nodeId: string,
+  edges: WorkflowFlowEdge[],
+): boolean {
+  return !edges.some((e) => e.source === nodeId || e.target === nodeId);
+}
+
+/**
+ * Splice an EXISTING, currently-unconnected node onto an edge — the canvas
+ * calls this when the user drags a free-floating node (one they already added
+ * but never wired) over a connection. Unlike {@link insertNodeOnEdge} the node
+ * is already in `nodes` so it is NOT duplicated; edges change to `A → node`
+ * (preserving A's branch) and `node.(primary) → B`.
+ *
+ * LAYOUT: identical to {@link insertNodeOnEdge} — the spliced node takes B's
+ * slot (so it lands on the existing chain row, not wherever it was dropped),
+ * and B plus its whole downstream subgraph shifts right by `INSERT_SHIFT_X` to
+ * open a gap. This matches the visual result of dragging a node from the
+ * palette onto the same edge.
+ *
+ * Returns `null` (caller leaves the graph as-is) when the splice is invalid:
+ * the node is already connected, the node is not free, the edge is unknown, or
+ * the edge touches the node itself (which would self-loop). Pure otherwise.
+ */
+export function spliceExistingNodeOnEdge(
+  nodes: WorkflowFlowNode[],
+  edges: WorkflowFlowEdge[],
+  nodeId: string,
+  edgeId: string,
+): { nodes: WorkflowFlowNode[]; edges: WorkflowFlowEdge[] } | null {
+  if (!isUnconnectedNode(nodeId, edges)) return null;
+  const original = edges.find((e) => e.id === edgeId);
+  if (original === undefined) return null;
+  // Splicing onto an edge that already touches the node is meaningless and
+  // would create a self-loop.
+  if (original.source === nodeId || original.target === nodeId) return null;
+  const node = nodes.find((n) => n.id === nodeId);
+  if (node === undefined) return null;
+
+  // Shift B and its descendants right to open a gap, then drop the spliced
+  // node into B's vacated slot. `collectDownstream(source)` is B + everything
+  // past it (not A, not unrelated branches, and not the still-unconnected
+  // spliced node) — exactly the set that must move.
+  const targetNode = nodes.find((n) => n.id === original.target);
+  const toShift = collectDownstream(edges, original.source);
+  const nextNodes = nodes.map((n) => {
+    if (n.id === nodeId) {
+      return targetNode === undefined
+        ? n
+        : { ...n, position: { ...targetNode.position } };
+    }
+    return toShift.has(n.id)
+      ? { ...n, position: { x: n.position.x + INSERT_SHIFT_X, y: n.position.y } }
+      : n;
+  });
+
+  const remaining = edges.filter((e) => e.id !== edgeId);
+  const intoNode: WorkflowFlowEdge = {
+    id: makeGraphId("edge"),
+    source: original.source,
+    target: nodeId,
+    sourceHandle: original.sourceHandle,
+  };
+  const outOfNode: WorkflowFlowEdge = {
+    id: makeGraphId("edge"),
+    source: nodeId,
+    target: original.target,
+    sourceHandle: primaryOutHandle(node.data.kind),
+  };
+  return { nodes: nextNodes, edges: [...remaining, intoNode, outOfNode] };
 }
 
 /**
