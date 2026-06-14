@@ -8,7 +8,10 @@ import {
   createWorkflow,
   updateWorkflow,
 } from "../../services/workflowActions";
-import { triggerWorkflowRun } from "../../services/workflowRunner";
+import {
+  triggerWorkflowRun,
+  triggerWorkflowRunFromNode,
+} from "../../services/workflowRunner";
 import {
   flowToWorkflow,
   makeGraphId,
@@ -38,6 +41,9 @@ interface UseWorkflowCanvasPersistenceArgs {
 interface UseWorkflowCanvasPersistence {
   save: () => void;
   run: () => Promise<void>;
+  /** Run a single node and everything downstream of it (the editor's per-node
+   * run action), seeding the node's input with `seedInput`. */
+  runNode: (nodeId: string, seedInput: string | null) => Promise<void>;
   saveMeta: (next: WorkflowMeta) => void;
   activeRunId: string | null;
   setActiveRunId: Dispatch<SetStateAction<string | null>>;
@@ -130,27 +136,19 @@ export function useWorkflowCanvasPersistence({
     onSaved();
   }, [meta.name, reportValidation, persist, t, setMetaModalOpen, onSaved]);
 
-  const handleRun = useCallback(async (): Promise<void> => {
-    // Running does NOT require saving. The Rust `execute_workflow` command
-    // takes the full graph from the frontend and only resolves the
-    // referenced *commands* from storage (handled inside
-    // `triggerWorkflowRun`), so an unsaved draft runs verbatim. We still
-    // validate — a structurally broken graph can't run — but we never force
-    // a save or a name prompt here.
-    // Auto-complete the graph: if the user never added an `end` node, append
-    // one after the current tail before running, so a linear chain is
-    // runnable without the manual final step. We mutate the live draft store
-    // (so the canvas reflects it) AND read the augmented graph back from the
-    // store for this run — building from stale closure `nodes`/`edges` would
-    // miss the just-added end.
+  // Build a runnable `Workflow` draft from the LIVE editor graph, validating
+  // it and surfacing problems as toasts. Auto-appends an `end` node when the
+  // user never added one so a linear chain is runnable. Returns `null` when
+  // the graph has a blocking error (the caller aborts). Shared by the full-run
+  // and the per-node run paths.
+  const buildRunnableDraft = useCallback((): Workflow | null => {
     const hasEnd = nodes.some((n) => (n.type ?? n.data.kind) === "end");
     if (!hasEnd) {
       appendNodeToTail("end", undefined);
     }
 
     // Validate the LIVE graph (read back from the store) so the just-added
-    // end node is accounted for — `buildDraftWorkflow` reads stale closure
-    // state that predates the append above.
+    // end node is accounted for.
     const live = useEditorDraftStore.getState();
     const draftGraph = flowToWorkflow(
       {
@@ -172,15 +170,14 @@ export function useWorkflowCanvasPersistence({
         Message.warning(text);
       }
     }
-    if (!runnable) return;
+    if (!runnable) return null;
 
     const trimmedName = meta.name.trim();
     const now = new Date().toISOString();
     // Reuse the persisted id when this session was already saved so the
     // history `workflowRun` row links back to the stored workflow; otherwise
-    // mint a transient id for this run. An unsaved name falls back to the
-    // localized "Untitled" label used by the toolbar.
-    const draft: Workflow = {
+    // mint a transient id for this run.
+    return {
       ...draftGraph,
       name: trimmedName === "" ? t("editor.untitled") : trimmedName,
       id: currentId ?? makeGraphId("node"),
@@ -189,11 +186,33 @@ export function useWorkflowCanvasPersistence({
       updatedAt: now,
       runCount: 0,
     };
+  }, [nodes, meta, appendNodeToTail, currentId, t]);
+
+  const handleRun = useCallback(async (): Promise<void> => {
+    // Running does NOT require saving — the engine takes the full graph from
+    // the frontend and resolves only the referenced commands from storage.
+    const draft = buildRunnableDraft();
+    if (draft === null) return;
     const runId = await triggerWorkflowRun(draft);
     if (runId !== null) {
       setActiveRunId(runId);
     }
-  }, [nodes, meta, appendNodeToTail, currentId, t]);
+  }, [buildRunnableDraft, setActiveRunId]);
+
+  // Run a single node and everything downstream of it, seeding the node's
+  // input with `seedInput` (its example-input text, or `null` when empty).
+  // Reuses the same validate/auto-end-append pipeline as a full run.
+  const handleRunNode = useCallback(
+    async (nodeId: string, seedInput: string | null): Promise<void> => {
+      const draft = buildRunnableDraft();
+      if (draft === null) return;
+      const runId = await triggerWorkflowRunFromNode(draft, nodeId, seedInput);
+      if (runId !== null) {
+        setActiveRunId(runId);
+      }
+    },
+    [buildRunnableDraft, setActiveRunId],
+  );
 
   const handleMetaSave = useCallback(
     (next: WorkflowMeta): void => {
@@ -240,6 +259,7 @@ export function useWorkflowCanvasPersistence({
   return {
     save: handleSave,
     run: handleRun,
+    runNode: handleRunNode,
     saveMeta: handleMetaSave,
     activeRunId,
     setActiveRunId,

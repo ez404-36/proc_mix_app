@@ -6,6 +6,8 @@ import { SwitchNode } from "./SwitchNode";
 import { LoopNode } from "./LoopNode";
 import { TryNode } from "./TryNode";
 import { DataNode } from "./DataNode";
+import { ParserNode } from "./ParserNode";
+import { TextNode } from "./TextNode";
 import { EndNode } from "./EndNode";
 
 /**
@@ -23,6 +25,8 @@ export const workflowNodeTypes: NodeTypes = {
   loop: LoopNode,
   try: TryNode,
   data: DataNode,
+  parser: ParserNode,
+  text: TextNode,
   end: EndNode,
 };
 
@@ -34,5 +38,7 @@ export {
   LoopNode,
   TryNode,
   DataNode,
+  ParserNode,
+  TextNode,
   EndNode,
 };

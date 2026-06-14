@@ -110,6 +110,15 @@ pub enum DataSourceRecord {
     MatchedCase,
     /// Completed iterations of a `loop` predecessor (count).
     LoopIterations,
+    /// Prompt the user for this value when the workflow runs (the value is
+    /// supplied through `node_variable_values`, exactly like a no-default
+    /// command variable). Meaningful only as a per-variable source on a
+    /// command-bearing node; on a `data` assignment it resolves to empty.
+    AtRun,
+    /// A data-flow variable produced by an upstream `data` node, looked up by
+    /// `name` in the live data-flow map (NOT the previous node's extracted
+    /// fields). Lets a node's command variable read a `data`-node value.
+    DataVar { name: String },
 }
 
 /// One assignment performed by a `data` node: set the data-flow variable
@@ -172,6 +181,23 @@ pub struct WorkflowNodeRecord {
     /// absent for every other kind. Mirrors the TS `WorkflowNode.data`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub data: Vec<DataAssignmentRecord>,
+    /// Where each of the referenced command's variables draws its value, keyed
+    /// by variable name. Empty / absent for nodes without overrides. Mirrors
+    /// the TS `WorkflowNode.variableSources`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub variable_sources: std::collections::BTreeMap<String, DataSourceRecord>,
+    /// Output-schema pipeline a `parser` node applies to the previous node's
+    /// raw output. `None` for every other kind. Mirrors the TS
+    /// `WorkflowNode.parser`. Reuses the command `OutputSchemaRecord` so the
+    /// same `core::extractor` runs for both command output parsing and a
+    /// standalone parser node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parser: Option<crate::storage::commands::OutputSchemaRecord>,
+    /// The template text a `text` node composes: `${var}` references are
+    /// expanded against the run's variables and the result becomes the node's
+    /// output. `None` for every other kind. Mirrors the TS `WorkflowNode.text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
     pub position: NodePosition,
 }
 
@@ -375,6 +401,9 @@ mod wire_format_tests {
                     loop_config: None,
                     retry: None,
                     data: Vec::new(),
+                    variable_sources: std::collections::BTreeMap::new(),
+                    parser: None,
+                    text: None,
                     position: NodePosition { x: 0.0, y: 0.0 },
                 },
                 WorkflowNodeRecord {
@@ -387,6 +416,9 @@ mod wire_format_tests {
                     loop_config: None,
                     retry: None,
                     data: Vec::new(),
+                    variable_sources: std::collections::BTreeMap::new(),
+                    parser: None,
+                    text: None,
                     position: NodePosition { x: 120.0, y: 40.0 },
                 },
             ],
@@ -450,6 +482,9 @@ mod wire_format_tests {
             loop_config: None,
             retry: None,
             data: Vec::new(),
+            variable_sources: std::collections::BTreeMap::new(),
+            parser: None,
+            text: None,
             position: NodePosition { x: 1.0, y: 2.0 },
         };
         let json = serde_json::to_value(&node).unwrap();
@@ -473,6 +508,9 @@ mod wire_format_tests {
             loop_config: None,
             retry: None,
             data: Vec::new(),
+            variable_sources: std::collections::BTreeMap::new(),
+            parser: None,
+            text: None,
             position: NodePosition { x: 0.0, y: 0.0 },
         };
         let json = serde_json::to_value(&node).unwrap();
@@ -482,6 +520,7 @@ mod wire_format_tests {
         assert!(json.get("condition").is_none());
         assert!(json.get("cases").is_none());
         assert!(json.get("loop").is_none());
+        assert!(json.get("variableSources").is_none());
     }
 
     /// A `loop` config serialises with the field renamed to the wire/TS name
@@ -620,6 +659,9 @@ mod sqlite_integration_tests {
                     loop_config: None,
                     retry: None,
                     data: Vec::new(),
+                    variable_sources: std::collections::BTreeMap::new(),
+                    parser: None,
+                    text: None,
                     position: NodePosition { x: 0.0, y: 0.0 },
                 },
                 WorkflowNodeRecord {
@@ -632,6 +674,9 @@ mod sqlite_integration_tests {
                     loop_config: None,
                     retry: None,
                     data: Vec::new(),
+                    variable_sources: std::collections::BTreeMap::new(),
+                    parser: None,
+                    text: None,
                     position: NodePosition { x: 100.0, y: 0.0 },
                 },
             ],

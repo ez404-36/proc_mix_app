@@ -40,6 +40,24 @@ function command(id: string, fields: string[]): Command {
   } as unknown as Command;
 }
 
+/** A command whose schema uses a fieldless parser (e.g. `raw` / `keyValue`):
+ * it HAS a schema (so `schemaOutput` is meaningful) but declares no named
+ * fields. */
+function commandWithFieldlessSchema(id: string): Command {
+  return {
+    id,
+    name: id,
+    script: "echo hi",
+    shell: "bash",
+    variables: [],
+    tags: [],
+    favorite: false,
+    createdAt: "",
+    updatedAt: "",
+    outputSchema: { pipeline: [{ parser: "raw", fields: [] }] },
+  } as unknown as Command;
+}
+
 const ids = (
   predecessor: WorkflowFlowNode | null,
   commands: Command[],
@@ -76,6 +94,16 @@ describe("dataSourceOptions", () => {
     expect(got).not.toContain("schemaOutput");
   });
 
+  it("offers schemaOutput for a command with a fieldless schema (raw/keyValue)", () => {
+    // Regression: a `raw`/`keyValue` parser declares no named fields but still
+    // produces a meaningful whole-result, so `schemaOutput` MUST be offered
+    // (only the per-field options depend on declared fields).
+    const cmd = commandWithFieldlessSchema("c1");
+    const got = ids(flowNode("n", "command", "c1"), [cmd]);
+    expect(got).toContain("schemaOutput");
+    expect(got).toEqual(["manual", "rawOutput", "exitCode", "schemaOutput"]);
+  });
+
   it("adds retryCount after a try, conditionResult after a condition, matchedCase after a switch", () => {
     const cmd = command("c1", []);
     expect(ids(flowNode("n", "try", "c1"), [cmd])).toContain("retryCount");
@@ -83,6 +111,52 @@ describe("dataSourceOptions", () => {
       "conditionResult",
     );
     expect(ids(flowNode("n", "switch", "c1"), [cmd])).toContain("matchedCase");
+  });
+
+  it("offers raw/schema output + fields after a parser node with a schema", () => {
+    const parserNode: WorkflowFlowNode = {
+      id: "p",
+      type: "parser",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "parser",
+        parser: {
+          pipeline: [
+            {
+              parser: "regex",
+              fields: [{ name: "ver" }, { name: "build" }],
+            },
+          ],
+        },
+      },
+    };
+    expect(ids(parserNode, [])).toEqual([
+      "manual",
+      "rawOutput",
+      "schemaOutput",
+      "field:ver",
+      "field:build",
+    ]);
+  });
+
+  it("offers raw output only after a parser node without a schema", () => {
+    const parserNode: WorkflowFlowNode = {
+      id: "p",
+      type: "parser",
+      position: { x: 0, y: 0 },
+      data: { kind: "parser" },
+    };
+    expect(ids(parserNode, [])).toEqual(["manual", "rawOutput"]);
+  });
+
+  it("offers raw output after a text node", () => {
+    const textNode: WorkflowFlowNode = {
+      id: "tx",
+      type: "text",
+      position: { x: 0, y: 0 },
+      data: { kind: "text", text: "hi ${x}" },
+    };
+    expect(ids(textNode, [])).toEqual(["manual", "rawOutput"]);
   });
 
   it("offers loop iteration count after a loop", () => {

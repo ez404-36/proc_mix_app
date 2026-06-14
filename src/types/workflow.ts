@@ -7,6 +7,8 @@
 // the Rust `WorkflowRecord` wire format, exactly like `commandRepository`
 // does for `Command`. The runtime event union mirrors `execution.ts`.
 
+import type { OutputSchema } from "./outputSchema";
+
 /**
  * Kind discriminator for a node in the workflow graph.
  *   - "start"     → unique entry node; exactly one per workflow. Has a
@@ -24,6 +26,13 @@
  *     once retries are exhausted. (v0.7.0)
  *   - "data"      → pure transformation node: derives data-flow variables
  *     without spawning a process. (v0.7.0)
+ *   - "parser"    → pure transformation node: re-parses the previous node's
+ *     raw output through its own output-schema pipeline (same engine as a
+ *     command's output schema), replacing the data-flow with the extracted
+ *     fields. Runs no command.
+ *   - "text"      → pure transformation node: composes a template string,
+ *     expanding `${var}` references to earlier variables, and makes the result
+ *     its output. Runs no command.
  *   - "end"       → terminal node; stops traversal. A workflow may have
  *     several end nodes (e.g. one per branch).
  *
@@ -39,6 +48,8 @@ export type WorkflowNodeKind =
   | "loop"
   | "try"
   | "data"
+  | "parser"
+  | "text"
   | "end";
 
 /**
@@ -137,7 +148,16 @@ export type DataSource =
   | { kind: "retryCount" }
   | { kind: "conditionResult" }
   | { kind: "matchedCase" }
-  | { kind: "loopIterations" };
+  | { kind: "loopIterations" }
+  // Prompt the user for this value when the workflow runs (reuses the same
+  // variable-prompt modal a no-default command variable opens). Meaningful
+  // only as a `variableSources` entry on a command-bearing node — never on a
+  // `data` assignment (which has no prompt step).
+  | { kind: "atRun" }
+  // A data-flow variable produced by an upstream `data` node, looked up by
+  // name in the run's data-flow map. Lets a node's command variable draw its
+  // value from a value any earlier `data` node assigned.
+  | { kind: "dataVar"; name: string };
 
 /**
  * One assignment performed by a `data` node: set the data-flow variable
@@ -191,6 +211,26 @@ export interface WorkflowNode {
   retry?: RetryConfig;
   /** Variable assignments performed by a `data` node, in order. */
   data?: DataAssignment[];
+  /**
+   * Where each of the referenced command's variables draws its value, keyed
+   * by variable name. Command-bearing kinds only (`command` / `condition` /
+   * `switch` / `try`). A variable absent from this map keeps the engine's
+   * default behaviour (data-flow value, else spec default, else prompt). A
+   * `manual` source carries its literal in `{ kind: "manual", value }`.
+   */
+  variableSources?: Record<string, DataSource>;
+  /**
+   * Output-schema pipeline a `parser` node applies to the previous node's
+   * raw output. Present only for `parser` kind; absent elsewhere. Reuses the
+   * command `OutputSchema` shape so the editor and runtime share one parser.
+   */
+  parser?: OutputSchema;
+  /**
+   * Template text a `text` node composes; `${var}` references are expanded to
+   * earlier variables and the result becomes the node's output. Present only
+   * for `text` kind; absent elsewhere.
+   */
+  text?: string;
   /** Canvas coordinates for the visual editor. */
   position: { x: number; y: number };
 }

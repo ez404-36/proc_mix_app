@@ -70,6 +70,13 @@ export interface OutputSchemaEditorProps {
    * once they type, their value wins.
    */
   sampleOutput?: string;
+  /**
+   * Hide the "Sample output (for preview)" textarea entirely and drive all
+   * previews from `sampleOutput` directly. Used by the workflow `parser` node,
+   * where the modal's "example input" column already IS the sample, so a
+   * duplicate sample field would be redundant.
+   */
+  hideSample?: boolean;
   t: TFunction;
 }
 
@@ -88,7 +95,7 @@ export interface OutputSchemaEditorProps {
 export function OutputSchemaEditor(
   props: OutputSchemaEditorProps,
 ): ReactElement {
-  const { value, onChange, sampleOutput, t } = props;
+  const { value, onChange, sampleOutput, hideSample = false, t } = props;
   const enabled = value !== undefined;
 
   const [sample, setSample] = useState<string>(() => value?.sample ?? "");
@@ -372,16 +379,21 @@ export function OutputSchemaEditor(
     runPreviewRef.current = (text: string) => void runPreview(text);
   }, [runPreview]);
 
+  // The text all previews run against: when the sample textarea is hidden
+  // (`hideSample`), drive previews from `sampleOutput` directly (the modal's
+  // input column is the sample); otherwise from the in-editor `sample` state.
+  const effectiveSample = hideSample ? (sampleOutput ?? "") : sample;
+
   useEffect(() => {
-    if (value === undefined || sample === "") {
+    if (value === undefined || effectiveSample === "") {
       setPreview(null);
       return;
     }
     const id = window.setTimeout(() => {
-      runPreviewRef.current(sample);
+      runPreviewRef.current(effectiveSample);
     }, 300);
     return () => window.clearTimeout(id);
-  }, [value, sample]);
+  }, [value, effectiveSample]);
 
   useEffect(() => {
     if (sampleEditedRef.current) return;
@@ -468,7 +480,9 @@ export function OutputSchemaEditor(
       {enabled && value ? (
         <div className="command-form__output-schema-body">
 
-          {/* Sample textarea — always at the top */}
+          {/* Sample textarea — always at the top. Hidden for the parser node,
+              whose modal input column already serves as the sample. */}
+          {!hideSample ? (
           <div className="command-form__field">
             <span className="command-form__label">
               {t("commandForm.outputSchema.sample", {
@@ -522,6 +536,7 @@ export function OutputSchemaEditor(
               </>
             ) : null}
           </div>
+          ) : null}
 
           {/* Pipeline flow */}
           <div className="command-form__output-schema-flow">

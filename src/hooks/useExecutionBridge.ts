@@ -3,6 +3,7 @@ import i18n from "../i18n";
 import { useCommandStore } from "../stores/commandStore";
 import { useExecutionStore } from "../stores/executionStore";
 import { useHistoryStore } from "../stores/historyStore";
+import { useWorkflowRunStore } from "../stores/workflowRunStore";
 import type { ExecutionEvent, RunStatus } from "../types";
 import { getCommandName } from "../utils/commandLabels";
 import { subscribeExecutionEvents } from "../utils/executor";
@@ -88,12 +89,17 @@ function routeWorkflowNodeEvent(
   workflowRunId: string,
 ): void {
   const store = useExecutionStore.getState();
+  const runStore = useWorkflowRunStore.getState();
   if (event.kind === "stdout") {
     store.appendLog(workflowRunId, {
       stream: "stdout",
       line: event.line,
       ts: Date.now(),
     });
+    // ALSO capture the line against this specific node so the editor's node
+    // modal can show that node's own output (the aggregate above mixes all
+    // nodes together and is not addressable per node).
+    runStore.appendNodeOutputLine(workflowRunId, event.executionId, event.line);
     return;
   }
   if (event.kind === "stderr") {
@@ -102,6 +108,19 @@ function routeWorkflowNodeEvent(
       line: event.line,
       ts: Date.now(),
     });
+    runStore.appendNodeOutputLine(workflowRunId, event.executionId, event.line);
+    return;
+  }
+  if (event.kind === "result") {
+    // The node's structured output-schema extraction. Dropped from the
+    // aggregate console but kept per-node so a downstream node's "example
+    // input" (and this node's "example result") can show the schema view.
+    runStore.setNodeOutputResult(workflowRunId, event.executionId, {
+      fields: event.fields,
+      returnValue: event.returnValue,
+      ...(event.error !== undefined ? { error: event.error } : {}),
+    });
+    return;
   }
   // started / finished / error / cancelled: no-op for the aggregate. The
   // workflow bridge handles run lifecycle + step headers.

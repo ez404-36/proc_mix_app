@@ -19,6 +19,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 import { useExecutionBridge } from "./useExecutionBridge";
 import { useExecutionStore } from "../stores/executionStore";
 import { useCommandStore } from "../stores/commandStore";
+import { useWorkflowRunStore } from "../stores/workflowRunStore";
 
 type Handler = (e: ExecutionEvent) => void;
 
@@ -356,6 +357,42 @@ describe("useExecutionBridge - workflow node routing", () => {
     // The aggregate's terminal status is owned by the workflow bridge, so
     // the node's finished event must NOT flip it.
     expect(state.executions["run-1"].status).toBe("running");
+  });
+
+  it("captures a workflow node's stdout + result into per-node nodeOutputs", () => {
+    const { handler } = mountBridge();
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    // Set up the run + the node→execution mapping the capture resolves against.
+    const runStore = useWorkflowRunStore.getState();
+    runStore.clearAll();
+    runStore.startRun("run-1", "wf-1");
+    runStore.markNodeStarted("run-1", "node-A", "node-exec-1");
+
+    handler({
+      kind: "stdout",
+      executionId: "node-exec-1",
+      line: "line one",
+      workflowRunId: "run-1",
+    });
+    handler({
+      kind: "stdout",
+      executionId: "node-exec-1",
+      line: "line two",
+      workflowRunId: "run-1",
+    });
+    handler({
+      kind: "result",
+      executionId: "node-exec-1",
+      fields: { count: 2 },
+      returnValue: 2,
+      workflowRunId: "run-1",
+    });
+
+    const out = useWorkflowRunStore.getState().runs["run-1"].nodeOutputs[
+      "node-A"
+    ];
+    expect(out.stdout).toBe("line one\nline two");
+    expect(out.result).toEqual({ fields: { count: 2 }, returnValue: 2 });
   });
 
   it("should leave direct (non-workflow) runs on the unchanged standalone path", () => {

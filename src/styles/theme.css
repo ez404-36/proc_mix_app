@@ -1077,6 +1077,13 @@ select {
   box-shadow: var(--console-shadow);
 }
 
+/* When the workflow editor is fullscreen (a fixed layer at z-index 1000), lift
+   the docked console above it so a run's output stays visible without leaving
+   fullscreen. The body class is toggled by WorkflowCanvas. */
+body.is-editor-fullscreen .output-panel {
+  z-index: calc(var(--z-modal, 1000) + 1);
+}
+
 /* Bottom dock (default) */
 .output-panel--bottom {
   left: 0;
@@ -4483,6 +4490,40 @@ select {
   font-weight: 600;
 }
 
+/* `data` node card: one `$name = <source>` row per assignment. Keeps the card
+   compact — values truncate, and a tall list scrolls rather than growing the
+   node unbounded. */
+.wf-node__assignments {
+  margin: 0;
+  max-width: 220px;
+  max-height: 120px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.wf-node__assignment {
+  display: flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.wf-node__assignment-key {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.wf-node__assignment-eq {
+  color: var(--color-text-muted);
+}
+
+.wf-node__assignment-val {
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Row holding the predicate summary on the LEFT and the да/нет branch labels
    on the right, so the predicate reads next to the outcomes it governs. */
 .wf-node__branches-row {
@@ -4539,6 +4580,14 @@ select {
 
 .wf-node--data {
   border-color: var(--color-text-muted);
+}
+
+.wf-node--parser {
+  border-color: var(--color-accent);
+}
+
+.wf-node--text {
+  border-color: var(--color-accent);
 }
 
 .wf-node__branches {
@@ -4937,6 +4986,120 @@ select {
   font-weight: 600;
   color: var(--color-text);
   cursor: help;
+}
+
+/* `data` node result: read-only key=value info block of the variables it
+   records (a data node returns no output of its own). */
+.wf-node-modal__vars {
+  flex: 1;
+  min-height: 160px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  background: var(--console-bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow: auto;
+}
+
+.wf-node-modal__var-row {
+  display: flex;
+  gap: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.wf-node-modal__var-key {
+  color: var(--console-stdout);
+  font-weight: 600;
+}
+
+.wf-node-modal__var-eq {
+  color: var(--color-text-muted);
+}
+
+.wf-node-modal__var-val {
+  color: var(--console-stdout);
+}
+
+/* The `text` node's template editor: an overlay-highlight pattern (mirrors the
+   command-form Script field). A `<pre>` paints the `${var}` references behind a
+   transparent textarea. The overlay and textarea MUST share identical metrics
+   (font, size, line-height, padding, wrapping) so glyphs align exactly. */
+.wf-text-editor {
+  position: relative;
+  width: 100%;
+  min-height: 140px;
+}
+
+/* The shared text metrics for both layers — identical padding/font/wrapping so
+   glyphs align. Each layer adds its own border (the textarea a visible one via
+   `.input`, the overlay a transparent one of the same width). */
+.wf-node-modal__text-input,
+.wf-text-editor__overlay {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Textarea sits on top, transparent text so the overlay shows through; the
+   caret stays visible. Owns input, selection, scrolling, and the context
+   menu. Keeps the visible `.input` border (1px); the overlay mirrors that
+   width with a transparent border so the two layers line up. */
+.wf-text-editor__input {
+  position: relative;
+  z-index: 1;
+  min-height: 140px;
+  resize: vertical;
+  color: transparent;
+  caret-color: var(--color-text);
+  background: transparent;
+}
+
+.wf-text-editor__input::selection {
+  background: rgba(37, 99, 235, 0.35);
+  color: var(--color-text);
+}
+
+/* Overlay sits behind the textarea, out of the a11y tree and pointer events so
+   right-click / selection land on the textarea. Border is transparent (the
+   textarea draws the real one) so the two layers align. */
+.wf-text-editor__overlay {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border: 1px solid transparent;
+  color: var(--color-text);
+  background: transparent;
+}
+
+/* A `${var}` reference to a known (available) variable — brand blue, matching
+   the command-form Script field. */
+.wf-text-editor__var--known {
+  color: var(--color-primary);
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.25);
+}
+
+/* A `${var}` reference whose name is not an available variable — danger colour
+   so the author spots the typo / out-of-scope name. */
+.wf-text-editor__var--unknown {
+  color: var(--color-danger);
+  background: rgba(220, 38, 38, 0.08);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.3);
 }
 
 /* Shared button + modal-footer classes the editor relies on */

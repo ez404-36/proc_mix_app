@@ -11,6 +11,7 @@ import { resolveVariableValues } from "./commandRunner";
 import {
   awaitWorkflowBridgeReady,
   executeWorkflow as invokeExecuteWorkflow,
+  executeWorkflowFromNode as invokeExecuteWorkflowFromNode,
 } from "../utils/workflowRunner";
 
 function makeHistoryEventId(): string {
@@ -128,7 +129,11 @@ async function resolveNodeVariableValues(
   const commandsById = new Map(
     useCommandStore.getState().commands.map((c) => [c.id, c]),
   );
-  const perCommandCache = new Map<string, Record<string, string>>();
+  // Cache the resolved values by a key that captures BOTH the command and the
+  // node's per-variable source bindings, so two nodes that run the same
+  // command with the SAME bindings are only prompted once, while two nodes
+  // with DIFFERENT bindings are resolved (and prompted) independently.
+  const cache = new Map<string, Record<string, string>>();
   const result: NodeVariableValues = {};
   for (const node of workflow.nodes) {
     if (node.commandId === undefined) continue;
@@ -136,15 +141,35 @@ async function resolveNodeVariableValues(
     // A missing command is already handled by
     // `ensureReferencedCommandsPersisted`; defensively skip here too.
     if (cmd === undefined) continue;
-    let values = perCommandCache.get(node.commandId);
+
+    const sources = node.variableSources ?? {};
+    // Pre-supply a value for every variable bound to a non-prompt source so
+    // `resolveVariableValues` does NOT open the prompt for it:
+    //   - `manual` → the literal the author typed (also re-applied by the
+    //     engine, so it is authoritative either way).
+    //   - any other non-`atRun` source (rawOutput / field / exitCode / …) →
+    //     an empty placeholder; the engine OVERRIDES it from the predecessor
+    //     at run time, so the value passed here is irrelevant — its only job
+    //     is to suppress the prompt for a value the user did not choose to
+    //     enter by hand.
+    // A variable bound to `atRun` (or unbound) is left to prompt as before.
+    const callerSupplied: Record<string, string> = {};
+    for (const [name, source] of Object.entries(sources)) {
+      if (source.kind === "atRun") continue;
+      callerSupplied[name] =
+        source.kind === "manual" ? source.value : "";
+    }
+
+    const cacheKey = `${node.commandId}\u0000${JSON.stringify(sources)}`;
+    let values = cache.get(cacheKey);
     if (values === undefined) {
-      const resolved = await resolveVariableValues(cmd, {});
+      const resolved = await resolveVariableValues(cmd, callerSupplied);
       if (resolved === null) {
         // User cancelled the prompt — abort the entire run.
         return null;
       }
       values = resolved;
-      perCommandCache.set(node.commandId, values);
+      cache.set(cacheKey, values);
     }
     if (Object.keys(values).length > 0) {
       result[node.id] = values;
@@ -193,32 +218,82 @@ export async function triggerWorkflowRun(
   try {
     await awaitWorkflowBridgeReady();
     const runId = await invokeExecuteWorkflow(workflow, nodeVariableValues);
-    // Capture each node's command id from the (possibly unsaved) graph so the
-    // console step headers can resolve command name + script regardless of
-    // whether the workflow is persisted in `workflowStore`.
-    const nodeCommandIds: Record<string, string> = {};
-    for (const node of workflow.nodes) {
-      if (node.commandId !== undefined) {
-        nodeCommandIds[node.id] = node.commandId;
-      }
+    await registerStartedRun(workflow, runId);
+    return runId;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    Message.error(`Failed to run "${workflow.name}": ${message}`);
+    return null;
+  }
+}
+
+/**
+ * Register a just-started run with the progress store, execution console, and
+ * history — the shared tail of {@link triggerWorkflowRun} and
+ * {@link triggerWorkflowRunFromNode}. Captures each node's command id from the
+ * (possibly unsaved) graph so console step headers can resolve a node's
+ * command even when the workflow is a draft.
+ */
+async function registerStartedRun(
+  workflow: Workflow,
+  runId: string,
+): Promise<void> {
+  const nodeCommandIds: Record<string, string> = {};
+  for (const node of workflow.nodes) {
+    if (node.commandId !== undefined) {
+      nodeCommandIds[node.id] = node.commandId;
     }
-    useWorkflowRunStore.getState().startRun(runId, workflow.id, nodeCommandIds);
-    useWorkflowStore.getState().markWorkflowRun(workflow.id);
-    // Register the single aggregated terminal process for this run, keyed
-    // by the run id. Every node's output (routed by `workflowRunId` in
-    // `useExecutionBridge`) and the step headers (`useWorkflowBridge`) fold
-    // into this one entry instead of N standalone executions. Opens the
-    // OutputPanel immediately, mirroring `triggerCommandRun`.
-    useExecutionStore.getState().startWorkflowExecution(runId, workflow.name);
-    // AWAIT the history insert so the row exists before the bridge's
-    // terminal-event handler tries to finalize it. A history-write failure
-    // must NOT abort the user's run, so we catch and log rather than let it
-    // propagate.
-    try {
-      await recordWorkflowRunStart(runId, workflow.id, workflow.name);
-    } catch (histErr: unknown) {
-      console.error("failed to record workflowRun history event", histErr);
-    }
+  }
+  useWorkflowRunStore.getState().startRun(runId, workflow.id, nodeCommandIds);
+  useWorkflowStore.getState().markWorkflowRun(workflow.id);
+  // The single aggregated terminal process for this run; every node's output
+  // folds into it (see triggerWorkflowRun for the full rationale).
+  useExecutionStore.getState().startWorkflowExecution(runId, workflow.name);
+  // AWAIT the history insert so the row exists before the bridge's terminal
+  // event tries to finalize it. A history-write failure must not abort the run.
+  try {
+    await recordWorkflowRunStart(runId, workflow.id, workflow.name);
+  } catch (histErr: unknown) {
+    console.error("failed to record workflowRun history event", histErr);
+  }
+}
+
+/**
+ * Run a workflow STARTING FROM `startNodeId` — the editor's per-node "run"
+ * action. Executes that node and every downstream node, seeding the entry
+ * node's input with `seedInput` (its "example input": a prior run's capture, a
+ * manual sample, or `null`/empty). Same ordering guarantees as
+ * {@link triggerWorkflowRun} (persist commands → resolve variables → await
+ * bridge → invoke → register). Downstream nodes recompute their previews from
+ * the streamed per-node events.
+ *
+ * Returns the run id, or `null` (missing command / IPC error → toast;
+ * cancelled variable prompt → quiet abort).
+ */
+export async function triggerWorkflowRunFromNode(
+  workflow: Workflow,
+  startNodeId: string,
+  seedInput: string | null,
+): Promise<string | null> {
+  const persisted = await ensureReferencedCommandsPersisted(workflow);
+  if (!persisted) {
+    return null;
+  }
+
+  const nodeVariableValues = await resolveNodeVariableValues(workflow);
+  if (nodeVariableValues === null) {
+    return null;
+  }
+
+  try {
+    await awaitWorkflowBridgeReady();
+    const runId = await invokeExecuteWorkflowFromNode(
+      workflow,
+      nodeVariableValues,
+      startNodeId,
+      seedInput,
+    );
+    await registerStartedRun(workflow, runId);
     return runId;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

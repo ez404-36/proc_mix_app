@@ -45,9 +45,25 @@ function commandBaseOptions(): DataSourceOption[] {
  * schema. These become `field` data sources.
  */
 export function commandSchemaFieldNames(command: Command): string[] {
+  return schemaFieldNames(command.outputSchema);
+}
+
+/** Whether a command declares an output schema at all (≥1 pipeline step).
+ * The `schemaOutput` source — the WHOLE extracted result — is meaningful for
+ * ANY schema, even parsers like `raw` / `keyValue` / `table` that declare no
+ * named `fields`; only the per-`field` sources need declared field names. */
+export function commandHasOutputSchema(command: Command): boolean {
+  return (command.outputSchema?.pipeline?.length ?? 0) > 0;
+}
+
+/** Distinct field names declared across an output schema's pipeline steps
+ * (deduped, order-preserving). Shared by the command and parser enumerations. */
+function schemaFieldNames(
+  schema: { pipeline?: ReadonlyArray<{ fields: ReadonlyArray<{ name: string }> }> } | undefined,
+): string[] {
   const seen = new Set<string>();
   const names: string[] = [];
-  for (const step of command.outputSchema?.pipeline ?? []) {
+  for (const step of schema?.pipeline ?? []) {
     for (const f of step.fields) {
       if (f.name !== "" && !seen.has(f.name)) {
         seen.add(f.name);
@@ -56,6 +72,21 @@ export function commandSchemaFieldNames(command: Command): string[] {
     }
   }
   return names;
+}
+
+/**
+ * The distinct field names a `parser` node extracts, across every pipeline
+ * step (deduped, order-preserving). Empty when the node has no parser schema.
+ * Mirrors {@link commandSchemaFieldNames} but reads the node's own `parser`
+ * schema instead of a referenced command's.
+ */
+function parserFieldNames(node: WorkflowFlowNode): string[] {
+  return schemaFieldNames(node.data.parser);
+}
+
+/** Whether a `parser` node declares a schema at all (≥1 pipeline step). */
+function parserHasSchema(node: WorkflowFlowNode): boolean {
+  return (node.data.parser?.pipeline?.length ?? 0) > 0;
 }
 
 /**
@@ -95,6 +126,47 @@ export function dataSourceOptions(
     return options;
   }
 
+  // A `parser` node runs no command but produces extracted fields (and carries
+  // the input it parsed as raw output). Offer raw output, the whole schema
+  // result, and each declared field — same shapes a command's schema exposes.
+  if (kind === "parser") {
+    options.push({
+      id: "rawOutput",
+      source: { kind: "rawOutput" },
+      labelKey: "editor.inspector.data.source.rawOutput",
+    });
+    const fields = parserFieldNames(predecessor);
+    // The whole extracted result is meaningful whenever the parser has a
+    // schema, even with no declared fields (raw / keyValue / table).
+    if (parserHasSchema(predecessor)) {
+      options.push({
+        id: "schemaOutput",
+        source: { kind: "schemaOutput" },
+        labelKey: "editor.inspector.data.source.schemaOutput",
+      });
+    }
+    for (const field of fields) {
+      options.push({
+        id: `field:${field}`,
+        source: { kind: "field", field },
+        labelKey: "editor.inspector.data.source.field",
+        field,
+      });
+    }
+    return options;
+  }
+
+  // A `text` node runs no command but produces its composed text as output,
+  // readable downstream via `rawOutput`.
+  if (kind === "text") {
+    options.push({
+      id: "rawOutput",
+      source: { kind: "rawOutput" },
+      labelKey: "editor.inspector.data.source.rawOutput",
+    });
+    return options;
+  }
+
   // start / data / end produce no value of their own → manual only.
   const isCommandBearing =
     kind === "command" ||
@@ -116,7 +188,9 @@ export function dataSourceOptions(
       : commands.find((c) => c.id === predecessor.data.commandId);
   if (command !== undefined) {
     const fields = commandSchemaFieldNames(command);
-    if (fields.length > 0) {
+    // The whole extracted result is meaningful whenever the command declares a
+    // schema, even when it has no NAMED fields (raw / keyValue / table parsers).
+    if (commandHasOutputSchema(command)) {
       options.push({
         id: "schemaOutput",
         source: { kind: "schemaOutput" },

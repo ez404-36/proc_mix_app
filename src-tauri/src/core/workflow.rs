@@ -26,6 +26,7 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{oneshot, Mutex};
 
 use crate::core::executor::{self, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus};
+use crate::core::extractor::{self, ExtractedOutput};
 use crate::core::workflow_condition::{self, EvalContext};
 use crate::storage::commands::CommandRecord;
 use crate::storage::workflows::{
@@ -99,6 +100,8 @@ enum NodeKind {
     Loop,
     Try,
     Data,
+    Parser,
+    Text,
     End,
 }
 
@@ -112,6 +115,8 @@ impl NodeKind {
             "loop" => Some(NodeKind::Loop),
             "try" => Some(NodeKind::Try),
             "data" => Some(NodeKind::Data),
+            "parser" => Some(NodeKind::Parser),
+            "text" => Some(NodeKind::Text),
             "end" => Some(NodeKind::End),
             _ => None,
         }
@@ -503,24 +508,52 @@ fn extracted_to_values(outcome: &NodeOutcome) -> BTreeMap<String, String> {
     out
 }
 
-/// Merge upstream data-flow values with a node's own per-node values.
+/// Resolve the variable values for a command-bearing node, honouring each
+/// variable's explicit per-variable [`DataSourceRecord`] when the node
+/// declares one in `variable_sources`.
 ///
-/// Priority (highest first):
-///   1. The node's own `node_variable_values` (prompt / user-supplied).
-///   2. Upstream `data_flow` fields from the previous node.
+/// Resolution order, per variable:
+///   1. An explicit source in `variable_sources` wins. It is resolved against
+///      the previous node's outcome / data-flow via [`resolve_data_source`] —
+///      EXCEPT `AtRun`, which means "the user was prompted; the value arrives
+///      through `node_values`", so that variable keeps its `node_values` /
+///      data-flow value untouched.
+///   2. A variable with no explicit source keeps the engine default: the
+///      `node_values` (prompt) value over the upstream `data_flow` field
+///      (same as [`merge_variable_values`]).
 ///
-/// So a value the user explicitly provided for a node always wins over a
-/// same-named field carried from the predecessor — matching the accepted
-/// design ("prompt/user > data-flow > spec default"; the executor still
-/// applies each spec's default for any name absent from BOTH maps).
-fn merge_variable_values(
-    data_flow: &BTreeMap<String, String>,
+/// The executor still applies each `VariableSpec.default_value` for any name
+/// absent from the returned map, so the net priority stays
+/// "explicit-source / prompt > data-flow > spec default".
+fn resolve_variable_values(
+    variable_sources: &BTreeMap<String, DataSourceRecord>,
     node_values: Option<&BTreeMap<String, String>>,
+    prev: Option<&PrevOutcome>,
+    data_flow: &BTreeMap<String, String>,
+    vars: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
-    let mut merged = data_flow.clone();
+    // Base layering (lowest → highest): persistent `data`-node vars, then the
+    // predecessor's transient data_flow, then the node's prompt/user values.
+    // So a `data`-node variable is available by name to ANY later node, while
+    // a same-named predecessor field or prompt value still wins.
+    let mut merged = vars.clone();
+    for (k, v) in data_flow {
+        merged.insert(k.clone(), v.clone());
+    }
     if let Some(node_values) = node_values {
         for (k, v) in node_values {
             merged.insert(k.clone(), v.clone());
+        }
+    }
+    for (name, source) in variable_sources {
+        match source {
+            // The prompt path already populated `merged` from `node_values`;
+            // do not clobber it. (If no value was supplied, leaving it absent
+            // lets the executor fall back to the spec default / prompt.)
+            DataSourceRecord::AtRun => {}
+            other => {
+                merged.insert(name.clone(), resolve_data_source(other, prev, data_flow, vars));
+            }
         }
     }
     merged
@@ -661,6 +694,7 @@ fn resolve_data_source(
     source: &DataSourceRecord,
     prev: Option<&PrevOutcome>,
     data_flow: &BTreeMap<String, String>,
+    vars: &BTreeMap<String, String>,
 ) -> String {
     match source {
         DataSourceRecord::Manual { value } => expand_refs(value, data_flow),
@@ -694,21 +728,147 @@ fn resolve_data_source(
             .and_then(|p| p.loop_iterations)
             .map(|n| n.to_string())
             .unwrap_or_default(),
+        // A named variable assigned by ANY upstream `data` node, looked up in
+        // the persistent `vars` map (which survives the whole run, unlike the
+        // transient `data_flow` a command node replaces). Missing → empty.
+        DataSourceRecord::DataVar { name } => vars.get(name).cloned().unwrap_or_default(),
+        // `AtRun` carries no value of its own here: it means "the user is
+        // prompted at run time and the value arrives via node_variable_values".
+        // As a `data` assignment source (where there is no prompt step) it has
+        // nothing to resolve, so it degrades to empty like any inapplicable
+        // source. Variable-source resolution handles it separately (it never
+        // calls this for `AtRun`).
+        DataSourceRecord::AtRun => String::new(),
     }
 }
 
-/// Apply a `data` node's assignments to the data-flow map, in order, pulling
-/// each value from its source (see [`resolve_data_source`]). A later
-/// assignment sees an earlier one in the same node (the `Manual` `${ref}`
-/// expansion reads the live `data_flow`). Pure — fully unit-testable.
+/// Apply a `data` node's assignments to the PERSISTENT `vars` map, in order,
+/// pulling each value from its source (see [`resolve_data_source`]). A `data`
+/// node does NOT produce a node result — it only records named variables that
+/// stay live for the WHOLE run (a later command node replaces `data_flow` with
+/// its own fields, but never touches `vars`), so any downstream node can read
+/// them by name via a `dataVar` source.
+///
+/// Resolution reads against a scope = `vars` overlaid with the predecessor's
+/// `data_flow`, so `${ref}` / `dataVar` see both earlier assignments in this
+/// same node AND the immediate predecessor's fields. Pure — unit-testable.
 fn apply_data_assignments(
     assignments: &[DataAssignmentRecord],
     prev: Option<&PrevOutcome>,
-    data_flow: &mut BTreeMap<String, String>,
+    data_flow: &BTreeMap<String, String>,
+    vars: &mut BTreeMap<String, String>,
 ) {
     for a in assignments {
-        let value = resolve_data_source(&a.effective_source(), prev, data_flow);
-        data_flow.insert(a.name.clone(), value);
+        // Scope for `${ref}` / dataVar: persistent vars (incl. earlier
+        // assignments in this node) UNDER the predecessor's transient fields.
+        let mut scope = vars.clone();
+        for (k, v) in data_flow {
+            scope.insert(k.clone(), v.clone());
+        }
+        let value = resolve_data_source(&a.effective_source(), prev, &scope, vars);
+        vars.insert(a.name.clone(), value);
+    }
+}
+
+/// Project an [`ExtractedOutput`]'s fields into the `${name}` string map the
+/// data-flow carries — same rule as [`extracted_to_values`] but applied to a
+/// parser node's standalone extraction (which is not a `NodeOutcome`).
+fn extracted_output_to_values(extracted: &ExtractedOutput) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for (name, value) in &extracted.fields {
+        let text = match value {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        out.insert(name.clone(), text);
+    }
+    out
+}
+
+/// Apply a `parser` node: run the node's output-schema pipeline over the
+/// PREVIOUS node's raw stdout (the same `core::extractor` a command's output
+/// schema uses), then OVERWRITE the data-flow with the freshly extracted
+/// fields so downstream nodes read the parsed values. Returns the new
+/// [`PrevOutcome`] the parser produces: its `fields` are the extracted fields
+/// and its `stdout_tail` carries the input it parsed, so a node after the
+/// parser can still pull `rawOutput` (the unparsed upstream text) if it wants.
+///
+/// Lenient like the rest of the engine: a parser with no schema, or a parse
+/// failure, leaves the data-flow untouched and carries the input through —
+/// it never aborts the run (a malformed parse is the author's concern, not a
+/// crash). Pure — no executor, fully unit-testable.
+fn apply_parser_node(
+    parser: Option<&crate::storage::commands::OutputSchemaRecord>,
+    prev: Option<&PrevOutcome>,
+    data_flow: &mut BTreeMap<String, String>,
+) -> PrevOutcome {
+    let input = prev.and_then(|p| p.stdout_tail.clone()).unwrap_or_default();
+    let mut out = PrevOutcome {
+        stdout_tail: Some(input.clone()),
+        ..Default::default()
+    };
+    if let Some(schema) = parser {
+        if let Ok(extracted) = extractor::extract(schema, &input) {
+            let fields = extracted_output_to_values(&extracted);
+            // Overwrite the data-flow with the parser's fields, mirroring how a
+            // command-bearing node replaces data_flow with its own extraction.
+            *data_flow = fields.clone();
+            out.fields = fields;
+        }
+    }
+    out
+}
+
+/// The reserved `text`-node variable that expands to the previous node's raw
+/// output (`${raw_input}`).
+const TEXT_RAW_INPUT_VAR: &str = "raw_input";
+/// The reserved `text`-node variable that expands to the previous node's
+/// extracted output schema as a compact JSON object (`${schema_input}`).
+const TEXT_SCHEMA_INPUT_VAR: &str = "schema_input";
+
+/// Apply a `text` node: expand the `${var}` references in `template` against
+/// the run's variables — the persistent `data`-node vars (`vars`) overlaid
+/// with the predecessor's transient `data_flow`, PLUS two reserved specials
+/// for the predecessor's input: `${raw_input}` (its raw stdout, with trailing
+/// newlines stripped so it composes inline) and `${schema_input}` (its
+/// extracted fields as a compact JSON object). The
+/// expanded string becomes this node's output (carried as `stdout_tail`), so a
+/// downstream node consumes it via `rawOutput`. A missing reference expands to
+/// empty (lenient, like `expand_refs` elsewhere). An absent template yields
+/// empty output. Pure — fully unit-testable.
+fn apply_text_node(
+    template: Option<&str>,
+    prev: Option<&PrevOutcome>,
+    data_flow: &BTreeMap<String, String>,
+    vars: &BTreeMap<String, String>,
+) -> PrevOutcome {
+    // Scope = persistent vars overlaid with the predecessor's transient fields,
+    // then the reserved input specials (which win, being the documented names).
+    let mut scope = vars.clone();
+    for (k, v) in data_flow {
+        scope.insert(k.clone(), v.clone());
+    }
+    // `${raw_input}` is a "drop the previous output into my text" helper, so a
+    // command's trailing newline (`df`, `echo`, … almost always end in `\n`)
+    // is virtually never wanted INLINE — it would push following text onto a
+    // new line. Strip ONLY trailing newlines; leading and internal content is
+    // preserved verbatim. (The `rawOutput` data source elsewhere is left
+    // byte-exact — this trim is scoped to the text node's inline insertion.)
+    let raw_input = prev
+        .and_then(|p| p.stdout_tail.clone())
+        .map(|s| s.trim_end_matches(['\n', '\r']).to_string())
+        .unwrap_or_default();
+    scope.insert(TEXT_RAW_INPUT_VAR.to_string(), raw_input);
+    let schema_input = match prev {
+        Some(p) if !p.fields.is_empty() => serde_json::to_string(&p.fields).unwrap_or_default(),
+        _ => String::new(),
+    };
+    scope.insert(TEXT_SCHEMA_INPUT_VAR.to_string(), schema_input);
+
+    let expanded = expand_refs(template.unwrap_or(""), &scope);
+    PrevOutcome {
+        stdout_tail: Some(expanded),
+        ..Default::default()
     }
 }
 
@@ -838,6 +998,8 @@ async fn run_command_bearing_node<R: Runtime>(
     node: &WorkflowNodeRecord,
     node_variable_values: &HashMap<String, BTreeMap<String, String>>,
     data_flow: &mut BTreeMap<String, String>,
+    vars: &BTreeMap<String, String>,
+    prev: Option<&PrevOutcome>,
     ctx: RunContext<'_>,
     retry: Option<&RetryConfigRecord>,
     cancel_rx: &mut oneshot::Receiver<()>,
@@ -857,7 +1019,13 @@ async fn run_command_bearing_node<R: Runtime>(
 
     let mut attempt: u32 = 1;
     loop {
-        let values = merge_variable_values(data_flow, node_variable_values.get(&node.id));
+        let values = resolve_variable_values(
+            &node.variable_sources,
+            node_variable_values.get(&node.id),
+            prev,
+            data_flow,
+            vars,
+        );
         let outcome = run_command_node(
             app,
             executor_state.clone(),
@@ -915,6 +1083,26 @@ async fn run_command_bearing_node<R: Runtime>(
 /// `Result` and the caller emits the single terminal event. `cancel_rx`
 /// is selected against each node's completion so a cancel mid-run stops
 /// traversal and tears down the in-flight node.
+/// Where a traversal begins, and (for a node-scoped run) the input that node
+/// is seeded with.
+///
+///   - `Start` → the normal whole-graph run: begin at the single `start` node
+///     with an empty data-flow and no previous outcome.
+///   - `Node { node_id, seed_input }` → a "run from this node" run: begin at
+///     `node_id`, treating `seed_input` as the raw output of an imaginary
+///     predecessor. The node and EVERY downstream node then execute exactly as
+///     in a normal run, so downstream previews recompute. The seed represents
+///     "whatever was in this node's input-example column" (a prior run's
+///     capture, a manual sample, or nothing) — the engine does not care how it
+///     was obtained.
+enum TraverseStart {
+    Start,
+    Node {
+        node_id: String,
+        seed_input: Option<String>,
+    },
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn traverse<R: Runtime>(
     app: &AppHandle<R>,
@@ -924,6 +1112,7 @@ async fn traverse<R: Runtime>(
     node_variable_values: &HashMap<String, BTreeMap<String, String>>,
     run_id: &str,
     silent: bool,
+    start: TraverseStart,
     mut cancel_rx: oneshot::Receiver<()>,
 ) -> Result<(), WorkflowError> {
     let node_index: HashMap<String, usize> = workflow
@@ -933,8 +1122,32 @@ async fn traverse<R: Runtime>(
         .map(|(i, n)| (n.id.clone(), i))
         .collect();
 
-    let start_idx = find_start(&workflow.nodes)?;
-    let mut current = workflow.nodes[start_idx].id.clone();
+    // Resolve the entry node and the initial `prev` from the start descriptor.
+    // A node-scoped run seeds `prev.stdout_tail` with the node's input example
+    // so its `rawOutput` / parser sources (and a downstream node's data-flow)
+    // see the same bytes the editor showed.
+    let (mut current, seeded_prev) = match &start {
+        TraverseStart::Start => {
+            let start_idx = find_start(&workflow.nodes)?;
+            (workflow.nodes[start_idx].id.clone(), None)
+        }
+        TraverseStart::Node {
+            node_id,
+            seed_input,
+        } => {
+            if !node_index.contains_key(node_id) {
+                return Err(WorkflowError::DanglingEdge(
+                    "<start-node>".into(),
+                    node_id.clone(),
+                ));
+            }
+            let prev = seed_input.as_ref().map(|input| PrevOutcome {
+                stdout_tail: Some(input.clone()),
+                ..Default::default()
+            });
+            (node_id.clone(), prev)
+        }
+    };
     let mut steps = 0usize;
     let ctx = RunContext {
         run_id,
@@ -950,6 +1163,12 @@ async fn traverse<R: Runtime>(
     // own extracted fields.
     let mut data_flow: BTreeMap<String, String> = BTreeMap::new();
 
+    // Persistent named variables set by `data` nodes. UNLIKE `data_flow` (which
+    // a command node replaces with its own extracted fields), this survives the
+    // whole run, so a `data`-node variable is usable by name (via a `dataVar`
+    // source) in ANY later node — not just the immediate successor.
+    let mut vars: BTreeMap<String, String> = BTreeMap::new();
+
     // Per-`loop`-node count of COMPLETED iterations within this run. A loop
     // node is re-entered each time its body sub-graph flows back to it; this
     // map is how the otherwise-stateless traversal remembers how many times
@@ -958,9 +1177,11 @@ async fn traverse<R: Runtime>(
 
     // The outcome of the node executed immediately before the current one, so
     // a `data` node can pull a value from its predecessor (raw output, exit
-    // code, retry count, …). `None` at the start; reset to `None` after a pure
-    // node (`data`/`start`) that produces no outcome of its own.
-    let mut prev: Option<PrevOutcome> = None;
+    // code, retry count, …). `None` for a whole-graph run; for a node-scoped
+    // run it is seeded with the entry node's input example (see TraverseStart).
+    // Reset to `None` after a pure node (`data`/`start`) that produces no
+    // outcome of its own.
+    let mut prev: Option<PrevOutcome> = seeded_prev;
 
     loop {
         steps += 1;
@@ -989,8 +1210,40 @@ async fn traverse<R: Runtime>(
                 // outcome for non-manual sources — then continues on its single
                 // `out` edge. Pure and instant; emits no per-node events. After
                 // it, there is no command outcome to carry, so `prev` is reset.
-                apply_data_assignments(&node.data, prev.as_ref(), &mut data_flow);
-                prev = None;
+                apply_data_assignments(&node.data, prev.as_ref(), &data_flow, &mut vars);
+                // A `data` node produces no result of its own — it only records
+                // persistent vars. `prev` stays as the PREVIOUS node's outcome
+                // so the next node still sees that predecessor's fields/output
+                // (the data node is "transparent" to the data-flow carry).
+                Branch::Out
+            }
+            NodeKind::Parser => {
+                // A `parser` node runs NO command: it re-parses the PREVIOUS
+                // node's raw output through its own output-schema pipeline
+                // (the same `core::extractor` a command uses), overwrites the
+                // data-flow with the extracted fields, and continues on its
+                // single `out` edge. The parser's extraction becomes the new
+                // `prev`, so a downstream node sees the parsed fields exactly
+                // as if a command had produced them.
+                prev = Some(apply_parser_node(
+                    node.parser.as_ref(),
+                    prev.as_ref(),
+                    &mut data_flow,
+                ));
+                Branch::Out
+            }
+            NodeKind::Text => {
+                // A `text` node runs NO command: it expands the `${var}`
+                // references in its template against the run's variables (the
+                // persistent `data`-node vars overlaid with the predecessor's
+                // transient data_flow) and makes the result this node's output,
+                // so a downstream node can consume it via `rawOutput`.
+                prev = Some(apply_text_node(
+                    node.text.as_deref(),
+                    prev.as_ref(),
+                    &data_flow,
+                    &vars,
+                ));
                 Branch::Out
             }
             NodeKind::Command => {
@@ -1001,6 +1254,8 @@ async fn traverse<R: Runtime>(
                     node,
                     node_variable_values,
                     &mut data_flow,
+                    &vars,
+                    prev.as_ref(),
                     ctx,
                     None,
                     &mut cancel_rx,
@@ -1023,6 +1278,8 @@ async fn traverse<R: Runtime>(
                     node,
                     node_variable_values,
                     &mut data_flow,
+                    &vars,
+                    prev.as_ref(),
                     ctx,
                     None,
                     &mut cancel_rx,
@@ -1046,6 +1303,8 @@ async fn traverse<R: Runtime>(
                     node,
                     node_variable_values,
                     &mut data_flow,
+                    &vars,
+                    prev.as_ref(),
                     ctx,
                     None,
                     &mut cancel_rx,
@@ -1123,6 +1382,8 @@ async fn traverse<R: Runtime>(
                     node,
                     node_variable_values,
                     &mut data_flow,
+                    &vars,
+                    prev.as_ref(),
                     ctx,
                     node.retry.as_ref(),
                     &mut cancel_rx,
@@ -1216,6 +1477,71 @@ pub async fn execute_workflow<R: Runtime>(
     node_variable_values: HashMap<String, BTreeMap<String, String>>,
     silent: bool,
 ) -> Result<String, String> {
+    spawn_traversal(
+        app,
+        executor_state,
+        state,
+        workflow,
+        commands,
+        node_variable_values,
+        silent,
+        TraverseStart::Start,
+    )
+    .await
+}
+
+/// Kick off a NODE-SCOPED run: execute `start_node_id` and every node
+/// downstream of it, exactly as a normal run would for that sub-path. The
+/// entry node is seeded with `seed_input` as the raw output of an imaginary
+/// predecessor — i.e. whatever the editor showed in that node's "example
+/// input" column (a prior run's capture, a manual sample, or `None` for an
+/// empty input). Used by the editor's per-node "run" action so a node and all
+/// its successors recompute their input/output previews without re-running the
+/// upstream graph. Streams the same per-node `workflow-event`s as a full run
+/// (never silent), so the canvas/inspector updates live. Returns the run id.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_workflow_from<R: Runtime>(
+    app: AppHandle<R>,
+    executor_state: Arc<ExecutorState>,
+    state: Arc<WorkflowExecutorState>,
+    workflow: WorkflowRecord,
+    commands: HashMap<String, CommandRecord>,
+    node_variable_values: HashMap<String, BTreeMap<String, String>>,
+    start_node_id: String,
+    seed_input: Option<String>,
+) -> Result<String, String> {
+    spawn_traversal(
+        app,
+        executor_state,
+        state,
+        workflow,
+        commands,
+        node_variable_values,
+        // A node-scoped run is always a manual editor action → streams live.
+        false,
+        TraverseStart::Node {
+            node_id: start_node_id,
+            seed_input,
+        },
+    )
+    .await
+}
+
+/// Shared spawn-and-emit core behind [`execute_workflow`] and
+/// [`execute_workflow_from`]: register a cancel handle, spawn the traversal
+/// from `start`, and emit the single terminal event when it ends. Returns the
+/// `run_id` immediately (fire-and-return).
+#[allow(clippy::too_many_arguments)]
+async fn spawn_traversal<R: Runtime>(
+    app: AppHandle<R>,
+    executor_state: Arc<ExecutorState>,
+    state: Arc<WorkflowExecutorState>,
+    workflow: WorkflowRecord,
+    commands: HashMap<String, CommandRecord>,
+    node_variable_values: HashMap<String, BTreeMap<String, String>>,
+    silent: bool,
+    start: TraverseStart,
+) -> Result<String, String> {
     let run_id = uuid::Uuid::new_v4().to_string();
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
 
@@ -1232,7 +1558,7 @@ pub async fn execute_workflow<R: Runtime>(
     let run_id_task = run_id.clone();
     let running_arc = state.running.clone();
     tokio::spawn(async move {
-        let start = Instant::now();
+        let started = Instant::now();
         let result = traverse(
             &app,
             executor_state,
@@ -1241,6 +1567,7 @@ pub async fn execute_workflow<R: Runtime>(
             &node_variable_values,
             &run_id_task,
             silent,
+            start,
             cancel_rx,
         )
         .await;
@@ -1257,7 +1584,7 @@ pub async fn execute_workflow<R: Runtime>(
                 &WorkflowEvent::WorkflowFinished {
                     run_id: run_id_task.clone(),
                     workflow_id: workflow.id.clone(),
-                    duration_ms: start.elapsed().as_millis() as u64,
+                    duration_ms: started.elapsed().as_millis() as u64,
                 },
             ),
             // The dedicated `Cancelled` sentinel maps to the cancelled
@@ -1448,6 +1775,9 @@ mod graph_tests {
             loop_config: None,
             retry: None,
             data: Vec::new(),
+            variable_sources: std::collections::BTreeMap::new(),
+            parser: None,
+            text: None,
             position: NodePosition { x: 0.0, y: 0.0 },
         }
     }
@@ -1862,17 +2192,23 @@ mod graph_tests {
     #[test]
     fn apply_data_assignments_manual_sets_and_chains() {
         // A legacy (source-less) record behaves as a manual `${ref}` template.
+        // `base` comes from the predecessor's data_flow; assignments WRITE to
+        // the persistent `vars` map (a data node returns no result of its own).
         let mut df = BTreeMap::new();
         df.insert("base".into(), "abc".into());
+        let mut vars = BTreeMap::new();
         let assigns = vec![
             manual_assign("greeting", "hello ${base}"),
             // A later assignment sees an earlier one in the same node.
             manual_assign("loud", "${greeting}!"),
         ];
-        apply_data_assignments(&assigns, None, &mut df);
-        assert_eq!(df.get("greeting").map(String::as_str), Some("hello abc"));
-        assert_eq!(df.get("loud").map(String::as_str), Some("hello abc!"));
+        apply_data_assignments(&assigns, None, &df, &mut vars);
+        assert_eq!(vars.get("greeting").map(String::as_str), Some("hello abc"));
+        assert_eq!(vars.get("loud").map(String::as_str), Some("hello abc!"));
+        // The predecessor's data_flow is left untouched (not consumed/cleared).
         assert_eq!(df.get("base").map(String::as_str), Some("abc"));
+        // The data node does NOT write `base` into vars — it only adds its own.
+        assert_eq!(vars.get("base"), None);
     }
 
     #[test]
@@ -1887,7 +2223,8 @@ mod graph_tests {
             loop_iterations: Some(5),
         };
         let df = BTreeMap::new();
-        let r = |s: DataSourceRecord| resolve_data_source(&s, Some(&prev), &df);
+        let vars = BTreeMap::new();
+        let r = |s: DataSourceRecord| resolve_data_source(&s, Some(&prev), &df, &vars);
         assert_eq!(r(DataSourceRecord::RawOutput), "the output\n");
         assert_eq!(r(DataSourceRecord::ExitCode), "3");
         assert_eq!(
@@ -1912,9 +2249,10 @@ mod graph_tests {
             ..Default::default()
         };
         let df = BTreeMap::new();
+        let vars = BTreeMap::new();
         // BTreeMap → deterministic, key-sorted compact JSON object.
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&prev), &df),
+            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&prev), &df, &vars),
             r#"{"count":"42","name":"build"}"#
         );
         // No extracted fields (schema-less command) → empty, not "{}".
@@ -1923,7 +2261,7 @@ mod graph_tests {
             ..Default::default()
         };
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&empty), &df),
+            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&empty), &df, &vars),
             ""
         );
     }
@@ -1932,8 +2270,9 @@ mod graph_tests {
     fn resolve_data_source_inapplicable_is_empty_not_error() {
         // No predecessor, or a source the prev outcome doesn't carry → empty.
         let df = BTreeMap::new();
+        let vars = BTreeMap::new();
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::ExitCode, None, &df),
+            resolve_data_source(&DataSourceRecord::ExitCode, None, &df, &vars),
             ""
         );
         let prev = PrevOutcome {
@@ -1942,7 +2281,7 @@ mod graph_tests {
         };
         // A plain command has no retry count → empty, not a crash.
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::RetryCount, Some(&prev), &df),
+            resolve_data_source(&DataSourceRecord::RetryCount, Some(&prev), &df, &vars),
             ""
         );
         // A missing field → empty.
@@ -1952,7 +2291,8 @@ mod graph_tests {
                     field: "nope".into()
                 },
                 Some(&prev),
-                &df
+                &df,
+                &vars
             ),
             ""
         );
@@ -1965,17 +2305,19 @@ mod graph_tests {
             stdout_tail: Some("hi".into()),
             ..Default::default()
         };
-        let mut df = BTreeMap::new();
+        let df = BTreeMap::new();
+        let mut vars = BTreeMap::new();
         let assigns = vec![
             sourced_assign("code", DataSourceRecord::ExitCode),
             sourced_assign("out", DataSourceRecord::RawOutput),
             manual_assign("greeting", "code=${code}"),
         ];
-        apply_data_assignments(&assigns, Some(&prev), &mut df);
-        assert_eq!(df.get("code").map(String::as_str), Some("7"));
-        assert_eq!(df.get("out").map(String::as_str), Some("hi"));
-        // Manual source sees an earlier sourced assignment via `${ref}`.
-        assert_eq!(df.get("greeting").map(String::as_str), Some("code=7"));
+        apply_data_assignments(&assigns, Some(&prev), &df, &mut vars);
+        assert_eq!(vars.get("code").map(String::as_str), Some("7"));
+        assert_eq!(vars.get("out").map(String::as_str), Some("hi"));
+        // Manual source sees an earlier sourced assignment via `${ref}` (the
+        // resolution scope includes vars assigned earlier in this same node).
+        assert_eq!(vars.get("greeting").map(String::as_str), Some("code=7"));
     }
 
     #[test]
@@ -2000,5 +2342,258 @@ mod graph_tests {
                 value: "hello".into()
             }
         );
+    }
+
+    #[test]
+    fn resolve_data_source_data_var_reads_persistent_vars() {
+        // `DataVar` reads the persistent `vars` map (what any `data` node set),
+        // NOT the transient data_flow or the predecessor's fields.
+        let df = BTreeMap::new();
+        let vars = BTreeMap::from([("token".to_string(), "abc123".to_string())]);
+        assert_eq!(
+            resolve_data_source(
+                &DataSourceRecord::DataVar {
+                    name: "token".into()
+                },
+                None,
+                &df,
+                &vars
+            ),
+            "abc123"
+        );
+        // Missing name → empty (lenient).
+        assert_eq!(
+            resolve_data_source(
+                &DataSourceRecord::DataVar { name: "nope".into() },
+                None,
+                &df,
+                &vars
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn resolve_data_source_at_run_is_empty() {
+        // `AtRun` carries no value of its own through the data-source resolver.
+        let df = BTreeMap::new();
+        let vars = BTreeMap::new();
+        assert_eq!(
+            resolve_data_source(&DataSourceRecord::AtRun, None, &df, &vars),
+            ""
+        );
+    }
+
+    #[test]
+    fn resolve_variable_values_honours_explicit_sources() {
+        let prev = PrevOutcome {
+            exit_code: Some(0),
+            stdout_tail: Some("server-output".into()),
+            fields: BTreeMap::from([("host".to_string(), "example.com".to_string())]),
+            ..Default::default()
+        };
+        // data_flow carries a same-named field an explicit source overrides;
+        // the persistent `vars` map carries the upstream `data` node's value
+        // that a `dataVar` source reads.
+        let df = BTreeMap::from([("url".to_string(), "from-data-flow".to_string())]);
+        let vars = BTreeMap::from([("token".to_string(), "from-data-node".to_string())]);
+        let node_values = BTreeMap::from([("secret".to_string(), "prompted".to_string())]);
+        let sources = BTreeMap::from([
+            (
+                "url".to_string(),
+                DataSourceRecord::RawOutput, // explicit → overrides data-flow
+            ),
+            (
+                "host".to_string(),
+                DataSourceRecord::Field {
+                    field: "host".into(),
+                },
+            ),
+            (
+                "token".to_string(),
+                DataSourceRecord::DataVar {
+                    name: "token".into(),
+                },
+            ),
+            ("secret".to_string(), DataSourceRecord::AtRun), // keep prompt value
+        ]);
+
+        let resolved =
+            resolve_variable_values(&sources, Some(&node_values), Some(&prev), &df, &vars);
+        assert_eq!(resolved.get("url").map(String::as_str), Some("server-output"));
+        assert_eq!(resolved.get("host").map(String::as_str), Some("example.com"));
+        assert_eq!(
+            resolved.get("token").map(String::as_str),
+            Some("from-data-node")
+        );
+        // AtRun keeps the value supplied through node_values (the prompt).
+        assert_eq!(resolved.get("secret").map(String::as_str), Some("prompted"));
+    }
+
+    #[test]
+    fn resolve_variable_values_layers_vars_under_data_flow_under_node_values() {
+        // Layering, lowest → highest: persistent vars, predecessor data_flow,
+        // then the node's prompt/user values. Same-named keys: higher wins.
+        let vars = BTreeMap::from([
+            ("only_var".to_string(), "v".to_string()),
+            ("shared".to_string(), "from-vars".to_string()),
+        ]);
+        let df = BTreeMap::from([
+            ("only_df".to_string(), "d".to_string()),
+            ("shared".to_string(), "from-df".to_string()),
+        ]);
+        let node_values = BTreeMap::from([("only_node".to_string(), "n".to_string())]);
+        let empty_sources = BTreeMap::new();
+        let resolved = resolve_variable_values(
+            &empty_sources,
+            Some(&node_values),
+            None,
+            &df,
+            &vars,
+        );
+        // A `data`-node var reaches the node by name…
+        assert_eq!(resolved.get("only_var").map(String::as_str), Some("v"));
+        assert_eq!(resolved.get("only_df").map(String::as_str), Some("d"));
+        assert_eq!(resolved.get("only_node").map(String::as_str), Some("n"));
+        // …but the predecessor's data_flow wins over a same-named var.
+        assert_eq!(resolved.get("shared").map(String::as_str), Some("from-df"));
+    }
+
+    #[test]
+    fn apply_parser_node_extracts_prev_output_into_data_flow() {
+        // A regex parser with one named group, applied to the previous node's
+        // raw stdout. The extracted field lands in data_flow and on the new
+        // prev outcome; the input is carried through as the new stdout_tail.
+        let schema: crate::storage::commands::OutputSchemaRecord = serde_json::from_value(
+            serde_json::json!({
+                "pipeline": [{
+                    "parser": "regex",
+                    "pattern": "version (?P<ver>[0-9.]+)",
+                    "fields": [{ "name": "ver", "group": "ver" }]
+                }],
+                "returnField": "ver"
+            }),
+        )
+        .unwrap();
+        let prev = PrevOutcome {
+            stdout_tail: Some("app version 1.2.3 ready".into()),
+            ..Default::default()
+        };
+        let mut df = BTreeMap::new();
+        let out = apply_parser_node(Some(&schema), Some(&prev), &mut df);
+        assert_eq!(df.get("ver").map(String::as_str), Some("1.2.3"));
+        assert_eq!(out.fields.get("ver").map(String::as_str), Some("1.2.3"));
+        // The parser carries the input it parsed as its raw output.
+        assert_eq!(out.stdout_tail.as_deref(), Some("app version 1.2.3 ready"));
+    }
+
+    #[test]
+    fn apply_parser_node_without_schema_is_lenient_passthrough() {
+        // No schema → data_flow untouched, input carried through, no crash.
+        let prev = PrevOutcome {
+            stdout_tail: Some("untouched".into()),
+            ..Default::default()
+        };
+        let mut df = BTreeMap::from([("keep".to_string(), "me".to_string())]);
+        let out = apply_parser_node(None, Some(&prev), &mut df);
+        assert_eq!(df.get("keep").map(String::as_str), Some("me"));
+        assert!(out.fields.is_empty());
+        assert_eq!(out.stdout_tail.as_deref(), Some("untouched"));
+    }
+
+    #[test]
+    fn parser_node_kind_parses() {
+        assert_eq!(NodeKind::parse("parser"), Some(NodeKind::Parser));
+    }
+
+    #[test]
+    fn text_node_kind_parses() {
+        assert_eq!(NodeKind::parse("text"), Some(NodeKind::Text));
+    }
+
+    #[test]
+    fn apply_text_node_expands_vars_and_data_flow() {
+        // `${greeting}` from a data-node var, `${name}` from the predecessor's
+        // data_flow; the expanded text becomes the node's output.
+        let vars = BTreeMap::from([("greeting".to_string(), "Hello".to_string())]);
+        let df = BTreeMap::from([("name".to_string(), "world".to_string())]);
+        let out = apply_text_node(Some("${greeting}, ${name}!"), None, &df, &vars);
+        assert_eq!(out.stdout_tail.as_deref(), Some("Hello, world!"));
+    }
+
+    #[test]
+    fn apply_text_node_missing_ref_is_empty_and_no_template_is_empty() {
+        let empty = BTreeMap::new();
+        // A missing reference expands to empty (lenient).
+        let out = apply_text_node(Some("a${nope}b"), None, &empty, &empty);
+        assert_eq!(out.stdout_tail.as_deref(), Some("ab"));
+        // No template → empty output.
+        let out = apply_text_node(None, None, &empty, &empty);
+        assert_eq!(out.stdout_tail.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn apply_text_node_expands_input_specials() {
+        // `${raw_input}` → the predecessor's stdout; `${schema_input}` → its
+        // extracted fields as compact JSON.
+        let prev = PrevOutcome {
+            stdout_tail: Some("80".into()),
+            fields: BTreeMap::from([("port".to_string(), "80".to_string())]),
+            ..Default::default()
+        };
+        let empty = BTreeMap::new();
+        let out = apply_text_node(
+            Some("raw=${raw_input} schema=${schema_input}"),
+            Some(&prev),
+            &empty,
+            &empty,
+        );
+        assert_eq!(
+            out.stdout_tail.as_deref(),
+            Some(r#"raw=80 schema={"port":"80"}"#)
+        );
+    }
+
+    #[test]
+    fn apply_text_node_raw_input_strips_trailing_newlines() {
+        // A command's trailing newline (e.g. `df` / `echo`) is stripped so the
+        // value composes inline; leading/internal content is preserved.
+        let prev = PrevOutcome {
+            stdout_tail: Some("12G free\n\n".into()),
+            ..Default::default()
+        };
+        let empty = BTreeMap::new();
+        let out = apply_text_node(Some("[${raw_input}]"), Some(&prev), &empty, &empty);
+        assert_eq!(out.stdout_tail.as_deref(), Some("[12G free]"));
+
+        // Internal newlines stay; only the trailing ones are trimmed.
+        let prev = PrevOutcome {
+            stdout_tail: Some("a\nb\n".into()),
+            ..Default::default()
+        };
+        let out = apply_text_node(Some("${raw_input}!"), Some(&prev), &empty, &empty);
+        assert_eq!(out.stdout_tail.as_deref(), Some("a\nb!"));
+    }
+
+    #[test]
+    fn apply_text_node_input_specials_empty_without_predecessor() {
+        // No predecessor (or no fields) → the specials expand to empty.
+        let empty = BTreeMap::new();
+        let out = apply_text_node(
+            Some("[${raw_input}][${schema_input}]"),
+            None,
+            &empty,
+            &empty,
+        );
+        assert_eq!(out.stdout_tail.as_deref(), Some("[][]"));
+    }
+
+    #[test]
+    fn data_var_wire_format_is_tagged_camelcase() {
+        let json = serde_json::to_value(DataSourceRecord::AtRun).unwrap();
+        assert_eq!(json["kind"], "atRun");
+        let json = serde_json::to_value(DataSourceRecord::DataVar { name: "t".into() }).unwrap();
+        assert_eq!(json["kind"], "dataVar");
+        assert_eq!(json["name"], "t");
     }
 }

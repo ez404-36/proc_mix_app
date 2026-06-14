@@ -16,7 +16,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   DataAssignment,
+  DataSource,
   LoopConfig,
+  OutputSchema,
   RetryConfig,
   SwitchCase,
   Workflow,
@@ -41,6 +43,8 @@ const KNOWN_NODE_KINDS: ReadonlySet<WorkflowNodeKind> =
     "loop",
     "try",
     "data",
+    "parser",
+    "text",
     "end",
   ]);
 
@@ -83,6 +87,14 @@ export interface WorkflowNodeRecord {
   loop?: LoopConfig | null;
   retry?: RetryConfig | null;
   data?: DataAssignment[];
+  /** Per-variable value sources, keyed by variable name. Omitted/empty when
+   * the node has no overrides (Rust `#[serde(default)]`). */
+  variableSources?: Record<string, DataSource>;
+  /** Output-schema pipeline for a `parser` node; absent for other kinds
+   * (Rust `Option`, serialised `null`/omitted). */
+  parser?: OutputSchema | null;
+  /** Template text for a `text` node; absent for other kinds (Rust `Option`). */
+  text?: string | null;
   position: { x: number; y: number };
 }
 
@@ -129,6 +141,11 @@ function nodeToRecord(n: WorkflowNode): WorkflowNodeRecord {
     loop: n.loop ?? null,
     retry: n.retry ?? null,
     data: n.data ?? [],
+    // Empty object collapses to omitted on the wire (Rust drops a default
+    // map); keep it minimal so nodes without overrides stay clean.
+    variableSources: n.variableSources ?? {},
+    parser: n.parser ?? null,
+    text: n.text ?? null,
     position: { x: n.position.x, y: n.position.y },
   };
 }
@@ -146,6 +163,13 @@ function recordToNode(r: WorkflowNodeRecord): WorkflowNode {
     loop: r.loop ?? undefined,
     retry: r.retry ?? undefined,
     data: r.data && r.data.length > 0 ? r.data : undefined,
+    // An absent / empty map decodes to `undefined` so the node stays minimal.
+    variableSources:
+      r.variableSources && Object.keys(r.variableSources).length > 0
+        ? r.variableSources
+        : undefined,
+    parser: r.parser ?? undefined,
+    text: r.text ?? undefined,
     position: { x: r.position.x, y: r.position.y },
   };
 }

@@ -30,6 +30,31 @@ export async function executeWorkflow(
   });
 }
 
+/**
+ * Run a workflow STARTING FROM `startNodeId`, executing that node and every
+ * node downstream of it. `seedInput` is the entry node's "example input" —
+ * whatever the editor showed in its left column (a prior run's capture, a
+ * manual sample, or `null` for an empty input). Progress streams on the same
+ * `workflow-event` channel as a full run, so the canvas/inspector recompute
+ * downstream previews. Returns the run id.
+ *
+ * Same persistence/variable-resolution preconditions as {@link executeWorkflow}
+ * — `triggerWorkflowRunFromNode` owns that ordering.
+ */
+export async function executeWorkflowFromNode(
+  workflow: Workflow,
+  nodeVariableValues: Record<string, Record<string, string>>,
+  startNodeId: string,
+  seedInput: string | null,
+): Promise<string> {
+  return invoke<string>("run_workflow_from_node", {
+    workflow: workflowToRecord(workflow),
+    nodeVariableValues,
+    startNodeId,
+    seedInput,
+  });
+}
+
 export async function cancelWorkflow(runId: string): Promise<void> {
   await invoke("cancel_workflow", { runId });
 }

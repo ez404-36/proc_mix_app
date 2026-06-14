@@ -20,7 +20,8 @@ use procmix_lib::core::executor::{
     spawn_execution_with_completion, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus,
 };
 use procmix_lib::core::workflow::{
-    cancel_workflow, execute_workflow, WorkflowEvent, WorkflowExecutorState, WORKFLOW_EVENT,
+    cancel_workflow, execute_workflow, execute_workflow_from, WorkflowEvent, WorkflowExecutorState,
+    WORKFLOW_EVENT,
 };
 use procmix_lib::core::workflow_condition::{Condition, Op, Subject};
 use procmix_lib::storage::commands::{
@@ -145,6 +146,9 @@ fn node(id: &str, kind: &str, command_id: Option<&str>) -> WorkflowNodeRecord {
         loop_config: None,
         retry: None,
         data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        parser: None,
+        text: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     }
 }
@@ -849,6 +853,9 @@ fn switch_workflow(test_command_id: &str) -> WorkflowRecord {
         loop_config: None,
         retry: None,
         data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        parser: None,
+        text: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     WorkflowRecord {
@@ -967,6 +974,9 @@ fn counted_loop_workflow(body_command_id: &str, count: u32, max: u32) -> Workflo
         }),
         retry: None,
         data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        parser: None,
+        text: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     WorkflowRecord {
@@ -1115,6 +1125,9 @@ fn try_workflow(test_command_id: &str, retries: u32) -> WorkflowRecord {
             backoff_ms: Some(10),
         }),
         data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        parser: None,
+        text: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     WorkflowRecord {
@@ -1296,6 +1309,9 @@ async fn data_node_pulls_exit_code_from_previous_command() {
             value: String::new(),
             source: Some(DataSourceRecord::ExitCode),
         }],
+        variable_sources: std::collections::BTreeMap::new(),
+        parser: None,
+        text: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     let workflow = WorkflowRecord {
@@ -1387,6 +1403,9 @@ fn predicated_condition_workflow(test_command_id: &str, predicate: Condition) ->
         loop_config: None,
         retry: None,
         data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        parser: None,
+        text: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     WorkflowRecord {
@@ -1480,6 +1499,9 @@ async fn data_node_assignment_flows_into_downstream_command() {
             value: "world".into(),
             source: None,
         }],
+        variable_sources: std::collections::BTreeMap::new(),
+        parser: None,
+        text: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     let workflow = WorkflowRecord {
@@ -1537,4 +1559,417 @@ async fn data_node_assignment_flows_into_downstream_command() {
     assert!(collected
         .iter()
         .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
+}
+
+#[tokio::test]
+async fn data_node_variable_survives_an_intermediate_command_node() {
+    // A `data` node sets `who=world`; an intermediate command runs (replacing
+    // the transient data_flow with ITS own fields); a LATER command reads `who`
+    // via a `dataVar` source. Proves a data-node variable is usable in ANY
+    // downstream node, not just the immediate successor.
+    let (app, exec_state, wf_state, events) = make_app();
+
+    let mut commands = HashMap::new();
+    // Intermediate node: a plain command that succeeds and extracts nothing.
+    commands.insert("noop".to_string(), command("noop", "true"));
+    // Final node: exits 0 only when `${who}` substitutes to "world".
+    commands.insert("check".to_string(), command_with_var("check", None));
+
+    let set_node = WorkflowNodeRecord {
+        id: "set".into(),
+        kind: "data".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: None,
+        retry: None,
+        data: vec![DataAssignmentRecord {
+            name: "who".into(),
+            value: "world".into(),
+            source: None,
+        }],
+        variable_sources: std::collections::BTreeMap::new(),
+        parser: None,
+        text: None,
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    // The final command binds its `who` variable to the data-node variable.
+    let check_node = WorkflowNodeRecord {
+        id: "check".into(),
+        kind: "command".into(),
+        command_id: Some("check".into()),
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: None,
+        retry: None,
+        data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::from([(
+            "who".to_string(),
+            DataSourceRecord::DataVar { name: "who".into() },
+        )]),
+        parser: None,
+        text: None,
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    let workflow = WorkflowRecord {
+        id: "wf-data-persist".into(),
+        name: "data-persist".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            set_node,
+            node("mid", "command", Some("noop")),
+            check_node,
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "set", "out"),
+            edge("e_set", "set", "mid", "out"),
+            edge("e_mid", "mid", "check", "out"),
+            edge("e_check", "check", "end", "out"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    };
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        workflow,
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    let check_exit = collected.iter().find_map(|e| match e {
+        WorkflowEvent::NodeFinished {
+            node_id, exit_code, ..
+        } if node_id == "check" => Some(*exit_code),
+        _ => None,
+    });
+    assert_eq!(
+        check_exit,
+        Some(Some(0)),
+        "data-node var must survive the intermediate command, events: {collected:?}"
+    );
+}
+
+/// start → step1(cmd) → step2(cmd) → end. Two command nodes so a node-scoped
+/// run can prove it executes the chosen node + downstream, NOT the upstream.
+fn two_step_workflow(command_id: &str) -> WorkflowRecord {
+    WorkflowRecord {
+        id: "wf-two".into(),
+        name: "two".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            node("step1", "command", Some(command_id)),
+            node("step2", "command", Some(command_id)),
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "step1", "out"),
+            edge("e_1", "step1", "step2", "out"),
+            edge("e_2", "step2", "end", "out"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    }
+}
+
+#[tokio::test]
+async fn run_from_node_executes_chosen_node_and_downstream_only() {
+    let (app, exec_state, wf_state, events) = make_app();
+
+    let mut commands = HashMap::new();
+    commands.insert("ok-cmd".to_string(), command("ok-cmd", "true"));
+
+    // Run starting at the SECOND command node, seeding its input.
+    execute_workflow_from(
+        app,
+        exec_state,
+        wf_state,
+        two_step_workflow("ok-cmd"),
+        commands,
+        HashMap::new(),
+        "step2".to_string(),
+        Some("seeded input".to_string()),
+    )
+    .await
+    .expect("execute_workflow_from kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    let started: Vec<&str> = collected
+        .iter()
+        .filter_map(|e| match e {
+            WorkflowEvent::NodeStarted { node_id, .. } => Some(node_id.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    // The chosen node ran…
+    assert!(
+        started.contains(&"step2"),
+        "step2 should run, events: {collected:?}"
+    );
+    // …but the UPSTREAM node did NOT (the run started at step2).
+    assert!(
+        !started.contains(&"step1"),
+        "step1 must NOT run for a node-scoped run from step2, events: {collected:?}"
+    );
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "node-scoped run should finish, events: {collected:?}"
+    );
+}
+
+#[tokio::test]
+async fn run_from_node_with_unknown_node_emits_error() {
+    let (app, exec_state, wf_state, events) = make_app();
+
+    let mut commands = HashMap::new();
+    commands.insert("ok-cmd".to_string(), command("ok-cmd", "true"));
+
+    execute_workflow_from(
+        app,
+        exec_state,
+        wf_state,
+        two_step_workflow("ok-cmd"),
+        commands,
+        HashMap::new(),
+        "does-not-exist".to_string(),
+        None,
+    )
+    .await
+    .expect("execute_workflow_from kicks off even for a bad node id");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "an unknown start node should surface a workflow error, events: {collected:?}"
+    );
+}
+
+#[tokio::test]
+async fn run_from_final_command_node_runs_only_it() {
+    // Running from the LAST command node (whose `out` goes straight to `end`)
+    // executes that one node and finishes — the realistic "run the final node"
+    // case. The earlier node must NOT run.
+    let (app, exec_state, wf_state, events) = make_app();
+
+    let mut commands = HashMap::new();
+    commands.insert("ok-cmd".to_string(), command("ok-cmd", "true"));
+
+    execute_workflow_from(
+        app,
+        exec_state,
+        wf_state,
+        two_step_workflow("ok-cmd"),
+        commands,
+        HashMap::new(),
+        "step2".to_string(), // the final command node before `end`
+        None,
+    )
+    .await
+    .expect("execute_workflow_from kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    let started: Vec<&str> = collected
+        .iter()
+        .filter_map(|e| match e {
+            WorkflowEvent::NodeStarted { node_id, .. } => Some(node_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        started,
+        vec!["step2"],
+        "only the final command node should run, events: {collected:?}"
+    );
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
+}
+
+#[tokio::test]
+async fn run_from_end_node_is_a_clean_noop() {
+    // Starting at an `end` node halts immediately: no node runs, but the run
+    // finishes cleanly (not an error). The editor hides this action for `end`,
+    // but the engine must still degrade gracefully if asked.
+    let (app, exec_state, wf_state, events) = make_app();
+
+    let mut commands = HashMap::new();
+    commands.insert("ok-cmd".to_string(), command("ok-cmd", "true"));
+
+    execute_workflow_from(
+        app,
+        exec_state,
+        wf_state,
+        two_step_workflow("ok-cmd"),
+        commands,
+        HashMap::new(),
+        "end".to_string(),
+        Some("ignored".to_string()),
+    )
+    .await
+    .expect("execute_workflow_from kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::NodeStarted { .. })),
+        "no node should run when starting at `end`, events: {collected:?}"
+    );
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "starting at `end` should finish cleanly, events: {collected:?}"
+    );
+}
+
+#[tokio::test]
+async fn run_from_node_with_no_seed_input_still_runs() {
+    // A node legitimately may have no example input. Running it with `None`
+    // seed must execute normally (the command falls back to its own defaults).
+    let (app, exec_state, wf_state, events) = make_app();
+
+    let mut commands = HashMap::new();
+    commands.insert("ok-cmd".to_string(), command("ok-cmd", "true"));
+
+    execute_workflow_from(
+        app,
+        exec_state,
+        wf_state,
+        two_step_workflow("ok-cmd"),
+        commands,
+        HashMap::new(),
+        "step1".to_string(),
+        None, // no input data
+    )
+    .await
+    .expect("execute_workflow_from kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    let step1_exit = collected.iter().find_map(|e| match e {
+        WorkflowEvent::NodeFinished {
+            node_id, exit_code, ..
+        } if node_id == "step1" => Some(*exit_code),
+        _ => None,
+    });
+    assert_eq!(
+        step1_exit,
+        Some(Some(0)),
+        "a node with no seed input should still run to completion, events: {collected:?}"
+    );
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
+}
+
+#[tokio::test]
+async fn run_from_data_node_consumes_the_seed_as_raw_output() {
+    // A `data` node as the ENTRY point reads the seed via a `rawOutput` source,
+    // proving the seed feeds non-command entry nodes too. The data node copies
+    // the seed into `${who}`; the downstream command exits 0 only when `${who}`
+    // substituted to "world".
+    let (app, exec_state, wf_state, events) = make_app();
+
+    let mut commands = HashMap::new();
+    commands.insert("check".to_string(), command_with_var("check", None));
+
+    let data_node = WorkflowNodeRecord {
+        id: "set".into(),
+        kind: "data".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: None,
+        retry: None,
+        data: vec![DataAssignmentRecord {
+            name: "who".into(),
+            value: String::new(),
+            // Pull from the previous node's raw output — here, the seed.
+            source: Some(DataSourceRecord::RawOutput),
+        }],
+        variable_sources: std::collections::BTreeMap::new(),
+        parser: None,
+        text: None,
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    let workflow = WorkflowRecord {
+        id: "wf-data-seed".into(),
+        name: "data-seed".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            data_node,
+            node("check", "command", Some("check")),
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "set", "out"),
+            edge("e_set", "set", "check", "out"),
+            edge("e_check", "check", "end", "out"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    };
+
+    execute_workflow_from(
+        app,
+        exec_state,
+        wf_state,
+        workflow,
+        commands,
+        HashMap::new(),
+        "set".to_string(),
+        Some("world".to_string()), // the seed becomes `${who}`
+    )
+    .await
+    .expect("execute_workflow_from kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    let check_exit = collected.iter().find_map(|e| match e {
+        WorkflowEvent::NodeFinished {
+            node_id, exit_code, ..
+        } if node_id == "check" => Some(*exit_code),
+        _ => None,
+    });
+    assert_eq!(
+        check_exit,
+        Some(Some(0)),
+        "the seed must reach the data node's rawOutput → ${{who}}, events: {collected:?}"
+    );
 }

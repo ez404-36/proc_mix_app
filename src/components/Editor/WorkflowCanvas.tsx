@@ -28,6 +28,7 @@ import {
 } from "../../stores/editorDraftStore";
 import type { WorkflowNodeKind } from "../../types";
 import { getCommandName } from "../../utils/commandLabels";
+import { nodeRunOutput } from "../../utils/nodePreviewData";
 import {
   APPEND_GAP_X,
   applyRunStateToNodes,
@@ -192,6 +193,16 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const [interactive, setInteractive] = useState(true);
   // Whether the editor (palette + canvas) is expanded to fill the app window.
   const [fullscreen, setFullscreen] = useState(false);
+  // While the editor is fullscreen it covers the docked OutputPanel (the
+  // fullscreen layer sits above it). Toggle a body class so the console is
+  // lifted ABOVE the fullscreen editor (CSS-only; see `is-editor-fullscreen`),
+  // letting the user watch a run's output without leaving fullscreen. Cleared
+  // on unmount so leaving the editor view never strands the class.
+  useEffect(() => {
+    const cls = "is-editor-fullscreen";
+    document.body.classList.toggle(cls, fullscreen);
+    return () => document.body.classList.remove(cls);
+  }, [fullscreen]);
   // The edge highlighted while an EXISTING free-floating node is dragged over
   // it (the "insert here" hint for canvas node-drag, distinct from the palette
   // drag hint owned by the DnD hook). Null when not over an insertable edge.
@@ -202,6 +213,22 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     x: number;
     y: number;
   } | null>(null);
+  // Manually-typed preview samples for the node modal, keyed by node id and
+  // by side ("in" / "out"). Transient editor-session state: a sample is only
+  // an authoring aid shown when a node has no live run data yet, so it is not
+  // persisted to the workflow graph. Cleared with the editor on navigation.
+  const [manualPreviews, setManualPreviews] = useState<
+    Record<string, { in?: string; out?: string }>
+  >({});
+  const setManualPreviewSide = useCallback(
+    (nodeId: string, side: "in" | "out", value: string): void => {
+      setManualPreviews((prev) => ({
+        ...prev,
+        [nodeId]: { ...prev[nodeId], [side]: value },
+      }));
+    },
+    [],
+  );
 
   const flowWrapperRef = useRef<HTMLDivElement | null>(null);
   const rfInstanceRef = useRef<ReactFlowInstance<
@@ -425,7 +452,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
 
   // Save / run / meta-save lifecycle + the presentational `activeRunId`
   // highlight state.
-  const { save, run, saveMeta, activeRunId, setActiveRunId } =
+  const { save, run, runNode, saveMeta, activeRunId, setActiveRunId } =
     useWorkflowCanvasPersistence({
       meta,
       nodes,
@@ -468,6 +495,9 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const activeRun = useWorkflowRunStore((s) =>
     activeRunId === null ? undefined : s.runs[activeRunId],
   );
+  // A run (full or node-scoped) is in flight while the active run is still
+  // "running"; the node modal disables its per-node run action meanwhile.
+  const isRunning = activeRun?.status === "running";
 
   // The single edge to highlight as an insertion target: a palette drag (DnD
   // hook) and a canvas node-drag are mutually exclusive, so either source can
@@ -530,6 +560,25 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         ? null
         : findSinglePredecessor(selectedNode.id, nodes, edges),
     [selectedNode, nodes, edges],
+  );
+
+  // Live preview data for the node modal, resolved from the active run: the
+  // selected node's own output (the "result example") and its predecessor's
+  // output (this node's "input example"). Null until a run has produced data
+  // for that node, in which case the modal falls back to a manual sample.
+  const selectedOutputPreview = useMemo(
+    () =>
+      selectedNode === null
+        ? null
+        : nodeRunOutput(activeRun?.nodeOutputs[selectedNode.id]),
+    [selectedNode, activeRun],
+  );
+  const selectedInputPreview = useMemo(
+    () =>
+      selectedPredecessor === null
+        ? null
+        : nodeRunOutput(activeRun?.nodeOutputs[selectedPredecessor.id]),
+    [selectedPredecessor, activeRun],
   );
 
   const handleNodeCommandChange = useCallback(
@@ -685,6 +734,26 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             type="button"
             className="btn btn--ghost wf-palette__btn"
             draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "parser")}
+            onClick={() => appendNodeToTail("parser", undefined)}
+            title={t("editor.palette.nodeDragHint")}
+          >
+            + {t("editor.nodes.parser")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "text")}
+            onClick={() => appendNodeToTail("text", undefined)}
+            title={t("editor.palette.nodeDragHint")}
+          >
+            + {t("editor.nodes.text")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            draggable
             onDragStart={(e) => onPaletteNodeDragStart(e, "end")}
             onClick={() => appendNodeToTail("end", undefined)}
             title={t("editor.palette.nodeDragHint")}
@@ -812,10 +881,26 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         <NodeInspector
           node={selectedNode}
           predecessor={selectedPredecessor}
+          allNodes={nodes}
+          edges={edges}
           commands={commands}
+          outputPreview={selectedOutputPreview}
+          inputPreview={selectedInputPreview}
+          manualInput={manualPreviews[selectedNode.id]?.in ?? ""}
+          manualOutput={manualPreviews[selectedNode.id]?.out ?? ""}
+          onManualInputChange={(nodeId, value) =>
+            setManualPreviewSide(nodeId, "in", value)
+          }
+          onManualOutputChange={(nodeId, value) =>
+            setManualPreviewSide(nodeId, "out", value)
+          }
           onCommandChange={handleNodeCommandChange}
           onNodeDataChange={handleNodeDataChange}
           onDelete={handleDeleteNode}
+          onRunNode={(nodeId, seedInput) => {
+            void runNode(nodeId, seedInput);
+          }}
+          isRunning={isRunning}
           onClose={() => setSelectedNodeId(null)}
         />
       ) : null}

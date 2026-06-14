@@ -18,7 +18,9 @@
 import type { Edge, Node } from "reactflow";
 import type {
   DataAssignment,
+  DataSource,
   LoopConfig,
+  OutputSchema,
   RetryConfig,
   SwitchCase,
   Workflow,
@@ -50,6 +52,12 @@ export interface WorkflowNodeData {
   loop?: LoopConfig;
   retry?: RetryConfig;
   data?: DataAssignment[];
+  /** Per-variable value sources for the node's command (see WorkflowNode). */
+  variableSources?: Record<string, DataSource>;
+  /** Output-schema pipeline a `parser` node applies (see WorkflowNode). */
+  parser?: OutputSchema;
+  /** Template text a `text` node composes (see WorkflowNode). */
+  text?: string;
   /** Per-run lifecycle status, injected for live highlighting. */
   runStatus?: "pending" | "running" | "finished";
   /** Exit code once the node finished, for the node badge. */
@@ -90,6 +98,9 @@ function nodeToFlowNode(node: WorkflowNode): WorkflowFlowNode {
       loop: node.loop,
       retry: node.retry,
       data: node.data,
+      variableSources: node.variableSources,
+      parser: node.parser,
+      text: node.text,
     },
   };
 }
@@ -134,6 +145,9 @@ function flowNodeToNode(node: WorkflowFlowNode): WorkflowNode {
     loop: node.data.loop,
     retry: node.data.retry,
     data: node.data.data,
+    variableSources: node.data.variableSources,
+    parser: node.data.parser,
+    text: node.data.text,
     position: { x: node.position.x, y: node.position.y },
   };
 }

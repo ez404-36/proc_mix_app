@@ -151,6 +151,9 @@
       "loop": "Loop",
       "try": "Try",
       "data": "Data",
+      "parser": "Parser",
+      "text": "Text",
+      "textEmpty": "No text yet",
       "then": "then",
       "else": "else",
       "yes": "yes",
@@ -164,7 +167,8 @@
       "loopWhile": "Loop while",
       "loopProgress": "Iteration {{n}}",
       "retryProgress": "retry {{n}}",
-      "dataSummary": "{{count}} assignment(s)",
+      "dataEmpty": "No assignments",
+      "parserSummary": "{{count}} parser step(s)",
       "unboundCommand": "Pick a command…"
     },
     "palette": {
@@ -233,6 +237,7 @@
           "loopIterations": "Iterations"
         }
       },
+      "runNode": "Run this node and everything after it",
       "variables": {
         "title": "Variable values",
         "sourceLabel": "Value source for variable {{name}}",
@@ -241,7 +246,7 @@
         "source": {
           "manual": "Enter manually",
           "atRun": "Prompt at run time",
-          "dataVar": "From a Data node: {{field}}"
+          "dataVar": "Variable: ${{field}}"
         }
       },
       "remove": "Remove",
@@ -249,7 +254,18 @@
         "start": "Entry point of the workflow.",
         "end": "Terminal node — execution stops here.",
         "loop": "Configure the loop's iterations below.",
-        "data": "Add variable assignments below."
+        "data": "Add variable assignments below.",
+        "parser": "Transforms the previous node's output using a schema.",
+        "text": "Compose text; the result becomes the node's output."
+      },
+      "text": {
+        "label": "Text",
+        "placeholder": "Type text. Insert variables with ${name} or right-click → \"Insert variable\".",
+        "hint": "Right-click the field → \"Insert variable\" or \"Incoming data\" to drop a variable or the node's input anywhere in the text.",
+        "insertVariable": "Insert variable",
+        "incomingData": "Incoming data",
+        "rawInput": "Raw output",
+        "schemaInput": "Schema"
       },
       "preview": {
         "inputTitle": "Example input",
@@ -260,7 +276,24 @@
         "fromRunTruncated": "Data from the last run (tail shown).",
         "manualHint": "Appears after running the workflow, or can be entered manually.",
         "tabRaw": "Raw output",
-        "tabSchema": "Output schema"
+        "tabSchema": "Output schema",
+        "schemaDerived": "Derived from the raw output by the schema (read-only).",
+        "schemaPending": "No schema yet: enter raw output above.",
+        "dataVarsTitle": "Saved variables",
+        "dataVarsEmpty": "No variables set.",
+        "dataVarsHint": "A Data node returns nothing — it saves variables usable in any later node of the scenario.",
+        "dataVarSource": {
+          "rawOutput": "<raw output>",
+          "schemaOutput": "<output schema>",
+          "exitCode": "<exit code>",
+          "field": "<schema field>",
+          "retryCount": "<retry count>",
+          "conditionResult": "<condition result>",
+          "matchedCase": "<matched case>",
+          "loopIterations": "<loop iterations>",
+          "atRun": "<entered at run>",
+          "dataVar": "<variable>"
+        }
       },
       "title": "Node"
     },

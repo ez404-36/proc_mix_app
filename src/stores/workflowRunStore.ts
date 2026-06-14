@@ -1,8 +1,24 @@
 import { create } from "zustand";
 import type {
+  ExtractedResult,
   WorkflowEdgeBranch,
   WorkflowStatus,
 } from "../types";
+
+/**
+ * Captured output of a single workflow node within a run, used by the editor's
+ * node modal to show that node's input/result examples. Distinct from the
+ * aggregated console process (which folds every node's stdout into one entry):
+ * this keeps each node's own stdout + structured result addressable by node id
+ * so a downstream node's "example input" can read its predecessor's result.
+ */
+export interface WorkflowNodeOutput {
+  /** Joined stdout/stderr lines this node produced (the raw output). */
+  stdout: string;
+  /** Structured output-schema extraction, when the node's command (or a
+   * parser node) produced one. */
+  result?: ExtractedResult;
+}
 
 const MAX_RECENT = 50;
 
@@ -55,6 +71,12 @@ export interface WorkflowRun {
    * run is an UNSAVED draft that is absent from `workflowStore`.
    */
   nodeCommandIds: Record<string, string>;
+  /**
+   * Per-node captured output (raw stdout + structured result), keyed by node
+   * id. Populated by the execution bridge as each node streams. Read by the
+   * editor's node modal to show input/result examples after a run.
+   */
+  nodeOutputs: Record<string, WorkflowNodeOutput>;
   /** Error message for a failed run (`status: "error"`). */
   error?: string;
 }
@@ -86,6 +108,21 @@ interface WorkflowRunState {
   ) => void;
   markLoopIteration: (runId: string, nodeId: string, iteration: number) => void;
   markRetry: (runId: string, nodeId: string, attempt: number) => void;
+  /** Append a captured stdout/stderr line to a node's output, resolving the
+   * node by its `executionId` within the run. No-op when the execution id is
+   * not (yet) mapped to a node. */
+  appendNodeOutputLine: (
+    runId: string,
+    executionId: string,
+    line: string,
+  ) => void;
+  /** Attach the structured output-schema result to a node's output, resolving
+   * the node by its `executionId` within the run. */
+  setNodeOutputResult: (
+    runId: string,
+    executionId: string,
+    result: ExtractedResult,
+  ) => void;
   finishRun: (
     runId: string,
     status: Extract<WorkflowStatus, "success" | "error" | "cancelled">,
@@ -100,6 +137,20 @@ function pushRecent(recentRunIds: string[], runId: string): string[] {
     0,
     MAX_RECENT,
   );
+}
+
+/** Resolve the node id whose run-state carries `executionId` within a run.
+ * The execution bridge tags node output with the execution id only, so this
+ * maps it back to a node (set by `markNodeStarted`). Returns null if unmapped
+ * (e.g. an event arrived before the matching `nodeStarted`). */
+function nodeIdForExecution(
+  run: WorkflowRun,
+  executionId: string,
+): string | null {
+  for (const [nodeId, state] of Object.entries(run.nodes)) {
+    if (state.executionId === executionId) return nodeId;
+  }
+  return null;
 }
 
 export const useWorkflowRunStore = create<WorkflowRunState>()((set) => ({
@@ -120,6 +171,7 @@ export const useWorkflowRunStore = create<WorkflowRunState>()((set) => ({
         loopIterations: {},
         retryAttempts: {},
         nodeCommandIds: nodeCommandIds ?? {},
+        nodeOutputs: {},
       };
       return {
         runs: { ...state.runs, [runId]: run },
@@ -204,6 +256,51 @@ export const useWorkflowRunStore = create<WorkflowRunState>()((set) => ({
           [runId]: {
             ...run,
             retryAttempts: { ...run.retryAttempts, [nodeId]: attempt },
+          },
+        },
+      };
+    }),
+
+  appendNodeOutputLine: (runId, executionId, line) =>
+    set((state) => {
+      const run = state.runs[runId];
+      if (!run) return {};
+      const nodeId = nodeIdForExecution(run, executionId);
+      if (nodeId === null) return {};
+      const existing = run.nodeOutputs[nodeId];
+      const stdout =
+        existing === undefined || existing.stdout === ""
+          ? line
+          : `${existing.stdout}\n${line}`;
+      const next: WorkflowNodeOutput = { ...existing, stdout };
+      return {
+        runs: {
+          ...state.runs,
+          [runId]: {
+            ...run,
+            nodeOutputs: { ...run.nodeOutputs, [nodeId]: next },
+          },
+        },
+      };
+    }),
+
+  setNodeOutputResult: (runId, executionId, result) =>
+    set((state) => {
+      const run = state.runs[runId];
+      if (!run) return {};
+      const nodeId = nodeIdForExecution(run, executionId);
+      if (nodeId === null) return {};
+      const existing = run.nodeOutputs[nodeId];
+      const next: WorkflowNodeOutput = {
+        stdout: existing?.stdout ?? "",
+        result,
+      };
+      return {
+        runs: {
+          ...state.runs,
+          [runId]: {
+            ...run,
+            nodeOutputs: { ...run.nodeOutputs, [nodeId]: next },
           },
         },
       };

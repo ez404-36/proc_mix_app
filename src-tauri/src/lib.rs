@@ -150,6 +150,7 @@ pub fn run() {
             commands::upsert_workflow,
             commands::delete_workflow,
             commands::execute_workflow,
+            commands::run_workflow_from_node,
             commands::cancel_workflow,
             commands::list_schedules,
             commands::upsert_schedule,

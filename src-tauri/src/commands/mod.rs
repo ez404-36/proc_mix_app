@@ -145,6 +145,39 @@ pub async fn execute_workflow(
     .await
 }
 
+/// Run a workflow STARTING FROM a specific node, seeding that node's input
+/// with `seed_input` (the editor's "example input" for the node — a prior
+/// run's capture, a manual sample, or `null` when empty). The node and every
+/// downstream node execute and stream the same per-node events as a full run,
+/// so the editor recomputes their input/output previews. Cancellation reuses
+/// `cancel_workflow` with the returned run id.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_workflow_from_node(
+    app: AppHandle,
+    executor_state: State<'_, Arc<ExecutorState>>,
+    workflow_state: State<'_, Arc<WorkflowExecutorState>>,
+    pool: State<'_, DbPool>,
+    workflow: storage_workflows::WorkflowRecord,
+    node_variable_values: HashMap<String, BTreeMap<String, String>>,
+    start_node_id: String,
+    seed_input: Option<String>,
+) -> Result<String, String> {
+    let commands = storage_commands::resolve_map(pool.inner()).await?;
+
+    workflow::execute_workflow_from(
+        app,
+        executor_state.inner().clone(),
+        workflow_state.inner().clone(),
+        workflow,
+        commands,
+        node_variable_values,
+        start_node_id,
+        seed_input,
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn cancel_workflow(
     workflow_state: State<'_, Arc<WorkflowExecutorState>>,
