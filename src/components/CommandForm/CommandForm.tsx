@@ -116,6 +116,13 @@ export interface CommandFormProps {
    */
   categorySuggestions?: ReadonlyArray<string>;
   /**
+   * Tags already used across the library, surfaced as suggestions in the
+   * Tags field so users can pick existing ones rather than re-typing them.
+   * Derived from all commands by the caller via `collectTags`. Optional;
+   * defaults to none (free-text only).
+   */
+  tagSuggestions?: ReadonlyArray<string>;
+  /**
    * Pre-filled script for create mode, supplied by the ScriptFirstCreator
    * flow. Ignored in edit mode. When set, the Script tab field is
    * populated on first render with this value so the user can refine it.
@@ -148,6 +155,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     onDirtyChange,
     runTarget = "embedded",
     categorySuggestions = [],
+    tagSuggestions = [],
     initialScript,
   } = props;
   const { t } = useTranslation();
@@ -550,6 +558,18 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   // what's already present (first casing wins) and never empty.
   // ---------------------------------------------------------------
   const [tagDraft, setTagDraft] = useState<string>("");
+  const [tagSuggestActiveIndex, setTagSuggestActiveIndex] = useState<number>(-1);
+
+  const filteredTagSuggestions = useMemo((): string[] => {
+    const draft = tagDraft.trim();
+    if (draft === "") return [];
+    const lower = draft.toLowerCase();
+    return tagSuggestions.filter(
+      (t) =>
+        t.toLowerCase().includes(lower) &&
+        !form.tags.some((existing) => existing.toLowerCase() === t.toLowerCase()),
+    );
+  }, [tagDraft, tagSuggestions, form.tags]);
   // ---------------------------------------------------------------
   // Category dropdown state. `addingCategory` flips the field into an
   // inline text input for a brand-new category name; `newCategoryDraft`
@@ -618,6 +638,10 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     });
   }, []);
 
+  useEffect(() => {
+    setTagSuggestActiveIndex(-1);
+  }, [filteredTagSuggestions]);
+
   const commitTag = useCallback((raw: string): void => {
     const trimmed = raw.trim();
     setTagDraft("");
@@ -640,9 +664,35 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   const handleTagInputKeyDown = (
     e: ReactKeyboardEvent<HTMLInputElement>,
   ): void => {
+    if (filteredTagSuggestions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setTagSuggestActiveIndex((i) =>
+          i < filteredTagSuggestions.length - 1 ? i + 1 : 0,
+        );
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setTagSuggestActiveIndex((i) =>
+          i > 0 ? i - 1 : filteredTagSuggestions.length - 1,
+        );
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setTagDraft("");
+        return;
+      }
+    }
     if (e.key === "Enter" || e.key === ",") {
       e.preventDefault();
-      commitTag(tagDraft);
+      const activeTag = filteredTagSuggestions[tagSuggestActiveIndex];
+      if (activeTag !== undefined) {
+        commitTag(activeTag);
+      } else {
+        commitTag(tagDraft);
+      }
       return;
     }
     if (e.key === "Backspace" && tagDraft === "" && form.tags.length > 0) {
@@ -1141,31 +1191,59 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
             <span className="command-form__label">
               {t("commandForm.fields.tags")}
             </span>
-            <div className="tag-input">
-              {form.tags.map((tag, index) => (
-                <span key={tag} className="tag-input__chip">
-                  <span className="tag-input__chip-label">{tag}</span>
-                  <button
-                    type="button"
-                    className="tag-input__chip-remove"
-                    onClick={() => handleRemoveTag(index)}
-                    aria-label={t("commandForm.tags.remove", { tag })}
-                    title={t("commandForm.tags.remove", { tag })}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              <input
-                type="text"
-                className="tag-input__field"
-                value={tagDraft}
-                onChange={(e) => setTagDraft(e.target.value)}
-                onKeyDown={handleTagInputKeyDown}
-                onBlur={() => commitTag(tagDraft)}
-                placeholder={t("commandForm.placeholders.tags")}
-                aria-label={t("commandForm.fields.tags")}
-              />
+            <div className="tag-input-wrap">
+              <div className="tag-input">
+                {form.tags.map((tag, index) => (
+                  <span key={tag} className="tag-input__chip">
+                    <span className="tag-input__chip-label">{tag}</span>
+                    <button
+                      type="button"
+                      className="tag-input__chip-remove"
+                      onClick={() => handleRemoveTag(index)}
+                      aria-label={t("commandForm.tags.remove", { tag })}
+                      title={t("commandForm.tags.remove", { tag })}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <input
+                  type="text"
+                  className="tag-input__field"
+                  value={tagDraft}
+                  onChange={(e) => setTagDraft(e.target.value)}
+                  onKeyDown={handleTagInputKeyDown}
+                  onBlur={() => {
+                    if (tagSuggestActiveIndex >= 0) return;
+                    commitTag(tagDraft);
+                  }}
+                  placeholder={t("commandForm.placeholders.tags")}
+                  aria-label={t("commandForm.fields.tags")}
+                  autoComplete="off"
+                />
+              </div>
+              {filteredTagSuggestions.length > 0 ? (
+                <ul className="tag-suggest" role="listbox" aria-label={t("commandForm.fields.tags")}>
+                  {filteredTagSuggestions.map((suggestion, idx) => (
+                    <li
+                      key={suggestion}
+                      className={
+                        "tag-suggest__option" +
+                        (idx === tagSuggestActiveIndex ? " tag-suggest__option--active" : "")
+                      }
+                      role="option"
+                      aria-selected={idx === tagSuggestActiveIndex}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        commitTag(suggestion);
+                      }}
+                      onMouseEnter={() => setTagSuggestActiveIndex(idx)}
+                    >
+                      {suggestion}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           </div>
 

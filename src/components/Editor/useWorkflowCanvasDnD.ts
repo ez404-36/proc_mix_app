@@ -13,8 +13,43 @@ import {
   type WorkflowNodeData,
 } from "../../utils/workflowGraph";
 
-/** MIME type used for the palette drag payload (a command id). */
-export const DRAG_MIME = "application/procmix-command";
+/** MIME type used for the palette drag payload. */
+export const DRAG_MIME = "application/procmix-node";
+
+/**
+ * What a palette drag carries: the node `kind` to create, plus a `commandId`
+ * for command-bearing kinds dragged from the command list. Serialised as JSON
+ * in the drag `dataTransfer` (HTML5 DnD only exposes the payload on `drop`).
+ */
+interface PaletteDragPayload {
+  kind: Exclude<WorkflowNodeKind, "start">;
+  commandId?: string;
+}
+
+function parsePayload(raw: string): PaletteDragPayload | null {
+  if (raw === "") return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "kind" in parsed &&
+      typeof (parsed as { kind: unknown }).kind === "string"
+    ) {
+      const { kind, commandId } = parsed as {
+        kind: string;
+        commandId?: unknown;
+      };
+      return {
+        kind: kind as Exclude<WorkflowNodeKind, "start">,
+        commandId: typeof commandId === "string" ? commandId : undefined,
+      };
+    }
+  } catch {
+    // Malformed payload (e.g. a foreign drag) — ignore.
+  }
+  return null;
+}
 
 interface InsertPreviewPos {
   x: number;
@@ -48,7 +83,13 @@ interface UseWorkflowCanvasDnD {
   onDragOver: (event: ReactDragEvent) => void;
   onDragLeave: () => void;
   onDrop: (event: ReactDragEvent) => void;
+  /** Drag-start for a command palette item (creates a `command` node). */
   onPaletteDragStart: (event: ReactDragEvent, commandId: string) => void;
+  /** Drag-start for a node-kind palette button (condition / switch / …). */
+  onPaletteNodeDragStart: (
+    event: ReactDragEvent,
+    kind: Exclude<WorkflowNodeKind, "start">,
+  ) => void;
 }
 
 /**
@@ -126,15 +167,15 @@ export function useWorkflowCanvasDnD({
     (event: ReactDragEvent): void => {
       event.preventDefault();
       clearInsertHint();
-      const commandId = event.dataTransfer.getData(DRAG_MIME);
-      if (commandId === "") return;
+      const payload = parsePayload(event.dataTransfer.getData(DRAG_MIME));
+      if (payload === null) return;
       const instance = rfInstanceRef.current;
       if (instance === null) return;
       const point = instance.screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
       });
-      const newNode = makeNode("command", commandId, point);
+      const newNode = makeNode(payload.kind, payload.commandId, point);
       const { nodes: curNodes, edges: curEdges } =
         useEditorDraftStore.getState();
 
@@ -155,7 +196,17 @@ export function useWorkflowCanvasDnD({
 
   const onPaletteDragStart = useCallback(
     (event: ReactDragEvent, commandId: string): void => {
-      event.dataTransfer.setData(DRAG_MIME, commandId);
+      const payload: PaletteDragPayload = { kind: "command", commandId };
+      event.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
+      event.dataTransfer.effectAllowed = "move";
+    },
+    [],
+  );
+
+  const onPaletteNodeDragStart = useCallback(
+    (event: ReactDragEvent, kind: Exclude<WorkflowNodeKind, "start">): void => {
+      const payload: PaletteDragPayload = { kind };
+      event.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
       event.dataTransfer.effectAllowed = "move";
     },
     [],
@@ -168,5 +219,6 @@ export function useWorkflowCanvasDnD({
     onDragLeave,
     onDrop,
     onPaletteDragStart,
+    onPaletteNodeDragStart,
   };
 }

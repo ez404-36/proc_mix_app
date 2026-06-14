@@ -166,6 +166,33 @@ function branchFromHandle(
   return DEFAULT_SOURCE_HANDLE;
 }
 
+/**
+ * The source-handle a node uses to CONTINUE a linear chain — i.e. the branch
+ * an inserted node's outgoing edge leaves from when it is spliced onto an
+ * existing edge. Single-exit kinds (`start` / `command` / `data` / `end`) use
+ * `out`. Branching kinds use their "happy path" / always-present exit so the
+ * chain stays connected after the insert, leaving the user to wire the other
+ * branches:
+ *   - `condition` → `then`   (success)
+ *   - `switch`    → `default` (the always-present fallback)
+ *   - `loop`      → `done`   (continue AFTER the loop, not into its body)
+ *   - `try`       → `ok`     (success)
+ */
+export function primaryOutHandle(kind: WorkflowNodeKind): WorkflowEdgeBranch {
+  switch (kind) {
+    case "condition":
+      return "then";
+    case "switch":
+      return "default";
+    case "loop":
+      return "done";
+    case "try":
+      return "ok";
+    default:
+      return "out";
+  }
+}
+
 function flowEdgeToEdge(edge: WorkflowFlowEdge): WorkflowEdge {
   return {
     id: edge.id,
@@ -670,7 +697,10 @@ export function insertNodeOnEdge(
     id: makeGraphId("edge"),
     source: placedNode.id,
     target: original.target,
-    sourceHandle: "out",
+    // Continue the chain on the inserted node's primary exit. A branching
+    // node (condition / switch / loop / try) has no `out` handle, so use its
+    // happy-path branch; the user wires the remaining branches afterwards.
+    sourceHandle: primaryOutHandle(placedNode.data.kind),
   };
   return {
     nodes: [...shiftedNodes, placedNode],

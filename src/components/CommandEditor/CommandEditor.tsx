@@ -3,7 +3,7 @@ import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useUIStore } from "../../stores/uiStore";
 import { useCommandStore } from "../../stores/commandStore";
-import { collectCategories } from "../../utils/commandFilters";
+import { collectCategories, collectTags } from "../../utils/commandFilters";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { CommandForm } from "../CommandForm";
 
@@ -35,6 +35,11 @@ export function CommandEditor(): ReactElement | null {
 
   const allCategories = useMemo(
     () => collectCategories(commands),
+    [commands],
+  );
+
+  const allTags = useMemo(
+    () => collectTags(commands),
     [commands],
   );
 
@@ -90,6 +95,7 @@ export function CommandEditor(): ReactElement | null {
         onDirtyChange={setCommandEditorDirty}
         runTarget="global"
         categorySuggestions={allCategories}
+        tagSuggestions={allTags}
         initialScript={target.mode === "create" ? target.initialScript : undefined}
       />
 

@@ -2993,6 +2993,44 @@ select {
   padding: 2px;
 }
 
+/* Wrapper that gives the tag input a positioning context for the
+ * suggestion list popup. */
+.tag-input-wrap {
+  position: relative;
+}
+
+/* Suggestion list that appears below the tag input when the user
+ * starts typing a tag. Matches the dropdown popup visual style. */
+.tag-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated, var(--color-bg));
+  box-shadow: var(--shadow-sm);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.tag-suggest__option {
+  padding: 7px 12px;
+  font-size: 14px;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.tag-suggest__option--active {
+  background: var(--color-bg-subtle);
+  color: var(--color-primary);
+}
+
 /* Locked-state styling for the admin checkbox: visually softened so
  * users understand the value isn't editable, but the label remains
  * readable. Pairs with `disabled` on the input itself for keyboard
@@ -4149,7 +4187,11 @@ select {
 .editor-view {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* `min-height` (not `height`) so the column fills the viewport when there is
+     room, but can grow TALLER than it when the window is short — letting the
+     scrollable `.app-main` scroll instead of the fixed-height parent clipping
+     the canvas (whose `.wf-editor` keeps a 480px usable floor). */
+  min-height: 100%;
 }
 
 /* Editor section header: the dynamic title block on the left and the
@@ -4172,8 +4214,13 @@ select {
 
 .wf-editor {
   display: flex;
-  flex: 1;
-  min-height: 480px;
+  /* `flex: 1 0 480px` — grow to fill a tall window, but DON'T shrink below the
+     480px basis. Using the basis (not a `min-height`) as the floor is what
+     lets the canvas extend `.editor-view` past the viewport when the window is
+     short, so the scrollable `.app-main` scrolls instead of clipping the
+     bottom. A plain `flex: 1` + `min-height` could not shrink either, but the
+     parent stayed pinned at 100% and the overflow was clipped, not scrolled. */
+  flex: 1 0 480px;
   gap: 12px;
   position: relative;
 }
