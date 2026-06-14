@@ -217,7 +217,7 @@ function ScheduleCard({
 
   return (
     <div
-      className="list-tile list-schedule-card"
+      className="list-tile list-tile--schedule list-schedule-card"
       onContextMenu={handleContextMenu}
       onDoubleClick={() => onView(schedule)}
     >

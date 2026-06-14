@@ -187,7 +187,7 @@ function CommandCard({
 
   return (
     <div
-      className="list-tile"
+      className="list-tile list-tile--command"
       onContextMenu={handleContextMenu}
       onDoubleClick={handleDoubleClick}
     >
@@ -351,7 +351,7 @@ function WorkflowCard({
 
   return (
     <div
-      className="list-tile"
+      className="list-tile list-tile--workflow"
       onContextMenu={handleContextMenu}
       onDoubleClick={handleDoubleClick}
     >
@@ -374,9 +374,6 @@ function WorkflowCard({
         </button>
       </div>
       <div className="list-tile__meta">
-        <span className="shell-badge">
-          {t("workflow.nodeCount", { count: workflow.nodes.length })}
-        </span>
         {workflow.tags.map((tag) => (
           <span key={tag} className="tag-chip">
             {tag}

@@ -53,7 +53,9 @@
     "favoritesSection": "Favorites",
     "recentSection": "Recent",
     "noFavorites": "No favorites yet.",
-    "noRecent": "No commands have been run yet. Pick one from the Library to get started."
+    "noRecent": "No commands have been run yet. Pick one from the Library to get started.",
+    "typeCommand": "Command",
+    "typeWorkflow": "Workflow"
   },
   "library": {
     "title": "Library",
@@ -231,12 +233,34 @@
           "loopIterations": "Iterations"
         }
       },
+      "variables": {
+        "title": "Variable values",
+        "sourceLabel": "Value source for variable {{name}}",
+        "valueLabel": "Value for variable {{name}}",
+        "valuePlaceholder": "Value",
+        "source": {
+          "manual": "Enter manually",
+          "atRun": "Prompt at run time",
+          "dataVar": "From a Data node: {{field}}"
+        }
+      },
       "remove": "Remove",
       "hint": {
         "start": "Entry point of the workflow.",
         "end": "Terminal node — execution stops here.",
         "loop": "Configure the loop's iterations below.",
         "data": "Add variable assignments below."
+      },
+      "preview": {
+        "inputTitle": "Example input",
+        "resultTitle": "Example result",
+        "inputPlaceholder": "Data the node receives. Appears after running the workflow, or enter it manually.",
+        "resultPlaceholder": "Data the node returns. Appears after running the workflow, or enter it manually.",
+        "fromRun": "Data from the last run.",
+        "fromRunTruncated": "Data from the last run (tail shown).",
+        "manualHint": "Appears after running the workflow, or can be entered manually.",
+        "tabRaw": "Raw output",
+        "tabSchema": "Output schema"
       },
       "title": "Node"
     },

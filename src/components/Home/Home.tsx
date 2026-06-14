@@ -156,7 +156,7 @@ function CommandRow({ cmd }: { cmd: Command }): ReactElement {
 
   return (
     <div
-      className="list-tile"
+      className="list-tile list-tile--command"
       onContextMenu={handleContextMenu}
       onDoubleClick={handleDoubleClick}
     >
@@ -167,6 +167,9 @@ function CommandRow({ cmd }: { cmd: Command }): ReactElement {
             <p className="list-tile__desc">{displayDesc}</p>
           ) : null}
         </div>
+      </div>
+      <div className="list-tile__meta">
+        <span className="type-badge type-badge--command">{t("home.typeCommand")}</span>
       </div>
       <div className="list-tile__actions">
         <button
@@ -329,7 +332,7 @@ function WorkflowRow({ wf }: { wf: Workflow }): ReactElement {
 
   return (
     <div
-      className="list-tile"
+      className="list-tile list-tile--workflow"
       onContextMenu={handleContextMenu}
       onDoubleClick={handleDoubleClick}
     >
@@ -340,6 +343,9 @@ function WorkflowRow({ wf }: { wf: Workflow }): ReactElement {
             <p className="list-tile__desc">{wf.description}</p>
           ) : null}
         </div>
+      </div>
+      <div className="list-tile__meta">
+        <span className="type-badge type-badge--workflow">{t("home.typeWorkflow")}</span>
       </div>
       <div className="list-tile__actions">
         <button

@@ -454,6 +454,37 @@ select {
   box-shadow: var(--shadow-sm);
 }
 
+.list-tile--command {
+  border-left: 3px solid var(--color-primary);
+}
+
+.list-tile--workflow {
+  border-left: 3px solid var(--app-color-run);
+}
+
+.list-tile--schedule {
+  border-left: 3px solid var(--app-color-edit);
+}
+
+.type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.type-badge--command {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.type-badge--workflow {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--app-color-run);
+}
+
 .list-tile__head {
   display: flex;
   align-items: flex-start;
@@ -4758,6 +4789,154 @@ select {
 
 .wf-inspector__delete {
   flex: 1;
+}
+
+/* Node-editor modal — a centered three-column dialog reusing the
+   `.command-form` box (backdrop / surface / shadow). Wider than the default
+   modal to host the input-preview | form | result-preview layout. */
+.wf-node-modal {
+  width: min(1080px, calc(100% - 32px));
+}
+
+.wf-node-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wf-node-modal__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.wf-node-modal__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wf-node-modal__close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.wf-node-modal__close:hover {
+  color: var(--color-text);
+}
+
+.wf-node-modal__body {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr 1fr;
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+}
+
+/* Collapse to a single column on a narrow modal (small viewport). The two
+   preview panes stack above/below the form, keeping every control reachable. */
+@container command-form (max-width: 760px) {
+  .wf-node-modal__body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wf-node-modal__form {
+  min-width: 0;
+}
+
+.wf-node-modal__preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wf-node-modal__preview-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--color-text-muted);
+}
+
+.wf-node-modal__preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.wf-node-modal__preview-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.wf-node-modal__preview-tab {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.wf-node-modal__preview-tab.is-active {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.wf-node-modal__preview-data {
+  flex: 1;
+  min-height: 160px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  background: var(--console-bg);
+  color: var(--console-stdout);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+}
+
+.wf-node-modal__preview-input {
+  flex: 1;
+  min-height: 160px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.wf-node-modal__preview-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+/* The read-only `$name` label of a per-variable source row. Carries the spec
+   description as a `title` tooltip. */
+.wf-node-modal__var-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: help;
 }
 
 /* Shared button + modal-footer classes the editor relies on */
