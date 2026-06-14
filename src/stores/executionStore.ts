@@ -34,6 +34,19 @@ export type FinishPatch = Pick<
   "status" | "exitCode" | "durationMs" | "finishedAt" | "error" | "timedOut"
 >;
 
+export type ConsoleDockPosition = "bottom" | "left" | "right";
+
+export const DEFAULT_PANEL_WIDTH = 420;
+export const MIN_PANEL_WIDTH = 280;
+
+export function clampPanelWidth(
+  requested: number,
+  viewportWidth: number,
+): number {
+  const max = Math.max(MIN_PANEL_WIDTH, viewportWidth - 200);
+  return Math.min(Math.max(requested, MIN_PANEL_WIDTH), max);
+}
+
 interface ExecutionState {
   executions: Record<string, Execution>;
   recentIds: string[];
@@ -42,6 +55,10 @@ interface ExecutionState {
   /** Current docked-terminal height in px. Adjusted by dragging the panel's
    *  top resize handle; clamped via {@link clampPanelHeight}. */
   panelHeight: number;
+  /** Current docked-terminal width in px (used for left/right dock). */
+  panelWidth: number;
+  /** Where the console panel is docked. */
+  consolePosition: ConsoleDockPosition;
 
   startExecution: (
     id: string,
@@ -51,6 +68,7 @@ interface ExecutionState {
     shell?: string,
     variables?: ExecutionVariable[],
     env?: Record<string, string>,
+    variableValuesRaw?: Record<string, string>,
   ) => void;
   /**
    * Create (or reuse) the single aggregated execution for a workflow run,
@@ -79,6 +97,10 @@ interface ExecutionState {
   /** Set the docked-terminal height in px. The value is clamped to
    *  `[MIN_PANEL_HEIGHT, viewport - 80]` against the current window height. */
   setPanelHeight: (height: number) => void;
+  /** Set the docked-terminal width in px (left/right dock). The value is
+   *  clamped to `[MIN_PANEL_WIDTH, viewport - 200]`. */
+  setPanelWidth: (width: number) => void;
+  setConsolePosition: (position: ConsoleDockPosition) => void;
   clearExecution: (id: string) => void;
   clearAll: () => void;
   /**
@@ -115,8 +137,10 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
   activeExecutionId: null,
   panelOpen: false,
   panelHeight: DEFAULT_PANEL_HEIGHT,
+  panelWidth: DEFAULT_PANEL_WIDTH,
+  consolePosition: "bottom",
 
-  startExecution: (id, commandId, commandName, script, shell, variables, env) =>
+  startExecution: (id, commandId, commandName, script, shell, variables, env, variableValuesRaw) =>
     set((state) => {
       const existing = state.executions[id];
       const execution: Execution = existing
@@ -128,6 +152,7 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
             shell: existing.shell ?? shell,
             variables: existing.variables ?? variables,
             env: existing.env ?? env,
+            variableValuesRaw: existing.variableValuesRaw ?? variableValuesRaw,
             // If a stub was created by an out-of-order log event, mark it
             // running here (it already was, but be explicit).
             status: existing.status,
@@ -140,6 +165,7 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
             shell,
             variables,
             env,
+            variableValuesRaw,
             status: "running",
             startedAt: Date.now(),
             log: [],
@@ -307,6 +333,14 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
         typeof window !== "undefined" ? window.innerHeight : height,
       ),
     }),
+  setPanelWidth: (width) =>
+    set({
+      panelWidth: clampPanelWidth(
+        width,
+        typeof window !== "undefined" ? window.innerWidth : width,
+      ),
+    }),
+  setConsolePosition: (position) => set({ consolePosition: position }),
 
   clearExecution: (id) =>
     set((state) => {

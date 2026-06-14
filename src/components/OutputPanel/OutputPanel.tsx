@@ -10,6 +10,9 @@ import type { TFunction } from "i18next";
 import { useContextMenu } from "../ContextMenu";
 import { buildConsoleCopyMenu } from "../../utils/consoleClipboard";
 import { useExecutionStore } from "../../stores/executionStore";
+import type { ConsoleDockPosition } from "../../stores/executionStore";
+import { Dropdown } from "../Dropdown";
+import type { DropdownOption } from "../Dropdown";
 import { useCommandStore } from "../../stores/commandStore";
 import { useUIStore } from "../../stores/uiStore";
 import type {
@@ -252,6 +255,10 @@ export function OutputPanel(): ReactElement | null {
   const clearExecution = useExecutionStore((s) => s.clearExecution);
   const panelHeight = useExecutionStore((s) => s.panelHeight);
   const setPanelHeight = useExecutionStore((s) => s.setPanelHeight);
+  const panelWidth = useExecutionStore((s) => s.panelWidth);
+  const setPanelWidth = useExecutionStore((s) => s.setPanelWidth);
+  const consolePosition = useExecutionStore((s) => s.consolePosition);
+  const setConsolePosition = useExecutionStore((s) => s.setConsolePosition);
   const commands = useCommandStore((s) => s.commands);
   // The command currently open in the full-screen editor (if any) and its
   // live, possibly-unsaved Script body. A re-run of that exact command must
@@ -259,46 +266,82 @@ export function OutputPanel(): ReactElement | null {
   const editorTarget = useUIStore((s) => s.commandEditorTarget);
   const editorLiveScript = useUIStore((s) => s.commandEditorLiveScript);
 
-  // Drag-to-resize the docked terminal from its top edge. We capture the
-  // pointer so the drag keeps tracking even if the cursor leaves the thin
-  // handle, and translate vertical movement into a new height (dragging up
-  // grows the panel since it's anchored to the viewport bottom). The store
-  // clamps the result, so we pass the raw target and let it bound the value.
+  const positionOptions: ReadonlyArray<DropdownOption> = [
+    { value: "bottom", label: t("outputPanel.position.bottom", { defaultValue: "Снизу" }) },
+    { value: "right", label: t("outputPanel.position.right", { defaultValue: "Справа" }) },
+    { value: "left", label: t("outputPanel.position.left", { defaultValue: "Слева" }) },
+  ];
+
+  const handlePositionChange = (value: string): void => {
+    setConsolePosition(value as ConsoleDockPosition);
+  };
+
+  // Drag-to-resize. For bottom dock: drag the top edge (vertical). For
+  // left/right dock: drag the inner edge (horizontal). The store clamps.
   const handleResizePointerDown = (
     event: ReactPointerEvent<HTMLDivElement>,
   ): void => {
     event.preventDefault();
-    const startY = event.clientY;
-    const startHeight = panelHeight;
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
 
-    const onMove = (moveEvent: PointerEvent): void => {
-      const delta = startY - moveEvent.clientY;
-      setPanelHeight(startHeight + delta);
-    };
-    const onUp = (): void => {
-      handle.releasePointerCapture(event.pointerId);
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-      handle.removeEventListener("pointercancel", onUp);
-    };
-
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
-    handle.addEventListener("pointercancel", onUp);
+    if (consolePosition === "bottom") {
+      const startY = event.clientY;
+      const startHeight = panelHeight;
+      const onMove = (moveEvent: PointerEvent): void => {
+        setPanelHeight(startHeight + (startY - moveEvent.clientY));
+      };
+      const onUp = (): void => {
+        handle.releasePointerCapture(event.pointerId);
+        handle.removeEventListener("pointermove", onMove);
+        handle.removeEventListener("pointerup", onUp);
+        handle.removeEventListener("pointercancel", onUp);
+      };
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onUp);
+    } else {
+      const startX = event.clientX;
+      const startWidth = panelWidth;
+      const onMove = (moveEvent: PointerEvent): void => {
+        const delta =
+          consolePosition === "right"
+            ? startX - moveEvent.clientX
+            : moveEvent.clientX - startX;
+        setPanelWidth(startWidth + delta);
+      };
+      const onUp = (): void => {
+        handle.releasePointerCapture(event.pointerId);
+        handle.removeEventListener("pointermove", onMove);
+        handle.removeEventListener("pointerup", onUp);
+        handle.removeEventListener("pointercancel", onUp);
+      };
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onUp);
+    }
   };
 
   const handleResizeKeyDown = (
     event: ReactKeyboardEvent<HTMLDivElement>,
   ): void => {
     const STEP = 24;
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setPanelHeight(panelHeight + STEP);
-    } else if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setPanelHeight(panelHeight - STEP);
+    if (consolePosition === "bottom") {
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setPanelHeight(panelHeight + STEP);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setPanelHeight(panelHeight - STEP);
+      }
+    } else {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setPanelWidth(panelWidth + (consolePosition === "right" ? STEP : -STEP));
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        setPanelWidth(panelWidth + (consolePosition === "right" ? -STEP : STEP));
+      }
     }
   };
 
@@ -315,6 +358,22 @@ export function OutputPanel(): ReactElement | null {
   useEffect(() => {
     setActiveTab("output");
   }, [activeExecutionId]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset["consolePosition"] = consolePosition;
+    root.dataset["consoleOpen"] = "true";
+    if (consolePosition !== "bottom") {
+      root.style.setProperty("--console-side-width", `${panelWidth}px`);
+    } else {
+      root.style.removeProperty("--console-side-width");
+    }
+    return () => {
+      root.removeAttribute("data-console-position");
+      root.removeAttribute("data-console-open");
+      root.style.removeProperty("--console-side-width");
+    };
+  }, [consolePosition, panelWidth]);
   const hasResult = active?.result !== undefined;
 
   // The command that produced the active execution, if it still exists.
@@ -400,23 +459,30 @@ export function OutputPanel(): ReactElement | null {
     // stays unique. `triggerCommandRun` registers the new run and makes the
     // panel switch to it, so it visually replaces the one we just cleared.
     clearExecution(active.id);
-    // Pass an explicit empty value map so variable resolution (defaults +
-    // prompt for unfilled specs) runs exactly as it does for a fresh Run
-    // from the Library.
-    void triggerCommandRun(target, { variableValues: {} });
+    // Pass the raw variable values from the previous run so the user is
+    // not prompted again. Falls back to an empty map (fresh prompt) when
+    // the previous execution did not capture variable values.
+    void triggerCommandRun(target, {
+      variableValues: active.variableValuesRaw ?? {},
+    });
   };
+
+  const panelStyle =
+    consolePosition === "bottom"
+      ? { height: panelHeight }
+      : { width: panelWidth };
 
   return (
     <div
-      className="output-panel"
+      className={`output-panel output-panel--${consolePosition}`}
       role="region"
       aria-label={t("outputPanel.ariaLabel")}
-      style={{ height: panelHeight }}
+      style={panelStyle}
     >
       <div
         className="output-panel__resize"
         role="separator"
-        aria-orientation="horizontal"
+        aria-orientation={consolePosition === "bottom" ? "horizontal" : "vertical"}
         aria-label={t("outputPanel.resizeLabel")}
         tabIndex={0}
         onPointerDown={handleResizePointerDown}
@@ -447,12 +513,10 @@ export function OutputPanel(): ReactElement | null {
               {t("outputPanel.exitCode", { code: active.exitCode })}
             </span>
           ) : null}
-        </div>
-        <div className="output-panel__actions">
           {active?.status === "running" ? (
             <button
               type="button"
-              className="btn command-form__action command-form__action--cancel"
+              className="btn command-form__action command-form__action--cancel output-panel__inline-action"
               onClick={handleCancel}
               title={t("outputPanel.cancelTitle")}
             >
@@ -465,7 +529,7 @@ export function OutputPanel(): ReactElement | null {
           {active && active.status !== "running" && rerunSource ? (
             <button
               type="button"
-              className="btn command-form__action command-form__action--run"
+              className="btn command-form__action command-form__action--run output-panel__inline-action"
               onClick={handleRerun}
               title={t("outputPanel.rerunTitle")}
             >
@@ -475,6 +539,15 @@ export function OutputPanel(): ReactElement | null {
               {t("outputPanel.rerun")}
             </button>
           ) : null}
+        </div>
+        <div className="output-panel__actions">
+          <Dropdown
+            value={consolePosition}
+            options={positionOptions}
+            onChange={handlePositionChange}
+            ariaLabel={t("outputPanel.positionTitle", { defaultValue: "Console position" })}
+            className="output-panel__position-select"
+          />
           <button
             type="button"
             className="btn command-form__action command-form__action--cancel"

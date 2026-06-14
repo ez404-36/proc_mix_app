@@ -176,6 +176,13 @@ export interface Execution {
    */
   variables?: ExecutionVariable[];
   /**
+   * Raw (unmasked) resolved variable values, kept in memory only so that
+   * the Re-run button can replay the same values without re-opening the
+   * variable prompt. Never rendered in the UI. Absent for commands without
+   * variables.
+   */
+  variableValuesRaw?: Record<string, string>;
+  /**
    * Per-command environment variable overrides active for this run.
    * Absent when the command has no env overrides. Displayed in the
    * OutputPanel alongside the script and resolved variables.

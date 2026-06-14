@@ -355,6 +355,9 @@ export async function triggerCommandRun(
           cmd.shell,
           executionVariables,
           cmd.env,
+          Object.keys(mergedVariableValues as Record<string, string>).length > 0
+            ? (mergedVariableValues as Record<string, string>)
+            : undefined,
         );
       useCommandStore.getState().markCommandRun(cmd.id);
       try {

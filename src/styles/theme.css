@@ -1038,34 +1038,80 @@ select {
 /* Output panel */
 .output-panel {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
   z-index: 900;
   display: flex;
   flex-direction: column;
-  /* Height is set inline from `panelHeight` (drag-resizable) and clamped in the
-     store to `[MIN_PANEL_HEIGHT, viewport - 80]`. `min-height` is a static
-     safety floor for the no-JS / initial render. */
-  min-height: 220px;
   background: var(--console-bg);
   color: var(--console-text);
-  border-top: 1px solid var(--console-border);
   box-shadow: var(--console-shadow);
 }
 
-/* Thin drag handle along the panel's top edge. Sits above the border so the
-   whole top line reads as grabbable; widens its hit area with padding via the
-   `::before`. Keyboard-focusable (Arrow Up/Down resize) with a visible ring. */
+/* Bottom dock (default) */
+.output-panel--bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  min-height: 220px;
+  border-top: 1px solid var(--console-border);
+}
+
+/* Right dock */
+.output-panel--right {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  min-width: 280px;
+  border-left: 1px solid var(--console-border);
+}
+
+/* Left dock */
+.output-panel--left {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  min-width: 280px;
+  border-right: 1px solid var(--console-border);
+}
+
+/* Offset app-shell when console is docked to the side so content is not
+   obscured by the fixed panel. The data attributes are on <html>. */
+:root[data-console-open][data-console-position="right"] .app-shell {
+  padding-right: var(--console-side-width, 420px);
+}
+
+:root[data-console-open][data-console-position="left"] .app-shell {
+  padding-left: var(--console-side-width, 420px);
+}
+
+/* Thin drag handle — default (bottom dock): along the top edge. */
 .output-panel__resize {
   position: absolute;
+  touch-action: none;
+  z-index: 1;
+}
+
+.output-panel--bottom .output-panel__resize {
   top: -3px;
   left: 0;
   right: 0;
   height: 7px;
   cursor: ns-resize;
-  touch-action: none;
-  z-index: 1;
+}
+
+.output-panel--right .output-panel__resize {
+  top: 0;
+  left: -3px;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+}
+
+.output-panel--left .output-panel__resize {
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
 }
 
 .output-panel__resize:hover,
@@ -1188,6 +1234,47 @@ select {
   font-size: 12px;
   color: var(--console-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dropdown__trigger.output-panel__position-select {
+  font-size: 12px;
+  padding: 3px 8px;
+  background: var(--console-btn-bg);
+  border-color: var(--console-btn-border);
+  color: var(--console-btn-text);
+  min-width: 80px;
+  width: auto;
+}
+
+.dropdown__trigger.output-panel__position-select:hover:not(:disabled) {
+  border-color: var(--console-btn-hover-border);
+}
+
+.dropdown__trigger.output-panel__position-select:focus,
+.dropdown__trigger.output-panel__position-select[aria-expanded="true"] {
+  border-color: var(--console-btn-hover-border);
+  box-shadow: none;
+}
+
+.output-panel__inline-action {
+  font-size: 11px;
+  padding: 2px 8px;
+  height: auto;
+  background: var(--console-btn-bg);
+  border-color: var(--console-btn-border);
+  color: var(--console-btn-text);
+}
+
+.output-panel__inline-action.command-form__action--run {
+  border-color: var(--color-success);
+}
+
+.output-panel__inline-action.command-form__action--cancel {
+  border-color: var(--color-danger, #dc2626);
+}
+
+.output-panel__inline-action:hover {
+  border-color: var(--console-btn-hover-border);
 }
 
 .output-panel__actions {
@@ -4225,6 +4312,18 @@ select {
   position: relative;
 }
 
+/* Fullscreen editor: pin the palette + canvas over the whole viewport so the
+   user gets maximum working room. Padding + background match the app surface
+   so it reads as a focused mode, not a detached overlay. */
+.wf-editor--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 1000);
+  margin: 0;
+  padding: 16px;
+  background: var(--color-bg);
+}
+
 .wf-palette {
   width: 220px;
   flex-shrink: 0;
@@ -4329,6 +4428,18 @@ select {
   box-shadow: var(--shadow-sm);
 }
 
+/* The node currently being edited (clicked → open in the inspector). reactflow
+   adds `.selected` to the node wrapper; we give the inner card a thicker
+   primary border and a primary glow so the user sees which node the inspector
+   targets. Kept as a box-shadow ring (no layout shift from the border width). */
+.react-flow__node.selected .wf-node {
+  border-color: var(--color-primary);
+  border-width: 2px;
+  box-shadow:
+    0 0 0 2px var(--color-primary),
+    var(--shadow-sm);
+}
+
 .wf-node__kind {
   font-size: 10px;
   text-transform: uppercase;
@@ -4339,6 +4450,36 @@ select {
 
 .wf-node__title {
   font-weight: 600;
+}
+
+/* Row holding the predicate summary on the LEFT and the да/нет branch labels
+   on the right, so the predicate reads next to the outcomes it governs. */
+.wf-node__branches-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* When the predicate row is present, the branch labels keep their own column
+   but no longer need the row's top margin (the row supplies it). */
+.wf-node__branches-row .wf-node__branches {
+  margin-top: 0;
+}
+
+/* Short predicate summary on a condition node card (e.g. `> 80`). Muted +
+   monospaced; truncates rather than widening the node, yielding the label
+   column its space. */
+.wf-node__predicate {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wf-node--start {
