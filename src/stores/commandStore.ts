@@ -4,6 +4,7 @@ import type { Command } from "../types";
 import type { Platform } from "../types/platform";
 import {
   deleteCommandInDb,
+  deleteLocalCommandsForWorkflowInDb,
   listCommandsFromDb,
   upsertCommandInDb,
 } from "../utils/commandRepository";
@@ -69,6 +70,13 @@ interface CommandState {
    * when the id did not exist.
    */
   deleteCommand: (id: string) => Command | null;
+  /**
+   * Cascade-remove every `local`-scoped command owned by `workflowId` (used
+   * when the owning workflow is deleted). Drops them from in-memory state and
+   * issues a single bulk delete IPC. Returns the removed snapshots so the
+   * caller (workflow delete history wrapper) can persist them for restore.
+   */
+  removeLocalCommandsForWorkflow: (workflowId: string) => Command[];
   toggleFavorite: (id: string) => void;
   markCommandRun: (id: string) => void;
 }
@@ -104,6 +112,13 @@ function persistUpsert(cmd: Command): void {
 function persistDelete(id: string): void {
   void deleteCommandInDb(id).catch((err: unknown) => {
     console.error("failed to delete command", id, err);
+    Message.error("Failed to delete command");
+  });
+}
+
+function persistDeleteLocalForWorkflow(workflowId: string): void {
+  void deleteLocalCommandsForWorkflowInDb(workflowId).catch((err: unknown) => {
+    console.error("failed to delete local commands for workflow", workflowId, err);
     Message.error("Failed to delete command");
   });
 }
@@ -202,6 +217,21 @@ export const useCommandStore = create<CommandState>()((set, get) => ({
     // record when the id was unknown.
     persistDelete(id);
     return removed ?? null;
+  },
+  removeLocalCommandsForWorkflow: (workflowId) => {
+    const removed = get().commands.filter(
+      (c) => c.scope === "local" && c.workflowId === workflowId,
+    );
+    if (removed.length === 0) return [];
+    const removedIds = new Set(removed.map((c) => c.id));
+    set((state) => ({
+      commands: state.commands.filter((c) => !removedIds.has(c.id)),
+      favorites: state.favorites.filter((f) => !removedIds.has(f)),
+    }));
+    // A single bulk delete IPC rather than N per-command deletes — the Rust
+    // side removes every matching local row in one statement.
+    persistDeleteLocalForWorkflow(workflowId);
+    return removed;
   },
   toggleFavorite: (id) => {
     let updated: Command | undefined;

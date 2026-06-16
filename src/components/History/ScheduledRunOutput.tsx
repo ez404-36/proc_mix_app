@@ -1,14 +1,15 @@
-// Shared renderer for a scheduled run's captured output / extracted result.
+// Shared renderer for a run's captured output / extracted result.
 //
-// Used by BOTH the schedule view's "История" tab (ScheduleView.tsx) and the
-// global History list (HistoryRow.tsx) so a scheduled run shows the same
-// expandable console block / result / "no output" note everywhere. Keeping it
-// in one place means the two surfaces never drift.
+// Used by the schedule view's "История" tab (ScheduleView.tsx) and the global
+// History list (HistoryRow.tsx) so a scheduled run, a command run, and a
+// workflow run all show the same expandable console block / result / "no
+// output" note. It is intentionally prop-based (output + result) rather than
+// event-typed so it works for ANY run kind that persists captured output.
+// Keeping it in one place means the surfaces never drift.
 
 import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { ExtractedResult, HistoryLogLine } from "../../types";
-import type { ScheduledRunEvent } from "../../types";
 
 /** Which pane of the captured detail is showing. */
 type DetailTab = "output" | "result";
@@ -67,16 +68,15 @@ function ResultPane({ result }: { result: ExtractedResult }): ReactElement {
  * on the schedule view's История tab and the global History list.
  */
 export function ScheduledRunOutput({
-  event,
+  output: rawOutput,
+  result,
 }: {
-  event: ScheduledRunEvent;
+  output?: HistoryLogLine[];
+  result?: ExtractedResult;
 }): ReactElement {
   const { t } = useTranslation();
   const output =
-    event.output !== undefined && event.output.length > 0
-      ? event.output
-      : undefined;
-  const result = event.result;
+    rawOutput !== undefined && rawOutput.length > 0 ? rawOutput : undefined;
   const hasOutput = output !== undefined;
   const hasResult = result !== undefined;
 

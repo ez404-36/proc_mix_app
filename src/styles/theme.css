@@ -2506,17 +2506,13 @@ body.is-editor-fullscreen .output-panel {
  * default spin arrows are suppressed.
  *
  * `.number-stepper*` is the shared form used by the reusable NumberStepper
- * component (scheduler form, etc.); `.command-form__timeout*` aliases it for
- * the command-form timeout field, whose "empty = no limit" semantics keep
- * its own markup but share this geometry. */
-.command-form__timeout,
+ * component (scheduler form, command-form timeout field, etc.). */
 .number-stepper {
   display: flex;
   align-items: stretch;
   gap: 6px;
 }
 
-.command-form__timeout-input,
 .number-stepper__input {
   flex: 1 1 auto;
   /* A flex item's default `min-width: auto` keeps the input from shrinking
@@ -2530,8 +2526,6 @@ body.is-editor-fullscreen .output-panel {
   appearance: textfield;
 }
 
-.command-form__timeout-input::-webkit-outer-spin-button,
-.command-form__timeout-input::-webkit-inner-spin-button,
 .number-stepper__input::-webkit-outer-spin-button,
 .number-stepper__input::-webkit-inner-spin-button {
   -webkit-appearance: none;
@@ -2562,7 +2556,6 @@ body.is-editor-fullscreen .output-panel {
 /* Square stepper buttons sized to the input height so the row reads as a
  * single control. Reuses `.btn`/`.btn--ghost` for hover/disabled states;
  * these overrides just fix the geometry and the glyph size. */
-.command-form__timeout-step,
 .number-stepper__step {
   flex: 0 0 auto;
   width: 34px;
@@ -4337,6 +4330,15 @@ body.is-editor-fullscreen .output-panel {
   flex-shrink: 0;
 }
 
+/* Persistent "Saved at HH:MM:SS" confirmation shown next to the Save button
+   so a save is discoverable at a glance (the success toast is transient). */
+.wf-header__saved-at {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  margin-right: 4px;
+}
+
 .wf-editor {
   display: flex;
   /* `flex: 1 0 480px` — grow to fill a tall window, but DON'T shrink below the
@@ -4396,6 +4398,11 @@ body.is-editor-fullscreen .output-panel {
   text-align: left;
 }
 
+.wf-palette__search {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
 .wf-palette__list {
   display: flex;
   flex-direction: column;
@@ -4419,6 +4426,31 @@ body.is-editor-fullscreen .output-panel {
 
 .wf-palette__item:hover {
   border-color: var(--color-primary);
+}
+
+/* Small "local" pill shown next to a workflow-private command — in the
+   palette list and in the node inspector. Reuses the shell-badge token look. */
+.wf-palette__local-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+/* The local-command affordance row in the node inspector: the "local" badge
+   next to the "open global access" promote button. */
+.wf-inspector__local-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .wf-canvas {

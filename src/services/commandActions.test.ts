@@ -22,13 +22,16 @@ import { useCommandStore } from "../stores/commandStore";
 vi.mock("../utils/commandRepository", () => ({
   upsertCommandInDb: vi.fn().mockResolvedValue(undefined),
   deleteCommandInDb: vi.fn().mockResolvedValue(undefined),
+  deleteLocalCommandsForWorkflowInDb: vi.fn().mockResolvedValue(undefined),
   listCommandsFromDb: vi.fn().mockResolvedValue([]),
 }));
 
+import { useWorkflowStore } from "../stores/workflowStore";
 import type { Command, HistoryEvent } from "../types";
 import {
   createCommand,
   deleteCommand,
+  promoteCommandToGlobal,
   updateCommand,
 } from "./commandActions";
 
@@ -122,6 +125,82 @@ describe("deleteCommand", () => {
     const removed = deleteCommand("does-not-exist");
     expect(removed).toBeNull();
     expect(recordMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("promoteCommandToGlobal", () => {
+  afterEach(() => {
+    useWorkflowStore.setState({ workflows: [], hydrated: true });
+  });
+
+  it("clears scope/workflowId and keeps the name when no global clash", () => {
+    const local = createCommand({
+      name: "Build",
+      script: "echo build",
+      tags: [],
+      favorite: false,
+      runAsAdmin: false,
+      scope: "local",
+      workflowId: "wf-1",
+    });
+    recordMock.mockClear();
+    const result = promoteCommandToGlobal(local.id);
+    expect(result?.after.scope).toBe("global");
+    expect(result?.after.workflowId).toBeUndefined();
+    expect(result?.after.name).toBe("Build");
+    const evt = recordMock.mock.calls[0]?.[0] as HistoryEvent;
+    expect(evt.kind).toBe("commandEdited");
+  });
+
+  it("renames to 'name (workflow)' on a global name clash", () => {
+    useWorkflowStore.setState({
+      workflows: [
+        {
+          id: "wf-1",
+          name: "Deploy Flow",
+          nodes: [],
+          edges: [],
+          tags: [],
+          favorite: false,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          runCount: 0,
+        },
+      ],
+      hydrated: true,
+    });
+    // An existing GLOBAL command with the same name as the local one.
+    createCommand({
+      name: "Build",
+      script: "echo global",
+      tags: [],
+      favorite: false,
+      runAsAdmin: false,
+    });
+    const local = createCommand({
+      name: "Build",
+      script: "echo local",
+      tags: [],
+      favorite: false,
+      runAsAdmin: false,
+      scope: "local",
+      workflowId: "wf-1",
+    });
+    const result = promoteCommandToGlobal(local.id);
+    expect(result?.after.name).toBe("Build (Deploy Flow)");
+    expect(result?.after.scope).toBe("global");
+  });
+
+  it("returns null for an unknown id or an already-global command", () => {
+    expect(promoteCommandToGlobal("nope")).toBeNull();
+    const global = createCommand({
+      name: "Already global",
+      script: "echo x",
+      tags: [],
+      favorite: false,
+      runAsAdmin: false,
+    });
+    expect(promoteCommandToGlobal(global.id)).toBeNull();
   });
 });
 

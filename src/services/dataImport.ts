@@ -12,7 +12,7 @@
 // `workflowActions` wrappers, so each imported entry is logged as a
 // `commandCreated` / `workflowCreated` event, exactly like a manual create.
 
-import { createCommand } from "./commandActions";
+import { createCommand, updateCommand } from "./commandActions";
 import { createWorkflow } from "./workflowActions";
 import type {
   ExportedCommand,
@@ -185,6 +185,12 @@ export function applyImport(
   const { commands, workflows, rename } = resolveSelection(parsed, selection);
 
   const commandIdMap = new Map<string, string>();
+  // For each imported command that is `local`, remember its NEW id and the
+  // OLD workflow id it referenced — so a second pass can re-point it at the
+  // imported workflow's freshly-generated id (commands import before
+  // workflows, so the new workflow id is not known yet at create time).
+  const localCommandRemap: { newCommandId: string; oldWorkflowId: string }[] =
+    [];
   let created = 0;
   let renamed = 0;
   let demotedAdmin = 0;
@@ -196,12 +202,33 @@ export function applyImport(
 
     const record = createCommand(input);
     commandIdMap.set(cmd.id, record.id);
+    if (record.scope === "local" && record.workflowId !== undefined) {
+      localCommandRemap.push({
+        newCommandId: record.id,
+        oldWorkflowId: record.workflowId,
+      });
+    }
     created += 1;
     if (newName !== undefined) renamed += 1;
   }
 
+  // Build the old→new workflow id map AS workflows are created so local
+  // commands can be re-pointed at the imported workflow's new id.
+  const workflowIdMap = new Map<string, string>();
   for (const wf of workflows) {
-    createWorkflow(toWorkflowInput(wf, commandIdMap));
+    const record = createWorkflow(toWorkflowInput(wf, commandIdMap));
+    workflowIdMap.set(wf.id, record.id);
+  }
+
+  // Second pass: re-point each imported local command at the NEW workflow id.
+  // A local command whose owning workflow was NOT part of the import keeps its
+  // (now-dangling) old id rather than crashing — it simply has no owner in
+  // this install until the user promotes or removes it.
+  for (const { newCommandId, oldWorkflowId } of localCommandRemap) {
+    const newWorkflowId = workflowIdMap.get(oldWorkflowId);
+    if (newWorkflowId !== undefined && newWorkflowId !== oldWorkflowId) {
+      updateCommand(newCommandId, { workflowId: newWorkflowId });
+    }
   }
 
   return {

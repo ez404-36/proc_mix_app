@@ -400,7 +400,7 @@ function ScheduleHistoryEntry({
           ) : null}
         </summary>
 
-        <ScheduledRunOutput event={event} />
+        <ScheduledRunOutput output={event.output} result={event.result} />
       </details>
     </li>
   );

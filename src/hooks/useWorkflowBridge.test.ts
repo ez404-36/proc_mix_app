@@ -11,20 +11,36 @@ vi.mock("../utils/workflowRunner", () => ({
 
 // The bridge finalizes the history row on terminal events; capture the call.
 const updateRunMock = vi.fn();
-vi.mock("../utils/historyRepository", () => ({
-  updateRunHistoryEventInDb: (...args: unknown[]) => updateRunMock(...args),
-}));
+vi.mock("../utils/historyRepository", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../utils/historyRepository")>();
+  return {
+    // Keep the real `executionLogToHistoryOutput` (a pure mapper) so the bridge
+    // can build the captured-output payload; only the IPC writer is stubbed.
+    executionLogToHistoryOutput: actual.executionLogToHistoryOutput,
+    updateRunHistoryEventInDb: (...args: unknown[]) => updateRunMock(...args),
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 import { useWorkflowBridge } from "./useWorkflowBridge";
+import { useExecutionStore } from "../stores/executionStore";
 import { useWorkflowRunStore } from "../stores/workflowRunStore";
 
 type Handler = (e: WorkflowEvent) => void;
 
 function resetRuns(): void {
   useWorkflowRunStore.setState({ runs: {}, recentRunIds: [] });
+  // The bridge reads the aggregate workflow execution from the execution store
+  // to capture output; reset it so each test starts with no captured output.
+  useExecutionStore.setState({
+    executions: {},
+    recentIds: [],
+    activeExecutionId: null,
+    panelOpen: false,
+  });
 }
 
 beforeEach(() => {
@@ -127,6 +143,10 @@ describe("useWorkflowBridge - terminal events", () => {
       undefined,
       42,
       "succeeded",
+      // timedOut is always undefined for a workflow run; no aggregate output
+      // was captured in this test (no execution started), so output is too.
+      undefined,
+      undefined,
     );
   });
 
@@ -142,6 +162,8 @@ describe("useWorkflowBridge - terminal events", () => {
       undefined,
       undefined,
       "cancelled",
+      undefined,
+      undefined,
     );
   });
 
@@ -162,6 +184,8 @@ describe("useWorkflowBridge - terminal events", () => {
       undefined,
       undefined,
       "failed",
+      undefined,
+      undefined,
     );
   });
 });

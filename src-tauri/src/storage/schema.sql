@@ -43,7 +43,17 @@ CREATE TABLE IF NOT EXISTS commands (
   -- run finishes to parse stdout into named fields. Added in v0.7.0; the
   -- companion ALTER in db.rs::ensure_commands_columns handles databases
   -- created before this column existed.
-  output_schema   TEXT
+  output_schema   TEXT,
+  -- Visibility scope: 'global' (default, shared library) or 'local' (private
+  -- to one workflow — hidden from the global library, usable only inside its
+  -- owning workflow's editor; see `workflow_id`). Added in v0.7.1; the
+  -- companion ALTER in db.rs::ensure_commands_columns handles databases
+  -- created before this column existed.
+  scope           TEXT NOT NULL DEFAULT 'global',
+  -- Owning workflow id for a 'local'-scoped command (NULL for globals). When
+  -- the owning workflow is deleted, its local commands are cascade-deleted
+  -- (see storage/commands.rs::delete_local_for_workflow). Added in v0.7.1.
+  workflow_id     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_commands_favorite ON commands(favorite);

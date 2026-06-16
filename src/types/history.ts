@@ -111,6 +111,18 @@ export interface CommandRunEvent extends HistoryEventBase {
    * `false` for every other outcome.
    */
   timedOut?: boolean;
+  /**
+   * Captured console lines, persisted when the run reached a terminal state.
+   * Absent while running and for rows recorded before output persistence
+   * existed. May end with a `meta` truncation marker when the output exceeded
+   * the persistence cap. Drives the expandable History row's output pane.
+   */
+  output?: HistoryLogLine[];
+  /**
+   * Structured extraction result, present when the command declared an output
+   * schema and produced a result.
+   */
+  result?: ExtractedResult;
 }
 
 export interface CommandRestoredEvent extends HistoryEventBase {
@@ -153,6 +165,13 @@ export interface WorkflowDeletedEvent extends HistoryEventBase {
   workflowName: string;
   /** Full snapshot of the deleted workflow — used by restore. */
   snapshotBefore: Workflow;
+  /**
+   * Snapshots of the workflow's `local`-scoped commands that were
+   * cascade-deleted alongside it. Captured so a future restore can re-create
+   * them with the workflow. Absent/empty when the workflow had no local
+   * commands. Older delete events predate this field.
+   */
+  localCommands?: Command[];
 }
 
 export interface WorkflowRunEvent extends HistoryEventBase {
@@ -172,6 +191,17 @@ export interface WorkflowRunEvent extends HistoryEventBase {
   status: RunStatus;
   /** True when the run's final node was killed by its timeout. */
   timedOut?: boolean;
+  /**
+   * Aggregate captured console lines for the whole workflow run, persisted
+   * when the run reached a terminal state. Absent while running and for rows
+   * recorded before output persistence existed. May end with a `meta`
+   * truncation marker. Drives the expandable History row's output pane.
+   */
+  output?: HistoryLogLine[];
+  /**
+   * Structured extraction result for the workflow run, when available.
+   */
+  result?: ExtractedResult;
 }
 
 export interface ScheduledRunEvent extends HistoryEventBase {

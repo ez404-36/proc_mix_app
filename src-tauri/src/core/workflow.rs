@@ -552,7 +552,10 @@ fn resolve_variable_values(
             // lets the executor fall back to the spec default / prompt.)
             DataSourceRecord::AtRun => {}
             other => {
-                merged.insert(name.clone(), resolve_data_source(other, prev, data_flow, vars));
+                merged.insert(
+                    name.clone(),
+                    resolve_data_source(other, prev, data_flow, vars),
+                );
             }
         }
     }
@@ -2364,7 +2367,9 @@ mod graph_tests {
         // Missing name → empty (lenient).
         assert_eq!(
             resolve_data_source(
-                &DataSourceRecord::DataVar { name: "nope".into() },
+                &DataSourceRecord::DataVar {
+                    name: "nope".into()
+                },
                 None,
                 &df,
                 &vars
@@ -2420,8 +2425,14 @@ mod graph_tests {
 
         let resolved =
             resolve_variable_values(&sources, Some(&node_values), Some(&prev), &df, &vars);
-        assert_eq!(resolved.get("url").map(String::as_str), Some("server-output"));
-        assert_eq!(resolved.get("host").map(String::as_str), Some("example.com"));
+        assert_eq!(
+            resolved.get("url").map(String::as_str),
+            Some("server-output")
+        );
+        assert_eq!(
+            resolved.get("host").map(String::as_str),
+            Some("example.com")
+        );
         assert_eq!(
             resolved.get("token").map(String::as_str),
             Some("from-data-node")
@@ -2444,13 +2455,8 @@ mod graph_tests {
         ]);
         let node_values = BTreeMap::from([("only_node".to_string(), "n".to_string())]);
         let empty_sources = BTreeMap::new();
-        let resolved = resolve_variable_values(
-            &empty_sources,
-            Some(&node_values),
-            None,
-            &df,
-            &vars,
-        );
+        let resolved =
+            resolve_variable_values(&empty_sources, Some(&node_values), None, &df, &vars);
         // A `data`-node var reaches the node by name…
         assert_eq!(resolved.get("only_var").map(String::as_str), Some("v"));
         assert_eq!(resolved.get("only_df").map(String::as_str), Some("d"));
@@ -2464,17 +2470,16 @@ mod graph_tests {
         // A regex parser with one named group, applied to the previous node's
         // raw stdout. The extracted field lands in data_flow and on the new
         // prev outcome; the input is carried through as the new stdout_tail.
-        let schema: crate::storage::commands::OutputSchemaRecord = serde_json::from_value(
-            serde_json::json!({
+        let schema: crate::storage::commands::OutputSchemaRecord =
+            serde_json::from_value(serde_json::json!({
                 "pipeline": [{
                     "parser": "regex",
                     "pattern": "version (?P<ver>[0-9.]+)",
                     "fields": [{ "name": "ver", "group": "ver" }]
                 }],
                 "returnField": "ver"
-            }),
-        )
-        .unwrap();
+            }))
+            .unwrap();
         let prev = PrevOutcome {
             stdout_tail: Some("app version 1.2.3 ready".into()),
             ..Default::default()

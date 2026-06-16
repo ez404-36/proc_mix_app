@@ -27,6 +27,7 @@ import {
   collectCategories,
   collectTags,
   filterCommands,
+  globalCommands,
 } from "../../utils/commandFilters";
 import { sortCommands, sortWorkflows } from "../../utils/sortLists";
 import { paginate } from "../../utils/paginate";
@@ -600,7 +601,12 @@ function CommandGroupSection({
 
 function CommandsTab(): ReactElement {
   const { t } = useTranslation();
-  const commands = useCommandStore((s) => s.commands);
+  const allCommands = useCommandStore((s) => s.commands);
+  // The global Library never shows workflow-private `local` commands — they
+  // are visible only inside their owning workflow's editor. Filter them out
+  // once at the top so the list, search, tag/category options, and delete
+  // blocker checks all operate on the global subset.
+  const commands = useMemo(() => globalCommands(allCommands), [allCommands]);
   const favorites = useCommandStore((s) => s.favorites);
   const toggleFavorite = useCommandStore((s) => s.toggleFavorite);
   // History-aware delete: routes through the `commandActions` wrapper

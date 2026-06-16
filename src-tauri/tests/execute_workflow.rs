@@ -115,6 +115,8 @@ fn command(id: &str, script: &str) -> CommandRecord {
         variables: Vec::new(),
         timeout_seconds: None,
         output_schema: None,
+        scope: None,
+        workflow_id: None,
     }
 }
 

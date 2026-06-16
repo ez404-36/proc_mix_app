@@ -121,6 +121,14 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
             "output_schema",
             "ALTER TABLE commands ADD COLUMN output_schema TEXT",
         ),
+        (
+            "scope",
+            "ALTER TABLE commands ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'",
+        ),
+        (
+            "workflow_id",
+            "ALTER TABLE commands ADD COLUMN workflow_id TEXT",
+        ),
     ];
 
     for &(col, sql) in migrations {
@@ -500,6 +508,57 @@ mod tests {
             .unwrap();
         let v: String = row.try_get("variables").unwrap();
         assert_eq!(v, "[]", "existing rows must default to an empty array");
+
+        // Running the migration again must remain a no-op (idempotent).
+        ensure_commands_columns(&pool).await.unwrap();
+    }
+
+    /// Simulate an old database created BEFORE `scope` / `workflow_id`
+    /// existed (v0.7.1). The migration must add both columns, default the
+    /// existing row's `scope` to `'global'` and leave `workflow_id` NULL,
+    /// and remain idempotent.
+    #[tokio::test]
+    async fn ensure_commands_columns_adds_missing_scope_and_workflow_id() {
+        let pool = fresh_pool().await;
+        // Old schema — has the earlier columns but no scope/workflow_id.
+        sqlx::raw_sql(
+            "CREATE TABLE commands (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                script TEXT NOT NULL,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                favorite INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_count INTEGER NOT NULL DEFAULT 0,
+                run_as_admin INTEGER NOT NULL DEFAULT 0,
+                variables TEXT NOT NULL DEFAULT '[]'
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO commands (id, name, script, created_at, updated_at)
+             VALUES ('a', 'n', 'echo', '2026-06-15', '2026-06-15')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_commands_columns(&pool).await.unwrap();
+
+        let row = sqlx::query("SELECT scope, workflow_id FROM commands WHERE id = 'a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let scope: String = row.try_get("scope").unwrap();
+        let workflow_id: Option<String> = row.try_get("workflow_id").unwrap();
+        assert_eq!(
+            scope, "global",
+            "existing rows must default to scope='global'"
+        );
+        assert!(workflow_id.is_none(), "workflow_id must default to NULL");
 
         // Running the migration again must remain a no-op (idempotent).
         ensure_commands_columns(&pool).await.unwrap();

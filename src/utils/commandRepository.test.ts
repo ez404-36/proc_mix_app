@@ -36,6 +36,7 @@ const fullCommand: Command = {
   lastRunAt: "2026-05-28T00:00:02Z",
   runCount: 3,
   runAsAdmin: true,
+  scope: "global",
 };
 
 const fullRecord: CommandRecord = {
@@ -58,6 +59,7 @@ const fullRecord: CommandRecord = {
   lastRunAt: "2026-05-28T00:00:02Z",
   runCount: 3,
   runAsAdmin: true,
+  scope: "global",
 };
 
 const minimalCommand: Command = {
@@ -70,6 +72,7 @@ const minimalCommand: Command = {
   updatedAt: "2026-05-28T00:00:00Z",
   runCount: 0,
   runAsAdmin: false,
+  scope: "global",
 };
 
 const minimalRecord: CommandRecord = {
@@ -92,6 +95,7 @@ const minimalRecord: CommandRecord = {
   lastRunAt: null,
   runCount: 0,
   runAsAdmin: false,
+  scope: "global",
 };
 
 beforeEach(() => {
@@ -137,6 +141,35 @@ describe("commandToRecord / recordToCommand", () => {
     delete (legacy as Partial<CommandRecord>).runAsAdmin;
     const cmd = recordToCommand(legacy);
     expect(cmd.runAsAdmin).toBe(false);
+  });
+
+  it("defaults scope to global when the record predates the field", () => {
+    const legacy = { ...minimalRecord };
+    delete (legacy as Partial<CommandRecord>).scope;
+    const cmd = recordToCommand(legacy);
+    expect(cmd.scope).toBe("global");
+    expect(cmd.workflowId).toBeUndefined();
+  });
+
+  it("decodes a null / unknown scope to global", () => {
+    expect(recordToCommand({ ...minimalRecord, scope: null }).scope).toBe(
+      "global",
+    );
+    expect(
+      recordToCommand({ ...minimalRecord, scope: "weird" }).scope,
+    ).toBe("global");
+  });
+
+  it("round-trips a local command's scope + workflowId", () => {
+    const local: Command = {
+      ...minimalCommand,
+      scope: "local",
+      workflowId: "wf-9",
+    };
+    const record = commandToRecord(local);
+    expect(record.scope).toBe("local");
+    expect(record.workflowId).toBe("wf-9");
+    expect(recordToCommand(record)).toEqual(local);
   });
 });
 

@@ -220,11 +220,26 @@ export function HistoryRow({ event }: HistoryRowProps): ReactElement {
     </div>
   );
 
-  // A scheduled run is expandable: the row becomes the clickable summary of a
-  // `<details>` and reveals the same captured output / result / "no output"
-  // block as the schedule view's История tab (shared `ScheduledRunOutput`).
-  // Every other kind keeps the plain, non-interactive row.
-  if (event.kind === "scheduledRun") {
+  // A run row is expandable when it has captured detail to show: the row
+  // becomes the clickable summary of a `<details>` revealing the same console
+  // block / result / "no output" note as the schedule view's История tab
+  // (shared `ScheduledRunOutput`).
+  //   - scheduledRun: always expandable (it renders a "no output" note when
+  //     capture was disabled — preserving the existing behaviour).
+  //   - commandRun / workflowRun: expandable ONLY when output was persisted, so
+  //     older rows (recorded before output persistence) and runs that produced
+  //     nothing stay plain, non-interactive rows with no empty expander.
+  // Every non-run kind keeps the plain row.
+  const runDetail =
+    event.kind === "scheduledRun"
+      ? { output: event.output, result: event.result }
+      : (event.kind === "commandRun" || event.kind === "workflowRun") &&
+          event.output !== undefined &&
+          event.output.length > 0
+        ? { output: event.output, result: event.result }
+        : undefined;
+
+  if (runDetail !== undefined) {
     return (
       <li className="history-row history-row--scheduled">
         <details className="history-row__disclosure">
@@ -236,7 +251,10 @@ export function HistoryRow({ event }: HistoryRowProps): ReactElement {
             </div>
             {meta}
           </summary>
-          <ScheduledRunOutput event={event} />
+          <ScheduledRunOutput
+            output={runDetail.output}
+            result={runDetail.result}
+          />
         </details>
       </li>
     );

@@ -30,6 +30,9 @@ const sampleCommand: Command = {
   updatedAt: "2026-05-28T00:00:00Z",
   runCount: 0,
   runAsAdmin: false,
+  // `recordToCommand` always materialises a scope, so a command that
+  // round-trips through the wire mappers comes back as `"global"`.
+  scope: "global",
 };
 
 const sampleRecord: CommandRecord = {
@@ -456,6 +459,8 @@ describe("IPC wrappers", () => {
       durationMs: null,
       status: "cancelled",
       timedOut: null,
+      output: null,
+      result: null,
     });
   });
 
@@ -470,6 +475,9 @@ describe("IPC wrappers", () => {
       // Non-timeout runs send `timedOut: null` so the Rust side stores
       // `None`; only a genuine timeout sends `true`.
       timedOut: null,
+      // No captured output / result supplied → both forwarded as null.
+      output: null,
+      result: null,
     });
   });
 

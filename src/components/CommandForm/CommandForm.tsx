@@ -13,6 +13,7 @@ import type {
 import { useTranslation } from "react-i18next";
 import type {
   Command,
+  CommandScope,
   OutputSchema,
   ParsedCli,
   Shell,
@@ -32,10 +33,12 @@ import { useUtilityHelp } from "../../hooks/useUtilityHelp";
 import { useAdminEscalation } from "../../hooks/useAdminEscalation";
 import { useCommandLiveRun } from "../../hooks/useCommandLiveRun";
 import { useUIStore } from "../../stores/uiStore";
+import { useWorkflowStore } from "../../stores/workflowStore";
 import { CancelIcon, RunIcon, SaveIcon, TrashIcon } from "../icons";
 import { HelpTooltip } from "../HelpTooltip";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
+import { NumberStepper } from "../NumberStepper";
 import { OutputSchemaEditor } from "./OutputSchemaEditor";
 import { ScriptEditor } from "./ScriptEditor";
 import { LiveRunOutput } from "./LiveRunOutput";
@@ -128,6 +131,19 @@ export interface CommandFormProps {
    * populated on first render with this value so the user can refine it.
    */
   initialScript?: string;
+  /**
+   * Scope to stamp on a command created from this form. `"local"` (paired
+   * with {@link initialWorkflowId}) is passed when the create flow is
+   * launched from a workflow editor; the resulting command is hidden from the
+   * global library. Defaults to a global command when omitted. Ignored in
+   * edit mode (a command's scope is changed via the promote action).
+   */
+  initialScope?: CommandScope;
+  /**
+   * Owning workflow id for a `"local"` create. Required when
+   * {@link initialScope} is `"local"`. Ignored otherwise.
+   */
+  initialWorkflowId?: string;
 }
 
 /**
@@ -157,8 +173,15 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     categorySuggestions = [],
     tagSuggestions = [],
     initialScript,
+    initialScope,
+    initialWorkflowId,
   } = props;
   const { t } = useTranslation();
+  // Resolve the owning workflow's name for a local create so the form
+  // header can read `New command (workflow "…")`. Selecting the stable
+  // `workflows` array (not an inline `.find`) keeps the selector
+  // referentially stable; the lookup itself is a cheap render-time step.
+  const workflows = useWorkflowStore((s) => s.workflows);
   // History-aware wrappers — see services/commandActions.ts. The
   // wrappers delegate to the same store methods, so existing test
   // spies that replace `useCommandStore.getState().addCommand` keep
@@ -453,6 +476,13 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
         ...(envValue !== undefined ? { env: envValue } : {}),
         ...(form.workingDir.trim() !== "" ? { workingDir: form.workingDir.trim() } : {}),
         ...(form.promptWorkingDir ? { promptWorkingDir: true } : {}),
+        // A command created from within a workflow editor is scoped LOCAL to
+        // that workflow (hidden from the global library). Stamp the scope +
+        // owning workflow id supplied by the host. Omitted entirely for a
+        // normal global create so the wire stays byte-identical.
+        ...(initialScope === "local" && initialWorkflowId !== undefined
+          ? { scope: "local" as const, workflowId: initialWorkflowId }
+          : {}),
       });
     }
     // If a live-run is still active when the user saves, cancel it so
@@ -492,6 +522,8 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     cancelActiveRunForSave,
     teardownRun,
     updateCommand,
+    initialScope,
+    initialWorkflowId,
   ]);
 
   // Focus the name input when the view opens (select all in edit mode for
@@ -617,25 +649,6 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   const handleCategoryAddCancel = useCallback((): void => {
     setAddingCategory(false);
     setNewCategoryDraft("");
-  }, []);
-
-  // Timeout stepper: adjust the seconds value by `delta`, clamping at a
-  // floor of 0 ("no limit" — represented as the empty string). An empty
-  // field is treated as 0 for the purpose of incrementing, so the first
-  // "+" click yields 1. Non-numeric/garbage current values reset to the
-  // clamped delta rather than producing NaN.
-  const adjustTimeout = useCallback((delta: number): void => {
-    setForm((s) => {
-      const current = Number.parseInt(s.timeoutSeconds, 10);
-      const base = Number.isFinite(current) ? current : 0;
-      const next = base + delta;
-      return {
-        ...s,
-        // 0 (or below) means "no limit" → store the empty string so the
-        // placeholder shows and `parseTimeoutSeconds` yields undefined.
-        timeoutSeconds: next <= 0 ? "" : String(next),
-      };
-    });
   }, []);
 
   useEffect(() => {
@@ -791,7 +804,6 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
       setFlagBuilderData(null);
       if (flagBuilderOpenRef.current) setFlagBuilderOpen(false);
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [utilityRange?.name, resolvedHelp?.status]);
 
   const handleFlagBuilderChange = useCallback((script: string): void => {
@@ -952,9 +964,18 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
 
   if (command === null && mode === "edit") return null;
 
+  // For a local create launched from a workflow editor, scope the header to
+  // the owning workflow: `New command (workflow "<name>")`. Falls back to the
+  // plain create title if the workflow can't be resolved.
+  const localWorkflowName =
+    mode === "create" && initialScope === "local" && initialWorkflowId
+      ? (workflows.find((w) => w.id === initialWorkflowId)?.name ?? null)
+      : null;
   const title =
     mode === "create"
-      ? t("commandForm.title.create")
+      ? localWorkflowName !== null
+        ? t("commandForm.title.createLocal", { workflow: localWorkflowName })
+        : t("commandForm.title.create")
       : t("commandForm.title.edit");
   const saveLabel =
     mode === "create"
@@ -1393,46 +1414,36 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
               })}
             </span>
             {/*
-             * Timeout stepper. The native number-input spinner buttons
-             * don't follow the app's visual language, so we hide them
-             * (CSS, `.command-form__timeout-input`) and provide our own
-             * ghost-button steppers that match the rest of the UI. The
-             * text input is still freely editable for direct entry.
+             * Timeout stepper. "Empty = no limit" — the value is stored as a
+             * string (`""` = no limit); we bridge it to NumberStepper's
+             * nullable mode (`null` ⇄ `""`). The shared component hides the
+             * native spinner arrows and renders the app's ghost-button
+             * steppers.
              */}
-            <div className="command-form__timeout">
-              <button
-                type="button"
-                className="btn btn--ghost btn--icon command-form__timeout-step"
-                onClick={() => adjustTimeout(-1)}
-                disabled={form.timeoutSeconds.trim() === ""}
-                aria-label={t("commandForm.timeout.decrement")}
-                title={t("commandForm.timeout.decrement")}
-              >
-                −
-              </button>
-              <input
-                type="number"
-                className="input command-form__timeout-input"
-                min="1"
-                step="1"
-                value={form.timeoutSeconds}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, timeoutSeconds: e.target.value }))
-                }
-                placeholder={t("commandForm.placeholders.timeoutSeconds", {
-                  defaultValue: "No limit",
-                })}
-              />
-              <button
-                type="button"
-                className="btn btn--ghost btn--icon command-form__timeout-step"
-                onClick={() => adjustTimeout(1)}
-                aria-label={t("commandForm.timeout.increment")}
-                title={t("commandForm.timeout.increment")}
-              >
-                +
-              </button>
-            </div>
+            <NumberStepper
+              allowEmpty
+              value={
+                form.timeoutSeconds.trim() === ""
+                  ? null
+                  : Number.parseInt(form.timeoutSeconds, 10)
+              }
+              onChange={(next) =>
+                setForm((s) => ({
+                  ...s,
+                  timeoutSeconds: next === null ? "" : String(next),
+                }))
+              }
+              min={1}
+              max={Number.MAX_SAFE_INTEGER}
+              placeholder={t("commandForm.placeholders.timeoutSeconds", {
+                defaultValue: "No limit",
+              })}
+              ariaLabel={t("commandForm.fields.timeoutSeconds", {
+                defaultValue: "Timeout (seconds)",
+              })}
+              decrementLabel={t("commandForm.timeout.decrement")}
+              incrementLabel={t("commandForm.timeout.increment")}
+            />
           </div>
           </div>
 

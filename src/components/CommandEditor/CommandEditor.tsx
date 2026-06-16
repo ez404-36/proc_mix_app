@@ -74,13 +74,36 @@ export function CommandEditor(): ReactElement | null {
     requestNavigation,
   ]);
 
-  // Leaving via save or the form's Cancel button. Returns to the Library's
-  // Commands tab; `requestNavigation` applies the dirty guard (a save first
-  // resets the dirty flag, so it navigates straight through).
+  // Where to return when the form closes. A local create can only originate
+  // from a workflow editor (the "New local command" palette action), and an
+  // explicit `returnTo` is set when the editor is opened from a workflow
+  // editor (e.g. editing a workflow-local command from the palette). Either
+  // signal routes the user back to the workflow editor.
+  const isLocalCreate =
+    target?.mode === "create" &&
+    target.initialScope === "local" &&
+    target.initialWorkflowId != null;
+  const returnTo = target?.returnTo;
+
+  // Leaving via save or the form's Cancel button. A local create — or any
+  // editor opened with `returnTo === "editor"` — returns to the workflow
+  // editor it was launched from (the draft + `editorWorkflowId` survive the
+  // round-trip, so the same workflow reopens and the command appears in its
+  // palette); every other case returns to the Library's Commands tab.
+  // `requestNavigation` applies the dirty guard (a save first resets the
+  // dirty flag, so it navigates straight through).
   const handleClose = useCallback((): void => {
+    if (returnTo !== undefined) {
+      requestNavigation(returnTo);
+      return;
+    }
+    if (isLocalCreate) {
+      requestNavigation("editor");
+      return;
+    }
     setLibraryTab("commands");
     requestNavigation("library");
-  }, [setLibraryTab, requestNavigation]);
+  }, [returnTo, isLocalCreate, setLibraryTab, requestNavigation]);
 
   if (targetInvalid || target === null) return null;
 
@@ -97,6 +120,12 @@ export function CommandEditor(): ReactElement | null {
         categorySuggestions={allCategories}
         tagSuggestions={allTags}
         initialScript={target.mode === "create" ? target.initialScript : undefined}
+        initialScope={
+          target.mode === "create" ? target.initialScope : undefined
+        }
+        initialWorkflowId={
+          target.mode === "create" ? target.initialWorkflowId : undefined
+        }
       />
 
       <ConfirmDialog

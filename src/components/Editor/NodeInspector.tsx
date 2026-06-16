@@ -20,7 +20,7 @@ import type {
   VariableSpec,
   WorkflowCondition,
 } from "../../types";
-import { getCommandName } from "../../utils/commandLabels";
+import { getCommandDescription, getCommandName } from "../../utils/commandLabels";
 import { dataSourceId, dataSourceOptions } from "../../utils/dataSourceOptions";
 import {
   dominatingDataNodeVariableNames,
@@ -379,9 +379,23 @@ function NodeConfigForm({
   // Sentinel value for "no command picked" — Dropdown works on plain strings,
   // so the empty string maps to `undefined` on the way out.
   const NONE = "";
+  // Command options carry the localized description as the dropdown
+  // subtitle so the picker's built-in search matches on name AND
+  // description — the same fields the Library command search uses.
   const options: ReadonlyArray<DropdownOption> = [
     { value: NONE, label: t("editor.inspector.pickCommand") },
-    ...commands.map((cmd) => ({ value: cmd.id, label: getCommandName(cmd, t) })),
+    ...commands.map((cmd) => ({
+      value: cmd.id,
+      label:
+        cmd.scope === "local"
+          ? `${getCommandName(cmd, t)} ${t("editor.inspector.localSuffix")}`
+          : getCommandName(cmd, t),
+      // Closed trigger shows the plain name only — the "local" badge below the
+      // picker is the single scope indicator for the selected command, so the
+      // suffix would duplicate it.
+      triggerLabel: getCommandName(cmd, t),
+      description: getCommandDescription(cmd, t),
+    })),
   ];
 
   // --- condition ---------------------------------------------------------
@@ -456,10 +470,19 @@ function NodeConfigForm({
             value={node.data.commandId ?? NONE}
             options={options}
             ariaLabel={t("editor.inspector.command")}
+            searchable
+            searchPlaceholder={t("editor.inspector.searchCommand")}
             onChange={(value) =>
               onCommandChange(node.id, value === NONE ? undefined : value)
             }
           />
+          {selectedCommand?.scope === "local" ? (
+            <div className="wf-inspector__local-row">
+              <span className="wf-palette__local-badge">
+                {t("editor.palette.localBadge")}
+              </span>
+            </div>
+          ) : null}
         </div>
       ) : (
         <p className="wf-inspector__hint">

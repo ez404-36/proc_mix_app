@@ -59,8 +59,24 @@ import { ContextMenuProvider } from "../ContextMenu";
 import { useUIStore } from "../../stores/uiStore";
 import { useCommandStore } from "../../stores/commandStore";
 import { useExecutionStore } from "../../stores/executionStore";
-import type { Command } from "../../types";
+import { useWorkflowStore } from "../../stores/workflowStore";
+import type { Command, Workflow } from "../../types";
 import { CommandEditor } from "./CommandEditor";
+
+function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
+  return {
+    id: "wf-1",
+    name: "Deploy pipeline",
+    nodes: [],
+    edges: [],
+    tags: [],
+    favorite: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    runCount: 0,
+    ...overrides,
+  };
+}
 
 function makeCommand(overrides: Partial<Command> = {}): Command {
   return {
@@ -96,6 +112,7 @@ function reset(): void {
     activeExecutionId: null,
     panelOpen: false,
   });
+  useWorkflowStore.setState({ workflows: [], hydrated: true });
 }
 
 function renderEditor(): void {
@@ -244,5 +261,63 @@ describe("CommandEditor view", () => {
       ) as HTMLTextAreaElement;
       expect(sample.value).toBe("hello world");
     });
+  });
+
+  it("renders the workflow-scoped title for a local create", () => {
+    useWorkflowStore.setState({
+      workflows: [makeWorkflow({ id: "wf-1", name: "Deploy pipeline" })],
+      hydrated: true,
+    });
+    useUIStore.setState({
+      commandEditorTarget: {
+        mode: "create",
+        commandId: null,
+        initialScope: "local",
+        initialWorkflowId: "wf-1",
+      },
+    });
+    renderEditor();
+
+    expect(
+      screen.getAllByText('New command (workflow "Deploy pipeline")').length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("closing a local create returns to the workflow editor", () => {
+    useWorkflowStore.setState({
+      workflows: [makeWorkflow({ id: "wf-1", name: "Deploy pipeline" })],
+      hydrated: true,
+    });
+    useUIStore.setState({
+      commandEditorTarget: {
+        mode: "create",
+        commandId: null,
+        initialScope: "local",
+        initialWorkflowId: "wf-1",
+      },
+      commandEditorDirty: false,
+    });
+    renderEditor();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+
+    expect(useUIStore.getState().currentView).toBe("editor");
+  });
+
+  it("closing a normal create returns to the library", () => {
+    useUIStore.setState({
+      commandEditorTarget: { mode: "create", commandId: null },
+      commandEditorDirty: false,
+    });
+    renderEditor();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+
+    expect(useUIStore.getState().currentView).toBe("library");
+    expect(useUIStore.getState().libraryTab).toBe("commands");
   });
 });

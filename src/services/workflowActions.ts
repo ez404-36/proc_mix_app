@@ -10,8 +10,9 @@
 
 import { Message } from "@arco-design/web-react";
 import i18n from "../i18n";
+import { useCommandStore } from "../stores/commandStore";
 import { useWorkflowStore } from "../stores/workflowStore";
-import type { HistoryEvent, Workflow } from "../types";
+import type { Command, HistoryEvent, Workflow } from "../types";
 import { recordHistoryEventInDb } from "../utils/historyRepository";
 
 type NewWorkflowInput = Parameters<
@@ -105,6 +106,12 @@ export function updateWorkflow(
 export function deleteWorkflow(id: string): Workflow | null {
   const removed = useWorkflowStore.getState().deleteWorkflow(id);
   if (removed === null) return null;
+  // Cascade-delete the workflow's private `local` commands — they live with
+  // the workflow, so they go with it. Capture their snapshots in the delete
+  // event so a future restore can re-create them alongside the workflow.
+  const localCommands: Command[] = useCommandStore
+    .getState()
+    .removeLocalCommandsForWorkflow(removed.id);
   safeRecord({
     id: makeId(),
     createdAt: nowIso(),
@@ -112,6 +119,7 @@ export function deleteWorkflow(id: string): Workflow | null {
     workflowId: removed.id,
     workflowName: removed.name,
     snapshotBefore: removed,
+    ...(localCommands.length > 0 ? { localCommands } : {}),
   });
   return removed;
 }

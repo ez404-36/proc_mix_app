@@ -22,6 +22,20 @@ export type Shell =
   | "cmd";
 
 /**
+ * Visibility scope of a {@link Command}.
+ *   - `"global"` (the default): the command lives in the shared library and
+ *     is usable from anywhere (Library, palette, hotkeys, any workflow).
+ *   - `"local"`: the command belongs to a single workflow (see
+ *     {@link Command.workflowId}). It is hidden from the global library and
+ *     usable only inside its owning workflow's editor. It travels with the
+ *     workflow on export/import and is cascade-deleted with it.
+ *
+ * A command's scope can be promoted from `"local"` to `"global"` ("open
+ * global access"); the reverse is intentionally not offered.
+ */
+export type CommandScope = "local" | "global";
+
+/**
  * A user-declared variable that may be referenced from a command's
  * `script`, `args`, `workingDir`, or `env` values using the `${name}`
  * or `${name:default}` syntax (see the Rust `core::parser` module for
@@ -150,6 +164,18 @@ export interface Command {
    * {@link OutputSchema}.
    */
   outputSchema?: OutputSchema;
+  /**
+   * Visibility scope. `undefined` is treated as `"global"` (the boundary in
+   * `commandRepository` defaults it), so existing commands and seeds need not
+   * set it. A `"local"` command must also carry {@link workflowId}.
+   */
+  scope?: CommandScope;
+  /**
+   * Owning workflow id for a `"local"`-scoped command. `undefined` for global
+   * commands. Set when a command is created from within a workflow's editor;
+   * remapped to the new workflow id on import.
+   */
+  workflowId?: string;
 }
 
 /**
@@ -272,6 +298,26 @@ export interface CommandEditorTarget {
   commandId: string | null;
   /** Pre-fill the Script field when entering create mode via ScriptFirstCreator. */
   initialScript?: string;
+  /**
+   * Scope to stamp on a newly-created command. Set to `"local"` when the
+   * create flow is launched from a workflow editor (paired with
+   * {@link initialWorkflowId}). Defaults to `"global"` when omitted. Ignored
+   * in edit mode.
+   */
+  initialScope?: CommandScope;
+  /**
+   * Owning workflow id for a `"local"` create. Required when `initialScope`
+   * is `"local"`. Ignored in edit mode and for global creates.
+   */
+  initialWorkflowId?: string;
+  /**
+   * View to return to when the form closes (save or cancel), instead of the
+   * default Library Commands tab. Set to `"editor"` when the command editor
+   * is opened from a workflow editor (e.g. editing a workflow-local command
+   * from the palette) so the user lands back on the workflow they were
+   * editing. The workflow draft + `editorWorkflowId` survive the round-trip.
+   */
+  returnTo?: View;
 }
 
 /** Active tab within the Library view: commands or workflows. */

@@ -7,7 +7,23 @@
 // single boundary. UI code only ever sees `Command` values.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Command, OutputSchema, Shell, VariableSpec } from "../types";
+import type {
+  Command,
+  CommandScope,
+  OutputSchema,
+  Shell,
+  VariableSpec,
+} from "../types";
+
+/** Scope values the Rust executor understands; used to narrow the wire string. */
+const KNOWN_SCOPES: ReadonlySet<CommandScope> = new Set<CommandScope>([
+  "local",
+  "global",
+]);
+
+function isScope(value: string): value is CommandScope {
+  return KNOWN_SCOPES.has(value as CommandScope);
+}
 
 /**
  * Set of shell identifiers the Rust executor understands. Used as a
@@ -79,6 +95,18 @@ export interface CommandRecord {
    * omits it entirely when the UI has no schema.
    */
   outputSchema?: OutputSchema | null;
+  /**
+   * Mirror of the Rust `scope` field. Optional/absent on the wire because
+   * legacy records predate the column; the Rust side persists `'global'` by
+   * default. {@link recordToCommand} normalises `null` / `undefined` /
+   * unknown to `"global"`.
+   */
+  scope?: string | null;
+  /**
+   * Mirror of the Rust `workflow_id` field — the owning workflow id of a
+   * `"local"` command. `null` / absent for global commands.
+   */
+  workflowId?: string | null;
 }
 
 /**
@@ -117,6 +145,12 @@ export function commandToRecord(c: Command): CommandRecord {
     // as a JSON column. Omitted entirely when absent so the wire stays
     // byte-identical to legacy payloads for commands without a schema.
     ...(c.outputSchema !== undefined ? { outputSchema: c.outputSchema } : {}),
+    // Scope: send the explicit value when set, omit otherwise. The Rust side
+    // defaults an absent scope to `'global'`, so omitting it keeps the wire
+    // byte-identical to legacy payloads for ordinary global commands.
+    ...(c.scope !== undefined ? { scope: c.scope } : {}),
+    // Owning workflow id for a local command. Omitted entirely for globals.
+    ...(c.workflowId !== undefined ? { workflowId: c.workflowId } : {}),
   };
 }
 
@@ -164,6 +198,14 @@ export function recordToCommand(r: CommandRecord): Command {
     // `outputSchema` collapses to `undefined` when absent or null so the
     // UI can use `cmd.outputSchema?` idiomatically.
     outputSchema: r.outputSchema ?? undefined,
+    // Default to `"global"` so commands loaded from old DBs (no column) or
+    // carrying an unrecognised value are treated as ordinary library commands
+    // rather than vanishing as orphaned locals.
+    scope: r.scope !== null && r.scope !== undefined && isScope(r.scope)
+      ? r.scope
+      : "global",
+    // A local command's owning workflow id; `undefined` for globals.
+    workflowId: r.workflowId ?? undefined,
   };
 }
 
@@ -181,4 +223,15 @@ export async function upsertCommandInDb(cmd: Command): Promise<void> {
 /** Remove a command by id. Idempotent — missing ids are not an error. */
 export async function deleteCommandInDb(id: string): Promise<void> {
   await invoke("delete_command", { id });
+}
+
+/**
+ * Cascade-delete every `local`-scoped command owned by `workflowId`. Called
+ * when a workflow is deleted so its private commands go with it. Idempotent —
+ * a workflow with no local commands is a no-op.
+ */
+export async function deleteLocalCommandsForWorkflowInDb(
+  workflowId: string,
+): Promise<void> {
+  await invoke("delete_local_commands_for_workflow", { workflowId });
 }

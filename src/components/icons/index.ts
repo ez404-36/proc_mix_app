@@ -14,6 +14,8 @@ export { GroupIcon } from "./GroupIcon";
 export { ImportIcon } from "./ImportIcon";
 export { InfoIcon } from "./InfoIcon";
 export { PlusIcon } from "./PlusIcon";
+export { RedoIcon } from "./RedoIcon";
+export { UndoIcon } from "./UndoIcon";
 export { ZoomInIcon } from "./ZoomInIcon";
 export { ZoomOutIcon } from "./ZoomOutIcon";
 export { RerunIcon } from "./RerunIcon";

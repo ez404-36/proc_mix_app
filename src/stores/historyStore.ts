@@ -19,9 +19,11 @@ import type {
   Command,
   CommandDeletedEvent,
   CommandEditedEvent,
+  ExtractedResult,
   HistoryEvent,
   HistoryEventKind,
   HistoryFilter,
+  HistoryLogLine,
   RunStatus,
 } from "../types";
 import {
@@ -65,6 +67,14 @@ export interface RunCompletionPatch {
   exitCode?: number;
   durationMs?: number;
   timedOut?: boolean;
+  /**
+   * Captured aggregate console output, so a row on screen becomes expandable
+   * immediately without waiting for a reload. Omitted when the run produced
+   * no output.
+   */
+  output?: HistoryLogLine[];
+  /** Structured extraction result, when the command declared an output schema. */
+  result?: ExtractedResult;
 }
 
 /** Fixed page size — matches the requirement of 10 items per page. */
@@ -236,6 +246,8 @@ export const useHistoryStore = create<HistoryState>()((set, get) => ({
             ...(patch.timedOut !== undefined
               ? { timedOut: patch.timedOut }
               : {}),
+            ...(patch.output !== undefined ? { output: patch.output } : {}),
+            ...(patch.result !== undefined ? { result: patch.result } : {}),
           };
         }
         return item;

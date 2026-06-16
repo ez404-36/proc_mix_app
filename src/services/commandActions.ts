@@ -14,7 +14,9 @@
 import { Message } from "@arco-design/web-react";
 import i18n from "../i18n";
 import { useCommandStore } from "../stores/commandStore";
+import { useWorkflowStore } from "../stores/workflowStore";
 import type { Command, HistoryEvent } from "../types";
+import { isGlobalCommand } from "../utils/commandFilters";
 import { recordHistoryEventInDb } from "../utils/historyRepository";
 
 type NewCommandInput = Parameters<
@@ -121,4 +123,56 @@ export function deleteCommand(id: string): Command | null {
     snapshotBefore: removed,
   });
   return removed;
+}
+
+/**
+ * Promote a workflow-LOCAL command to GLOBAL ("open global access"): clear
+ * its `scope`/`workflowId` so it appears in the shared library and becomes
+ * reusable from other workflows.
+ *
+ * Name-conflict policy: if another GLOBAL command already uses the same name,
+ * the promoted command is renamed to `"<name> (<workflow name>)"` so the two
+ * stay distinguishable in the library. The owning workflow's name is resolved
+ * from the workflow store via the command's `workflowId`.
+ *
+ * Routes through {@link updateCommand}, so the change is logged as a
+ * `commandEdited` event (undoable from History). Returns the
+ * `{ before, after }` pair, or `null` when the id is unknown or the command
+ * is already global.
+ */
+export function promoteCommandToGlobal(
+  id: string,
+): { before: Command; after: Command } | null {
+  const commands = useCommandStore.getState().commands;
+  const target = commands.find((c) => c.id === id);
+  if (target === undefined || isGlobalCommand(target)) return null;
+
+  // Detect a name clash against EXISTING global commands (exclude the target
+  // itself). Comparison is case-insensitive on the literal name.
+  const targetName = target.name.trim();
+  const clashes = commands.some(
+    (c) =>
+      c.id !== target.id &&
+      isGlobalCommand(c) &&
+      c.name.trim().toLowerCase() === targetName.toLowerCase(),
+  );
+
+  let nextName = target.name;
+  if (clashes) {
+    const workflow = useWorkflowStore
+      .getState()
+      .workflows.find((w) => w.id === target.workflowId);
+    const suffix = workflow?.name.trim();
+    // Only append the parenthesised workflow name when we actually have one;
+    // otherwise the rename would read "name ()".
+    if (suffix !== undefined && suffix !== "") {
+      nextName = `${target.name} (${suffix})`;
+    }
+  }
+
+  return updateCommand(id, {
+    scope: "global",
+    workflowId: undefined,
+    ...(nextName !== target.name ? { name: nextName } : {}),
+  });
 }

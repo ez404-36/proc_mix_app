@@ -2,11 +2,15 @@ import { useEffect } from "react";
 import i18n from "../i18n";
 import { useCommandStore } from "../stores/commandStore";
 import { useExecutionStore } from "../stores/executionStore";
+import { useHistoryStore } from "../stores/historyStore";
 import { useWorkflowRunStore } from "../stores/workflowRunStore";
 import { useWorkflowStore } from "../stores/workflowStore";
 import type { RunStatus, WorkflowEvent } from "../types";
 import { getCommandName } from "../utils/commandLabels";
-import { updateRunHistoryEventInDb } from "../utils/historyRepository";
+import {
+  executionLogToHistoryOutput,
+  updateRunHistoryEventInDb,
+} from "../utils/historyRepository";
 import { subscribeWorkflowEvents } from "../utils/workflowRunner";
 
 /**
@@ -27,11 +31,32 @@ function recordWorkflowRunCompletion(
   durationMs: number | undefined,
   status: RunStatus,
 ): void {
-  void updateRunHistoryEventInDb(runId, exitCode, durationMs, status).catch(
-    (err: unknown) => {
-      console.error("failed to update workflow run history event", runId, err);
-    },
-  );
+  // Capture the aggregate workflow console output (all node stdout/stderr +
+  // step headers, keyed by the workflow runId in the execution store) so it
+  // can be PERSISTED to history. The executionStore is in-memory only, so
+  // without this the History view has nothing to show for a finished run.
+  const execution = useExecutionStore.getState().executions[runId];
+  const output = execution
+    ? executionLogToHistoryOutput(execution.log)
+    : undefined;
+  // Patch the in-memory History snapshot immediately so a row on screen flips
+  // to its terminal status and becomes expandable without a reload.
+  useHistoryStore.getState().applyRunCompletion(runId, {
+    status,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(output !== undefined ? { output } : {}),
+  });
+  void updateRunHistoryEventInDb(
+    runId,
+    exitCode,
+    durationMs,
+    status,
+    undefined,
+    output,
+  ).catch((err: unknown) => {
+    console.error("failed to update workflow run history event", runId, err);
+  });
 }
 
 /**

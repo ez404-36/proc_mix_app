@@ -39,7 +39,16 @@ interface UseWorkflowCanvasPersistenceArgs {
 }
 
 interface UseWorkflowCanvasPersistence {
+  /**
+   * Persist the draft and stay in the editor (clears the dirty baseline).
+   * Used by the header "Save" button.
+   */
   save: () => void;
+  /**
+   * Persist the draft and navigate away (to the workflow list). Used by the
+   * header "Save & Exit" button.
+   */
+  saveAndExit: () => void;
   run: () => Promise<void>;
   /** Run a single node and everything downstream of it (the editor's per-node
    * run action), seeding the node's input with `seedInput`. */
@@ -123,18 +132,38 @@ export function useWorkflowCanvasPersistence({
     [buildDraftWorkflow, currentId, setCurrentId, setEditorWorkflowId],
   );
 
+  // Shared save body. `navigate` decides whether to leave the editor after a
+  // successful save ("Save & Exit") or stay with a freshly-marked baseline
+  // ("Save"). A blank name routes to the Properties modal in both cases.
+  const saveDraft = useCallback(
+    (navigate: boolean): void => {
+      // Draft save is permitted even with warnings, but a name is required and
+      // hard errors still surface so the user knows the graph won't run yet.
+      if (meta.name.trim() === "") {
+        setMetaModalOpen(true);
+        return;
+      }
+      reportValidation();
+      persist(meta.name.trim());
+      Message.success(t("editor.saved"));
+      if (navigate) {
+        onSaved();
+      } else {
+        // Stay in the editor: the just-saved graph becomes the dirty baseline
+        // so the unsaved-changes guard no longer flags it.
+        useEditorDraftStore.getState().markSaved();
+      }
+    },
+    [meta.name, reportValidation, persist, t, setMetaModalOpen, onSaved],
+  );
+
   const handleSave = useCallback((): void => {
-    // Draft save is permitted even with warnings, but a name is required and
-    // hard errors still surface so the user knows the graph won't run yet.
-    if (meta.name.trim() === "") {
-      setMetaModalOpen(true);
-      return;
-    }
-    reportValidation();
-    persist(meta.name.trim());
-    Message.success(t("editor.saved"));
-    onSaved();
-  }, [meta.name, reportValidation, persist, t, setMetaModalOpen, onSaved]);
+    saveDraft(false);
+  }, [saveDraft]);
+
+  const handleSaveAndExit = useCallback((): void => {
+    saveDraft(true);
+  }, [saveDraft]);
 
   // Build a runnable `Workflow` draft from the LIVE editor graph, validating
   // it and surfacing problems as toasts. Auto-appends an `end` node when the
@@ -240,7 +269,10 @@ export function useWorkflowCanvasPersistence({
         updateWorkflow(currentId, draft);
       }
       Message.success(t("editor.saved"));
-      onSaved();
+      // Saving from the Properties modal keeps the user in the editor (the
+      // name they just entered lets them continue). Mark the saved baseline so
+      // the unsaved-changes guard reflects the persisted state.
+      useEditorDraftStore.getState().markSaved();
     },
     [
       nodes,
@@ -251,13 +283,13 @@ export function useWorkflowCanvasPersistence({
       setCurrentId,
       setEditorWorkflowId,
       setMetaModalOpen,
-      onSaved,
       t,
     ],
   );
 
   return {
     save: handleSave,
+    saveAndExit: handleSaveAndExit,
     run: handleRun,
     runNode: handleRunNode,
     saveMeta: handleMetaSave,

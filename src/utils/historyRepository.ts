@@ -14,6 +14,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Command,
+  ExecutionLogLine,
   ExtractedResult,
   HistoryEvent,
   HistoryFilter,
@@ -108,6 +109,10 @@ type WireRun = WireBase & {
   status: RunStatus;
   // Absent (not `null`) unless the run was killed by its timeout.
   timedOut?: boolean | null;
+  // Persisted by `update_run_event` on completion; absent while running and
+  // for rows recorded before output persistence existed. `| null` defensive.
+  output?: HistoryLogLine[] | null;
+  result?: ExtractedResult | null;
 };
 
 type WireRestored = WireBase & {
@@ -157,6 +162,10 @@ type WireWorkflowRun = WireBase & {
   durationMs?: number | null;
   status: RunStatus;
   timedOut?: boolean | null;
+  // Aggregate captured output / result, persisted on completion. Absent while
+  // running and for pre-persistence rows. `| null` defensive.
+  output?: HistoryLogLine[] | null;
+  result?: ExtractedResult | null;
 };
 
 type WireScheduledRun = WireBase & {
@@ -246,6 +255,8 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         durationMs: w.durationMs ?? undefined,
         status: w.status,
         timedOut: w.timedOut ?? undefined,
+        output: w.output ?? undefined,
+        result: w.result ?? undefined,
       };
     case "commandRestored":
       return {
@@ -305,6 +316,8 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         durationMs: w.durationMs ?? undefined,
         status: w.status,
         timedOut: w.timedOut ?? undefined,
+        output: w.output ?? undefined,
+        result: w.result ?? undefined,
       };
     case "scheduledRun":
       return {
@@ -381,6 +394,8 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         ...(e.durationMs !== undefined ? { durationMs: e.durationMs } : {}),
         status: e.status,
         ...(e.timedOut !== undefined ? { timedOut: e.timedOut } : {}),
+        ...(e.output !== undefined ? { output: e.output } : {}),
+        ...(e.result !== undefined ? { result: e.result } : {}),
       };
     case "commandRestored":
       return {
@@ -442,6 +457,8 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         ...(e.durationMs !== undefined ? { durationMs: e.durationMs } : {}),
         status: e.status,
         ...(e.timedOut !== undefined ? { timedOut: e.timedOut } : {}),
+        ...(e.output !== undefined ? { output: e.output } : {}),
+        ...(e.result !== undefined ? { result: e.result } : {}),
       };
     case "scheduledRun":
       // The frontend never writes scheduledRun events (the backend
@@ -541,6 +558,8 @@ export async function updateRunHistoryEventInDb(
   durationMs: number | undefined,
   status: RunStatus,
   timedOut?: boolean,
+  output?: HistoryLogLine[],
+  result?: ExtractedResult,
 ): Promise<void> {
   await invoke("update_run_history_event", {
     executionId,
@@ -554,6 +573,11 @@ export async function updateRunHistoryEventInDb(
     // `false` and `undefined` both collapse to `null` so the Rust side
     // only ever stores `Some(true)` for a genuine timeout.
     timedOut: timedOut === true ? true : null,
+    // Captured aggregate output / structured result for the History view.
+    // `undefined` collapses to `null` (Rust `None`); the Rust side bounds
+    // the output to MAX_HISTORY_OUTPUT_BYTES before persisting.
+    output: output === undefined ? null : output,
+    result: result === undefined ? null : result,
   });
 }
 
@@ -572,4 +596,19 @@ export async function clearHistoryInDb(): Promise<void> {
  */
 export function decodeSnapshot(r: CommandRecord): Command {
   return recordToCommand(r);
+}
+
+/**
+ * Convert an in-memory `Execution.log` (which carries a per-line `ts` the
+ * persisted history never stores) into the wire-format `HistoryLogLine[]` used
+ * by the run-history `output` field. Drops the timestamp and keeps only the
+ * stream tag + text. Returns `undefined` for an empty log so the caller passes
+ * `None` (and the row stays a plain, non-expandable entry) rather than an
+ * empty pane. The Rust side applies the byte cap on persist.
+ */
+export function executionLogToHistoryOutput(
+  log: ExecutionLogLine[],
+): HistoryLogLine[] | undefined {
+  if (log.length === 0) return undefined;
+  return log.map((line) => ({ stream: line.stream, line: line.line }));
 }

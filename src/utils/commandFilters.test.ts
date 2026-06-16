@@ -4,7 +4,11 @@ import type { Command } from "../types";
 import {
   collectCategories,
   collectTags,
+  commandsForWorkflowScope,
   filterCommands,
+  globalCommands,
+  isGlobalCommand,
+  localCommandsForWorkflow,
   normalizeTags,
 } from "./commandFilters";
 
@@ -128,5 +132,53 @@ describe("filterCommands", () => {
       t,
     );
     expect(out.map((c) => c.id)).toEqual(["a", "b", "c", "d"]);
+  });
+});
+
+describe("scope helpers", () => {
+  const globalA = cmd({ id: "g1" });
+  const globalUndefined = cmd({ id: "g2", scope: undefined });
+  const localOfW1 = cmd({ id: "l1", scope: "local", workflowId: "w1" });
+  const localOfW2 = cmd({ id: "l2", scope: "local", workflowId: "w2" });
+  const all = [globalA, globalUndefined, localOfW1, localOfW2];
+
+  it("isGlobalCommand treats undefined and 'global' scope as global", () => {
+    expect(isGlobalCommand(globalA)).toBe(true);
+    expect(isGlobalCommand(globalUndefined)).toBe(true);
+    expect(isGlobalCommand(localOfW1)).toBe(false);
+  });
+
+  it("globalCommands drops every local command", () => {
+    expect(globalCommands(all).map((c) => c.id)).toEqual(["g1", "g2"]);
+  });
+
+  it("commandsForWorkflowScope shows globals + THIS workflow's locals only", () => {
+    expect(commandsForWorkflowScope(all, "w1").map((c) => c.id)).toEqual([
+      "g1",
+      "g2",
+      "l1",
+    ]);
+    // Other workflows' locals (l2) are hidden.
+    expect(commandsForWorkflowScope(all, "w2").map((c) => c.id)).toEqual([
+      "g1",
+      "g2",
+      "l2",
+    ]);
+  });
+
+  it("commandsForWorkflowScope on a new (null) workflow shows only globals", () => {
+    expect(commandsForWorkflowScope(all, null).map((c) => c.id)).toEqual([
+      "g1",
+      "g2",
+    ]);
+  });
+
+  it("localCommandsForWorkflow returns ONLY this workflow's locals", () => {
+    expect(localCommandsForWorkflow(all, "w1").map((c) => c.id)).toEqual(["l1"]);
+    expect(localCommandsForWorkflow(all, "w2").map((c) => c.id)).toEqual(["l2"]);
+  });
+
+  it("localCommandsForWorkflow is empty for a new (null) workflow", () => {
+    expect(localCommandsForWorkflow(all, null)).toEqual([]);
   });
 });

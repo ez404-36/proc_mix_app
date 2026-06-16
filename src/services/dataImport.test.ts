@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const createCommandMock = vi.fn();
 const createWorkflowMock = vi.fn();
+const updateCommandMock = vi.fn();
 
 vi.mock("./commandActions", () => ({
   createCommand: (input: unknown) => createCommandMock(input),
+  updateCommand: (id: string, patch: unknown) =>
+    updateCommandMock(id, patch),
 }));
 vi.mock("./workflowActions", () => ({
   createWorkflow: (input: unknown) => createWorkflowMock(input),
@@ -62,6 +65,7 @@ function envelope(
 afterEach(() => {
   createCommandMock.mockReset();
   createWorkflowMock.mockReset();
+  updateCommandMock.mockReset();
 });
 
 describe("applyImport", () => {
@@ -256,6 +260,48 @@ describe("applyImport", () => {
       workflows: 1,
       demotedAdmin: 0,
     });
+  });
+
+  it("remaps a local command's workflowId to the imported workflow's new id", () => {
+    // The imported local command references OLD workflow id "w1"; the store
+    // mints "NEW-CMD" for it. The workflow is created with a fresh "NEW-WF".
+    createCommandMock.mockImplementation((input: unknown) => ({
+      ...command("NEW-CMD"),
+      ...(input as Partial<Command>),
+      id: "NEW-CMD",
+    }));
+    createWorkflowMock.mockImplementation((input: unknown) => ({
+      ...(input as Workflow),
+      id: "NEW-WF",
+    }));
+
+    applyImport(
+      envelope(
+        [command("c-local", { scope: "local", workflowId: "w1" })],
+        [workflow("w1", "c-local")],
+      ),
+    );
+
+    // After workflows are created, the local command is re-pointed at the
+    // NEW workflow id via updateCommand.
+    expect(updateCommandMock).toHaveBeenCalledWith("NEW-CMD", {
+      workflowId: "NEW-WF",
+    });
+  });
+
+  it("does not remap a local command whose owning workflow was not imported", () => {
+    createCommandMock.mockImplementation((input: unknown) => ({
+      ...command("NEW-CMD"),
+      ...(input as Partial<Command>),
+      id: "NEW-CMD",
+    }));
+
+    // Local command references "w-ghost", but no workflow is imported.
+    applyImport(
+      envelope([command("c-local", { scope: "local", workflowId: "w-ghost" })], []),
+    );
+
+    expect(updateCommandMock).not.toHaveBeenCalled();
   });
 
   it("keeps the original name when an imported command is not in the rename map", () => {

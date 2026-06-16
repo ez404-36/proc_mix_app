@@ -18,6 +18,12 @@ export interface DropdownOption {
   value: string;
   label: string;
   /**
+   * Text shown in the closed trigger for the selected value; falls back to
+   * `label`. Lets a caller show a fuller `label` in the open list (e.g. with a
+   * "(local)" suffix) while keeping the trigger concise.
+   */
+  triggerLabel?: string;
+  /**
    * Optional one-line description shown as a subtitle below the label in the
    * popup. Useful for flag options where a brief hint helps the user choose.
    */
@@ -210,7 +216,11 @@ export function Dropdown(props: DropdownProps): ReactElement {
   // (see the multi trigger below), so it does not use this.
   const selectedLabel = useMemo(() => {
     const found = options.find((opt) => opt.value === value);
-    return found?.label ?? (value === "" ? (placeholder ?? "") : value);
+    return (
+      found?.triggerLabel ??
+      found?.label ??
+      (value === "" ? (placeholder ?? "") : value)
+    );
   }, [options, placeholder, value]);
 
   // Filtered options: when searchable and query is non-empty, filter by label

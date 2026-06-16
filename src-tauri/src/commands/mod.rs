@@ -69,6 +69,17 @@ pub async fn delete_command(pool: State<'_, DbPool>, id: String) -> Result<(), S
     storage_commands::delete(pool.inner(), &id).await
 }
 
+/// Cascade-delete every `local`-scoped command owned by the given workflow.
+/// Called by the frontend when a workflow is deleted so its private commands
+/// go with it. Idempotent — a workflow with no local commands is a no-op.
+#[tauri::command]
+pub async fn delete_local_commands_for_workflow(
+    pool: State<'_, DbPool>,
+    workflow_id: String,
+) -> Result<(), String> {
+    storage_commands::delete_local_for_workflow(pool.inner(), &workflow_id).await
+}
+
 // ----------------------------------------------------------------------
 // Workflow CRUD + execution commands.
 //
@@ -594,11 +605,14 @@ pub async fn record_history_event(
     Ok(id)
 }
 
-/// Update an in-flight `command_run` event with the final outcome.
-/// Called by `useExecutionBridge` when the executor reports
-/// `Finished` / `Cancelled`. A missing `execution_id` is a no-op (see
-/// the storage-layer docstring).
+/// Update an in-flight `command_run` / `workflow_run` event with the final
+/// outcome. Called by `useExecutionBridge` / `useWorkflowBridge` when a run
+/// reaches a terminal state. `output` / `result` carry the captured aggregate
+/// console output and any structured extraction so the History view can replay
+/// a finished run (bounded by `MAX_HISTORY_OUTPUT_BYTES` in the storage layer).
+/// A missing `execution_id` is a no-op (see the storage-layer docstring).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn update_run_history_event(
     pool: State<'_, DbPool>,
     execution_id: String,
@@ -606,6 +620,8 @@ pub async fn update_run_history_event(
     duration_ms: Option<u64>,
     status: storage_history::RunStatus,
     timed_out: Option<bool>,
+    output: Option<Vec<storage_history::HistoryLogLine>>,
+    result: Option<storage_history::HistoryExtractedResult>,
 ) -> Result<(), String> {
     storage_history::update_run_event(
         pool.inner(),
@@ -614,6 +630,8 @@ pub async fn update_run_history_event(
         duration_ms,
         status,
         timed_out,
+        output,
+        result,
     )
     .await
 }

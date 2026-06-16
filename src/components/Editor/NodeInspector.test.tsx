@@ -406,4 +406,178 @@ describe("NodeInspector modal", () => {
     );
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("filters the node command picker by a search query", () => {
+    const cmd = (id: string, name: string): Command =>
+      ({
+        id,
+        name,
+        script: "echo",
+        shell: "bash",
+        variables: [],
+        tags: [],
+        favorite: false,
+        createdAt: "",
+        updatedAt: "",
+      }) as unknown as Command;
+    const commands = [
+      cmd("c1", "Deploy service"),
+      cmd("c2", "Run tests"),
+      cmd("c3", "Backup database"),
+    ];
+    render(
+      <ContextMenuProvider>
+        <NodeInspector
+          node={flowNode("command")}
+          predecessor={null}
+          allNodes={[flowNode("command")]}
+          edges={[]}
+          commands={commands}
+          inputPreview={null}
+          outputPreview={null}
+          manualInput=""
+          manualOutput=""
+          isRunning={false}
+          onManualInputChange={vi.fn()}
+          onManualOutputChange={vi.fn()}
+          onCommandChange={vi.fn()}
+          onNodeDataChange={vi.fn()}
+          onDelete={vi.fn()}
+          onRunNode={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </ContextMenuProvider>,
+    );
+    // Open the command picker (the only listbox trigger labelled "Command").
+    fireEvent.click(
+      screen.getByRole("button", { name: i18n.t("editor.inspector.command") }),
+    );
+    // The picker exposes the Library-style search input.
+    const search = screen.getByPlaceholderText(
+      i18n.t("editor.inspector.searchCommand"),
+    ) as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "tests" } });
+    // Only the matching command survives the filter.
+    expect(screen.getByText("Run tests")).toBeTruthy();
+    expect(screen.queryByText("Deploy service")).toBeNull();
+    expect(screen.queryByText("Backup database")).toBeNull();
+  });
+
+  it("marks local commands with a suffix in the picker, globals unchanged", () => {
+    const cmd = (
+      id: string,
+      name: string,
+      scope?: Command["scope"],
+    ): Command =>
+      ({
+        id,
+        name,
+        scope,
+        script: "echo",
+        shell: "bash",
+        variables: [],
+        tags: [],
+        favorite: false,
+        createdAt: "",
+        updatedAt: "",
+      }) as unknown as Command;
+    const commands = [
+      cmd("c1", "Global helper", "global"),
+      cmd("c2", "Local helper", "local"),
+    ];
+    render(
+      <ContextMenuProvider>
+        <NodeInspector
+          node={flowNode("command")}
+          predecessor={null}
+          allNodes={[flowNode("command")]}
+          edges={[]}
+          commands={commands}
+          inputPreview={null}
+          outputPreview={null}
+          manualInput=""
+          manualOutput=""
+          isRunning={false}
+          onManualInputChange={vi.fn()}
+          onManualOutputChange={vi.fn()}
+          onCommandChange={vi.fn()}
+          onNodeDataChange={vi.fn()}
+          onDelete={vi.fn()}
+          onRunNode={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </ContextMenuProvider>,
+    );
+    // Open the command picker.
+    fireEvent.click(
+      screen.getByRole("button", { name: i18n.t("editor.inspector.command") }),
+    );
+    const suffix = i18n.t("editor.inspector.localSuffix");
+    // The local command's option carries the "(local)" suffix…
+    expect(screen.getByText(`Local helper ${suffix}`)).toBeTruthy();
+    // …while the global command's option does not.
+    expect(screen.getByText("Global helper")).toBeTruthy();
+    expect(screen.queryByText(`Global helper ${suffix}`)).toBeNull();
+  });
+
+  it("selected local command shows plain name in trigger + badge, no promote button", () => {
+    const cmd = (
+      id: string,
+      name: string,
+      scope?: Command["scope"],
+    ): Command =>
+      ({
+        id,
+        name,
+        scope,
+        script: "echo",
+        shell: "bash",
+        variables: [],
+        tags: [],
+        favorite: false,
+        createdAt: "",
+        updatedAt: "",
+      }) as unknown as Command;
+    const commands = [cmd("c2", "Local helper", "local")];
+    const selectedNode: WorkflowFlowNode = {
+      id: "n1",
+      type: "command",
+      position: { x: 0, y: 0 },
+      data: { kind: "command", commandId: "c2" },
+    };
+    render(
+      <ContextMenuProvider>
+        <NodeInspector
+          node={selectedNode}
+          predecessor={null}
+          allNodes={[selectedNode]}
+          edges={[]}
+          commands={commands}
+          inputPreview={null}
+          outputPreview={null}
+          manualInput=""
+          manualOutput=""
+          isRunning={false}
+          onManualInputChange={vi.fn()}
+          onManualOutputChange={vi.fn()}
+          onCommandChange={vi.fn()}
+          onNodeDataChange={vi.fn()}
+          onDelete={vi.fn()}
+          onRunNode={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </ContextMenuProvider>,
+    );
+    const suffix = i18n.t("editor.inspector.localSuffix");
+    // The closed trigger shows the plain command name, NOT the "(local)" suffix
+    // (the badge below is the single scope indicator — no duplication).
+    expect(screen.getByText("Local helper")).toBeTruthy();
+    expect(screen.queryByText(`Local helper ${suffix}`)).toBeNull();
+    // The "local" badge still shows for the selected local command…
+    expect(screen.getByText(i18n.t("editor.palette.localBadge"))).toBeTruthy();
+    // …but the inspector no longer renders a "Make global" promote button.
+    expect(
+      screen.queryByRole("button", { name: i18n.t("editor.makeGlobal") }),
+    ).toBeNull();
+  });
 });

@@ -166,6 +166,16 @@ pub enum HistoryEventPayload {
         /// outcome so legacy payloads stay byte-identical.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timed_out: Option<bool>,
+        /// Captured console output, filled by [`update_run_event`] when the
+        /// executor bridge finalises the run. `None` while running and for
+        /// rows recorded before output persistence existed (back-compat).
+        /// Bounded by [`MAX_HISTORY_OUTPUT_BYTES`] by the producer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<Vec<HistoryLogLine>>,
+        /// Structured output-schema extraction, when the command declared a
+        /// schema. `None` otherwise.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<HistoryExtractedResult>,
     },
     #[serde(rename_all = "camelCase")]
     CommandRestored {
@@ -217,6 +227,16 @@ pub enum HistoryEventPayload {
         status: RunStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timed_out: Option<bool>,
+        /// Aggregate captured console output of the whole workflow run,
+        /// filled by [`update_run_event`] when the workflow bridge finalises
+        /// the run. `None` while running / for pre-persistence rows. Bounded
+        /// by [`MAX_HISTORY_OUTPUT_BYTES`] by the producer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<Vec<HistoryLogLine>>,
+        /// Structured output-schema extraction for the workflow run, when
+        /// available. `None` otherwise.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<HistoryExtractedResult>,
     },
     /// A run triggered automatically by the cron Scheduler (v0.2.0). This is
     /// the source of truth for background fires — they happen with no window
@@ -520,15 +540,51 @@ pub async fn insert_event(pool: &DbPool, event: &HistoryEvent) -> Result<(), Str
     Ok(())
 }
 
+/// Bound a list of captured log lines to [`MAX_HISTORY_OUTPUT_BYTES`] so a
+/// chatty run cannot bloat `payload_json` unbounded. Lines are retained in
+/// order until the cumulative byte count of their text would exceed the cap;
+/// once hit, the remaining lines are dropped and a trailing `meta`-stream
+/// `"…(truncated)"` marker is appended. Mirrors the scheduler's
+/// `map_captured_output` semantics so persisted output is bounded consistently
+/// regardless of which producer wrote it.
+pub fn bound_history_output(lines: Vec<HistoryLogLine>) -> Vec<HistoryLogLine> {
+    let mut out: Vec<HistoryLogLine> = Vec::with_capacity(lines.len());
+    let mut bytes = 0usize;
+    let mut truncated = false;
+    for line in lines {
+        if bytes.saturating_add(line.line.len()) > MAX_HISTORY_OUTPUT_BYTES {
+            truncated = true;
+            break;
+        }
+        bytes += line.line.len();
+        out.push(line);
+    }
+    if truncated {
+        out.push(HistoryLogLine {
+            stream: "meta".to_string(),
+            line: "…(truncated)".to_string(),
+        });
+    }
+    out
+}
+
 /// Update an existing `command_run` event with the final outcome
 /// reported by the executor bridge. Looks up by `execution_id` so the
 /// caller does not need to remember the history-row id. Also rewrites
 /// the embedded `payload_json` so a later read returns a consistent
 /// view (the dedicated columns and the JSON payload always agree).
 ///
+/// `output` / `result` carry the captured aggregate console output and any
+/// structured extraction; they are persisted into the `payload_json` (bounded
+/// by [`MAX_HISTORY_OUTPUT_BYTES`]) so the History view can replay a finished
+/// run's output. `None` leaves the existing value untouched is NOT done — a
+/// finalised run always supersedes the in-flight (empty) capture, so `None`
+/// clears any stale value.
+///
 /// A missing `execution_id` is NOT an error — it means the event was
 /// pruned by retention OR the user cleared the history mid-run. The
 /// caller should not bubble that to the user.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_run_event(
     pool: &DbPool,
     execution_id: &str,
@@ -536,6 +592,8 @@ pub async fn update_run_event(
     duration_ms: Option<u64>,
     status: RunStatus,
     timed_out: Option<bool>,
+    output: Option<Vec<HistoryLogLine>>,
+    result: Option<HistoryExtractedResult>,
 ) -> Result<(), String> {
     // Re-read the row so we can rewrite the JSON payload with the new
     // values. We only ever update at most one row (execution_id is
@@ -562,12 +620,18 @@ pub async fn update_run_event(
     let mut payload: HistoryEventPayload =
         serde_json::from_str(&payload_json).map_err(|e| format!("decode payload_json: {e}"))?;
 
+    // Bound the captured output once up front so both run variants share the
+    // exact same truncation behaviour.
+    let bounded_output = output.map(bound_history_output);
+
     match &mut payload {
         HistoryEventPayload::CommandRun {
             exit_code: ec,
             duration_ms: dm,
             status: st,
             timed_out: to,
+            output: out,
+            result: res,
             ..
         } => {
             *ec = exit_code;
@@ -580,12 +644,16 @@ pub async fn update_run_event(
             } else {
                 None
             };
+            *out = bounded_output;
+            *res = result;
         }
         HistoryEventPayload::WorkflowRun {
             exit_code: ec,
             duration_ms: dm,
             status: st,
             timed_out: to,
+            output: out,
+            result: res,
             ..
         } => {
             *ec = exit_code;
@@ -596,6 +664,8 @@ pub async fn update_run_event(
             } else {
                 None
             };
+            *out = bounded_output;
+            *res = result;
         }
         _ => {
             // The row's `kind` column claimed a run variant but the JSON
@@ -1038,6 +1108,8 @@ mod wire_format_tests {
             variables: vec![],
             timeout_seconds: None,
             output_schema: None,
+            scope: None,
+            workflow_id: None,
         }
     }
 
@@ -1124,6 +1196,8 @@ mod wire_format_tests {
             duration_ms: Some(150),
             status: RunStatus::Succeeded,
             timed_out: None,
+            output: None,
+            result: None,
         });
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["kind"], "commandRun");
@@ -1152,6 +1226,8 @@ mod wire_format_tests {
             duration_ms: None,
             status: RunStatus::Running,
             timed_out: None,
+            output: None,
+            result: None,
         });
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["status"], "running");
@@ -1242,6 +1318,8 @@ mod wire_format_tests {
             duration_ms: Some(420),
             status: RunStatus::Succeeded,
             timed_out: None,
+            output: None,
+            result: None,
         });
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["kind"], "workflowRun");
@@ -1268,6 +1346,8 @@ mod wire_format_tests {
             duration_ms: None,
             status: RunStatus::Running,
             timed_out: None,
+            output: None,
+            result: None,
         });
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["status"], "running");
@@ -1480,6 +1560,8 @@ mod wire_format_tests {
                 duration_ms: Some(42),
                 status: RunStatus::Succeeded,
                 timed_out: None,
+                output: None,
+                result: None,
             },
             HistoryEventPayload::CommandRestored {
                 command_id: "c1".into(),
@@ -1515,6 +1597,8 @@ mod wire_format_tests {
                 duration_ms: Some(99),
                 status: RunStatus::Succeeded,
                 timed_out: None,
+                output: None,
+                result: None,
             },
         ];
         for v in variants {
@@ -1678,6 +1762,8 @@ mod sqlite_integration_tests {
             variables: vec![],
             timeout_seconds: None,
             output_schema: None,
+            scope: None,
+            workflow_id: None,
         }
     }
 
@@ -1760,6 +1846,8 @@ mod sqlite_integration_tests {
                     duration_ms: None,
                     status: RunStatus::Running,
                     timed_out: None,
+                    output: None,
+                    result: None,
                 },
             },
         )
@@ -1773,6 +1861,11 @@ mod sqlite_integration_tests {
             Some(500),
             RunStatus::Succeeded,
             None,
+            Some(vec![HistoryLogLine {
+                stream: "stdout".into(),
+                line: "deployed".into(),
+            }]),
+            None,
         )
         .await
         .unwrap();
@@ -1783,11 +1876,17 @@ mod sqlite_integration_tests {
                 exit_code,
                 duration_ms,
                 status,
+                output,
                 ..
             } => {
                 assert_eq!(*exit_code, Some(0));
                 assert_eq!(*duration_ms, Some(500));
                 assert_eq!(*status, RunStatus::Succeeded);
+                // The captured aggregate output round-trips through storage.
+                let lines = output.as_ref().expect("workflow run output persisted");
+                assert_eq!(lines.len(), 1);
+                assert_eq!(lines[0].stream, "stdout");
+                assert_eq!(lines[0].line, "deployed");
             }
             other => panic!("unexpected variant: {other:?}"),
         }
@@ -1871,6 +1970,8 @@ mod sqlite_integration_tests {
                     duration_ms: None,
                     status: RunStatus::Running,
                     timed_out: None,
+                    output: None,
+                    result: None,
                 },
             },
         )
@@ -2042,12 +2143,16 @@ mod sqlite_integration_tests {
                     duration_ms: None,
                     status: RunStatus::Running,
                     timed_out: None,
+                    output: None,
+                    result: None,
                 },
             },
         )
         .await
         .unwrap();
 
+        let mut fields = serde_json::Map::new();
+        fields.insert("count".into(), serde_json::json!(2));
         update_run_event(
             &pool,
             "exec-1",
@@ -2055,6 +2160,15 @@ mod sqlite_integration_tests {
             Some(250),
             RunStatus::Succeeded,
             None,
+            Some(vec![HistoryLogLine {
+                stream: "stdout".into(),
+                line: "hi".into(),
+            }]),
+            Some(HistoryExtractedResult {
+                fields,
+                return_value: serde_json::json!(2),
+                error: None,
+            }),
         )
         .await
         .unwrap();
@@ -2067,11 +2181,20 @@ mod sqlite_integration_tests {
                 exit_code,
                 duration_ms,
                 status,
+                output,
+                result,
                 ..
             } => {
                 assert_eq!(*exit_code, Some(0));
                 assert_eq!(*duration_ms, Some(250));
                 assert_eq!(*status, RunStatus::Succeeded);
+                // Captured output + structured result round-trip through
+                // storage so the History view can replay a finished run.
+                let lines = output.as_ref().expect("command run output persisted");
+                assert_eq!(lines.len(), 1);
+                assert_eq!(lines[0].line, "hi");
+                let res = result.as_ref().expect("command run result persisted");
+                assert_eq!(res.return_value, serde_json::json!(2));
             }
             other => panic!("unexpected variant: {other:?}"),
         }
@@ -2104,6 +2227,8 @@ mod sqlite_integration_tests {
             Some(0),
             Some(0),
             RunStatus::Succeeded,
+            None,
+            None,
             None,
         )
         .await

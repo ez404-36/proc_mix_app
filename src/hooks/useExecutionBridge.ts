@@ -7,7 +7,10 @@ import { useWorkflowRunStore } from "../stores/workflowRunStore";
 import type { ExecutionEvent, RunStatus } from "../types";
 import { getCommandName } from "../utils/commandLabels";
 import { subscribeExecutionEvents } from "../utils/executor";
-import { updateRunHistoryEventInDb } from "../utils/historyRepository";
+import {
+  executionLogToHistoryOutput,
+  updateRunHistoryEventInDb,
+} from "../utils/historyRepository";
 import { isTransient } from "../utils/transientExecutions";
 
 /**
@@ -30,16 +33,29 @@ function recordRunCompletion(
   timedOut?: boolean,
 ): void {
   if (isTransient(executionId)) return;
+  // Capture the run's aggregate console output + structured result from the
+  // execution store so they can be PERSISTED to history (the executionStore is
+  // in-memory only and is cleared on app restart / "Clear"). The execution has
+  // already received all stdout/stderr and the `result` event (which arrives
+  // before the terminal event), so reading it here gives the full output.
+  const execution = useExecutionStore.getState().executions[executionId];
+  const output = execution
+    ? executionLogToHistoryOutput(execution.log)
+    : undefined;
+  const result = execution?.result;
   // Patch the in-memory History snapshot immediately so a row currently on
-  // screen flips from "running" to its terminal status without waiting for a
-  // reload. The History view is a load-once snapshot and does not subscribe
-  // to execution events, so the DB write below alone would leave the badge
-  // stuck on "running" until the next filter/page change.
+  // screen flips from "running" to its terminal status (and becomes
+  // expandable) without waiting for a reload. The History view is a load-once
+  // snapshot and does not subscribe to execution events, so the DB write below
+  // alone would leave the badge stuck on "running" until the next filter/page
+  // change.
   useHistoryStore.getState().applyRunCompletion(executionId, {
     status,
     ...(exitCode !== undefined ? { exitCode } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
     ...(timedOut !== undefined ? { timedOut } : {}),
+    ...(output !== undefined ? { output } : {}),
+    ...(result !== undefined ? { result } : {}),
   });
   void updateRunHistoryEventInDb(
     executionId,
@@ -47,6 +63,8 @@ function recordRunCompletion(
     durationMs,
     status,
     timedOut,
+    output,
+    result,
   ).catch((err: unknown) => {
     console.error("failed to update run history event", executionId, err);
   });

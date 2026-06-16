@@ -69,6 +69,12 @@ interface UseWorkflowCanvasDnDArgs {
   ) => WorkflowFlowNode;
   setNodes: EditorDraftStore["setNodes"];
   setEdges: EditorDraftStore["setEdges"];
+  /**
+   * Invoked once, right before a successful drop mutates the graph, so the
+   * host can record an undo snapshot. Not called when a drop is a no-op
+   * (foreign payload / no reactflow instance).
+   */
+  onBeforeMutate: () => void;
 }
 
 // The store setters accept either a value or a reactflow-style updater fn.
@@ -103,6 +109,7 @@ export function useWorkflowCanvasDnD({
   makeNode,
   setNodes,
   setEdges,
+  onBeforeMutate,
 }: UseWorkflowCanvasDnDArgs): UseWorkflowCanvasDnD {
   // The edge currently under a palette drag, highlighted as the insertion
   // target ("the node will be inserted here"). Null when the drag is not over
@@ -182,16 +189,19 @@ export function useWorkflowCanvasDnD({
       const edgeId = findEdgeNearPoint(curNodes, curEdges, point);
       if (edgeId !== null) {
         const next = insertNodeOnEdge(curNodes, curEdges, newNode, edgeId);
+        // Placement mutates the graph — record one undo snapshot first.
+        onBeforeMutate();
         setNodes(next.nodes);
         setEdges(next.edges);
         return;
       }
       const tailId = findAttachTail(curNodes, curEdges, point);
       const next = connectTailToNode(curNodes, curEdges, tailId, newNode);
+      onBeforeMutate();
       setNodes(next.nodes);
       setEdges(next.edges);
     },
-    [makeNode, setNodes, setEdges, clearInsertHint, rfInstanceRef],
+    [makeNode, setNodes, setEdges, clearInsertHint, rfInstanceRef, onBeforeMutate],
   );
 
   const onPaletteDragStart = useCallback(

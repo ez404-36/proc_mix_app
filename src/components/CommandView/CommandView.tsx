@@ -20,6 +20,13 @@ interface CommandViewProps {
   onEdit: (command: Command) => void;
   onRun: (command: Command) => void;
   onDelete: (command: Command) => void;
+  /**
+   * When provided AND the command is workflow-`"local"`, renders a "Make
+   * global" action that hands the command to this callback (the caller is
+   * responsible for any confirmation + the promote itself). Omitted in the
+   * Library, where every viewed command is already global.
+   */
+  onPromote?: (command: Command) => void;
 }
 
 /**
@@ -43,6 +50,7 @@ export function CommandView({
   onEdit,
   onRun,
   onDelete,
+  onPromote,
 }: CommandViewProps): ReactElement | null {
   const { t } = useTranslation();
   const editRef = useRef<HTMLButtonElement | null>(null);
@@ -163,6 +171,16 @@ export function CommandView({
             </span>
             {t("common.close")}
           </button>
+          {onPromote !== undefined && command.scope === "local" ? (
+            <button
+              type="button"
+              className="btn btn--ghost command-form__action"
+              onClick={() => onPromote(command)}
+              title={t("editor.makeGlobalHint")}
+            >
+              {t("editor.makeGlobal")}
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn command-form__action command-form__action--run"

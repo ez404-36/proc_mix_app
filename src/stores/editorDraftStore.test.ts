@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Workflow } from "../types";
 import {
   buildDraftForTarget,
+  fingerprintDraft,
+  isDraftDirty,
   useEditorDraftStore,
 } from "./editorDraftStore";
 import type { WorkflowFlowNode } from "../utils/workflowGraph";
@@ -52,6 +54,10 @@ beforeEach(() => {
     meta: INITIAL_STATE.meta,
     currentId: null,
     selectedNodeId: null,
+    baseline: fingerprintDraft({ nodes: [], edges: [], meta: INITIAL_STATE.meta }),
+    past: [],
+    future: [],
+    lastSavedAt: null,
   });
 });
 
@@ -187,5 +193,227 @@ describe("useEditorDraftStore reset", () => {
     expect(s.currentId).toBeNull();
     expect(s.nodes).toHaveLength(1);
     expect(s.nodes[0]?.type).toBe("start");
+  });
+});
+
+describe("useEditorDraftStore undo / redo", () => {
+  it("pushHistory then undo restores the previous nodes", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    const before = useEditorDraftStore
+      .getState()
+      .nodes.map((n) => n.id);
+
+    // One discrete action: snapshot first, then add a node.
+    store.pushHistory();
+    store.setNodes((nds) => [...nds, freshNode("n-extra")]);
+    expect(
+      useEditorDraftStore.getState().nodes.map((n) => n.id),
+    ).toContain("n-extra");
+    expect(useEditorDraftStore.getState().past).toHaveLength(1);
+
+    store.undo();
+    expect(useEditorDraftStore.getState().nodes.map((n) => n.id)).toEqual(
+      before,
+    );
+    expect(useEditorDraftStore.getState().past).toHaveLength(0);
+    expect(useEditorDraftStore.getState().future).toHaveLength(1);
+  });
+
+  it("redo re-applies the most recently undone action", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.pushHistory();
+    store.setNodes((nds) => [...nds, freshNode("n-extra")]);
+    store.undo();
+    expect(
+      useEditorDraftStore.getState().nodes.map((n) => n.id),
+    ).not.toContain("n-extra");
+
+    store.redo();
+    expect(
+      useEditorDraftStore.getState().nodes.map((n) => n.id),
+    ).toContain("n-extra");
+    expect(useEditorDraftStore.getState().future).toHaveLength(0);
+  });
+
+  it("a fresh action clears the redo stack", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.pushHistory();
+    store.setNodes((nds) => [...nds, freshNode("n-a")]);
+    store.undo();
+    expect(useEditorDraftStore.getState().future).toHaveLength(1);
+
+    // A new action invalidates the redo future.
+    store.pushHistory();
+    store.setNodes((nds) => [...nds, freshNode("n-b")]);
+    expect(useEditorDraftStore.getState().future).toHaveLength(0);
+  });
+
+  it("commitHistory records a pre-captured snapshot as one undo step", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    const snapshot = store.captureSnapshot();
+    const before = snapshot.nodes.map((n) => n.id);
+
+    // Multiple incremental edits (a modal session)…
+    store.setNodes((nds) => [...nds, freshNode("n-1")]);
+    store.setNodes((nds) => [...nds, freshNode("n-2")]);
+    // …collapse into ONE history entry on commit.
+    store.commitHistory(snapshot);
+    expect(useEditorDraftStore.getState().past).toHaveLength(1);
+
+    store.undo();
+    expect(useEditorDraftStore.getState().nodes.map((n) => n.id)).toEqual(
+      before,
+    );
+  });
+
+  it("hydrate and reset clear the undo/redo history", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.pushHistory();
+    store.setNodes((nds) => [...nds, freshNode("n-extra")]);
+    expect(useEditorDraftStore.getState().past).toHaveLength(1);
+
+    store.reset("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    expect(useEditorDraftStore.getState().past).toHaveLength(0);
+    expect(useEditorDraftStore.getState().future).toHaveLength(0);
+  });
+
+  it("caps the undo history depth", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    // Push well beyond the cap (50).
+    for (let i = 0; i < 60; i++) {
+      store.pushHistory();
+      store.setNodes((nds) => [...nds, freshNode(`n-${i}`)]);
+    }
+    expect(useEditorDraftStore.getState().past.length).toBeLessThanOrEqual(50);
+  });
+
+  it("undo / redo are no-ops on empty stacks", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    const before = useEditorDraftStore.getState().nodes.map((n) => n.id);
+    store.undo();
+    store.redo();
+    expect(useEditorDraftStore.getState().nodes.map((n) => n.id)).toEqual(
+      before,
+    );
+  });
+});
+
+describe("useEditorDraftStore dirty tracking", () => {
+  it("a freshly hydrated draft is not dirty", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    const s = useEditorDraftStore.getState();
+    expect(
+      isDraftDirty({
+        nodes: s.nodes,
+        edges: s.edges,
+        meta: s.meta,
+        baseline: s.baseline,
+      }),
+    ).toBe(false);
+  });
+
+  it("an edit makes the draft dirty", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.setNodes((nds) => [...nds, freshNode("n-extra")]);
+    const s = useEditorDraftStore.getState();
+    expect(
+      isDraftDirty({
+        nodes: s.nodes,
+        edges: s.edges,
+        meta: s.meta,
+        baseline: s.baseline,
+      }),
+    ).toBe(true);
+  });
+
+  it("markSaved clears the dirty flag", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.setNodes((nds) => [...nds, freshNode("n-extra")]);
+    store.markSaved();
+    const s = useEditorDraftStore.getState();
+    expect(
+      isDraftDirty({
+        nodes: s.nodes,
+        edges: s.edges,
+        meta: s.meta,
+        baseline: s.baseline,
+      }),
+    ).toBe(false);
+  });
+
+  it("ignores transient reactflow node fields and sub-pixel position drift", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    // A selection highlight + measured size + sub-pixel jitter must NOT count
+    // as a real edit.
+    store.setNodes((nds) =>
+      nds.map((n, i) =>
+        i === 0
+          ? {
+              ...n,
+              selected: true,
+              width: 120,
+              height: 40,
+              position: { x: n.position.x + 0.3, y: n.position.y - 0.2 },
+            }
+          : n,
+      ),
+    );
+    const s = useEditorDraftStore.getState();
+    expect(
+      isDraftDirty({
+        nodes: s.nodes,
+        edges: s.edges,
+        meta: s.meta,
+        baseline: s.baseline,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("useEditorDraftStore lastSavedAt", () => {
+  it("is null after hydrating a workflow", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    expect(useEditorDraftStore.getState().lastSavedAt).toBeNull();
+  });
+
+  it("markSaved stamps lastSavedAt with a valid ISO timestamp", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.markSaved();
+    const { lastSavedAt } = useEditorDraftStore.getState();
+    expect(lastSavedAt).not.toBeNull();
+    expect(Number.isNaN(new Date(lastSavedAt ?? "").getTime())).toBe(false);
+  });
+
+  it("hydrate clears a previous lastSavedAt", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.markSaved();
+    expect(useEditorDraftStore.getState().lastSavedAt).not.toBeNull();
+
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    expect(useEditorDraftStore.getState().lastSavedAt).toBeNull();
+  });
+
+  it("reset clears a previous lastSavedAt", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.markSaved();
+    expect(useEditorDraftStore.getState().lastSavedAt).not.toBeNull();
+
+    store.reset("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    expect(useEditorDraftStore.getState().lastSavedAt).toBeNull();
   });
 });

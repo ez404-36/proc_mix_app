@@ -91,7 +91,10 @@ import "../../i18n";
 import { useCommandStore } from "../../stores/commandStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import { useEditorDraftStore } from "../../stores/editorDraftStore";
+import {
+  fingerprintDraft,
+  useEditorDraftStore,
+} from "../../stores/editorDraftStore";
 import { INSERT_SHIFT_X, insertNodeOnEdge } from "../../utils/workflowGraph";
 import type { Command, Workflow } from "../../types";
 import { Editor } from "./Editor";
@@ -154,6 +157,10 @@ function resetStores(): void {
     meta: { name: "", tags: [] },
     currentId: null,
     selectedNodeId: null,
+    baseline: fingerprintDraft({ nodes: [], edges: [], meta: { name: "", tags: [] } }),
+    past: [],
+    future: [],
+    lastSavedAt: null,
   });
 }
 
@@ -165,16 +172,19 @@ afterEach(() => {
 });
 
 describe("Editor shell", () => {
-  it("renders the palette with available commands and the canvas", () => {
+  it("renders the palette node buttons and the canvas", () => {
     act(() => {
       render(<Editor />);
     });
     expect(screen.getByTestId("reactflow")).toBeTruthy();
-    // The palette lists the one command in the store, draggable onto the canvas.
-    expect(screen.getByText("Build")).toBeTruthy();
-    // Add-node buttons for condition + end are present.
+    // Node-type buttons, including the new empty "Command" node, are present.
+    expect(screen.getByText("+ Command")).toBeTruthy();
     expect(screen.getByText("+ Condition")).toBeTruthy();
     expect(screen.getByText("+ End")).toBeTruthy();
+    // The "Local commands" section lists ONLY this workflow's local commands;
+    // the global "Build" fixture command does NOT appear here.
+    expect(screen.getByText("Local commands")).toBeTruthy();
+    expect(screen.queryByText("Build")).toBeNull();
   });
 
   it("labels the destructive toolbar action 'Clear' for a new workflow", () => {
@@ -318,7 +328,7 @@ describe("Editor shell", () => {
 
     // Add a step → Run enabled.
     act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Build" }));
+      fireEvent.click(screen.getByRole("button", { name: "+ Command" }));
     });
     expect(
       screen.getByRole("button", { name: "Run" }),
@@ -343,7 +353,7 @@ describe("Editor shell", () => {
     ).toHaveProperty("disabled", true);
   });
 
-  it("appends a connected command node when a palette item is clicked", () => {
+  it("appends a connected (unbound) command node when the + Command button is clicked", () => {
     // New workflow → the draft hydrates to a single start node.
     act(() => {
       render(<Editor />);
@@ -351,17 +361,19 @@ describe("Editor shell", () => {
     expect(useEditorDraftStore.getState().nodes).toHaveLength(1);
     expect(useEditorDraftStore.getState().edges).toHaveLength(0);
 
-    // Click the palette command (a button labelled with the command name).
+    // Click the palette "+ Command" node button → appends an empty command node.
     act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Build" }));
+      fireEvent.click(screen.getByRole("button", { name: "+ Command" }));
     });
 
-    // A command node was appended and wired from the start node's out port.
+    // A command node was appended and wired from the start node's out port. It
+    // is unbound (no command picked yet) — the user picks one in the inspector.
     const { nodes, edges } = useEditorDraftStore.getState();
     expect(nodes).toHaveLength(2);
     expect(edges).toHaveLength(1);
     const start = nodes.find((n) => n.data.kind === "start");
     const cmd = nodes.find((n) => n.data.kind === "command");
+    expect(cmd?.data.commandId).toBeUndefined();
     expect(edges[0]?.source).toBe(start?.id);
     expect(edges[0]?.target).toBe(cmd?.id);
     expect(edges[0]?.sourceHandle).toBe("out");
@@ -376,7 +388,7 @@ describe("Editor shell", () => {
     expect(runBtn).toHaveProperty("disabled", true);
 
     act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Build" }));
+      fireEvent.click(screen.getByRole("button", { name: "+ Command" }));
     });
     // A command step was added → Run becomes enabled.
     expect(
@@ -483,5 +495,236 @@ describe("Editor shell", () => {
     const nodeIds = useEditorDraftStore.getState().nodes.map((n) => n.id);
     expect(nodeIds).toHaveLength(3);
     expect(nodeIds).toContain("n-extra");
+  });
+
+  it("offers both a Save (stay) and a Save & Exit action", () => {
+    useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
+    useUIStore.setState({ editorWorkflowId: "wf-1" });
+    act(() => {
+      render(<Editor />);
+    });
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save & Exit" })).toBeTruthy();
+  });
+
+  it("Save (stay) persists and clears the dirty baseline without leaving", () => {
+    useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
+    useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
+    act(() => {
+      render(<Editor />);
+    });
+    act(() => {
+      useEditorDraftStore.getState().setNodes((nds) => [
+        ...nds,
+        {
+          id: "n-extra",
+          type: "command",
+          position: { x: 0, y: 0 },
+          data: { kind: "command" },
+        },
+      ]);
+    });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    // Stayed in the editor (view unchanged) and the baseline is now clean.
+    expect(useUIStore.getState().currentView).toBe("editor");
+    const s = useEditorDraftStore.getState();
+    expect(
+      fingerprintDraft({ nodes: s.nodes, edges: s.edges, meta: s.meta }),
+    ).toBe(s.baseline);
+  });
+
+  it("Save & Exit navigates back to the library", () => {
+    useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
+    useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
+    act(() => {
+      render(<Editor />);
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Save & Exit" }));
+    });
+    expect(useUIStore.getState().currentView).toBe("library");
+  });
+
+  it("closes immediately when there are no unsaved changes", () => {
+    useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
+    useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
+    act(() => {
+      render(<Editor />);
+    });
+    // Clean draft → Close navigates without a confirmation dialog.
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    });
+    expect(screen.queryByText("Discard unsaved changes?")).toBeNull();
+    expect(useUIStore.getState().currentView).toBe("library");
+  });
+
+  it("warns about unsaved changes when closing a dirty editor", () => {
+    useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
+    useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
+    act(() => {
+      render(<Editor />);
+    });
+    act(() => {
+      useEditorDraftStore.getState().setNodes((nds) => [
+        ...nds,
+        {
+          id: "n-extra",
+          type: "command",
+          position: { x: 0, y: 0 },
+          data: { kind: "command" },
+        },
+      ]);
+    });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    });
+    // The discard confirmation appears; the view has NOT changed yet.
+    expect(screen.getByText("Discard unsaved changes?")).toBeTruthy();
+    expect(useUIStore.getState().currentView).toBe("editor");
+
+    // Confirming the discard leaves the editor.
+    const dialog = screen.getByRole("dialog");
+    act(() => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
+    });
+    expect(useUIStore.getState().currentView).toBe("library");
+  });
+
+  it("exposes Undo and Redo toolbar actions", () => {
+    act(() => {
+      render(<Editor />);
+    });
+    expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Redo" })).toBeTruthy();
+  });
+
+  it("undoes a palette node addition", () => {
+    act(() => {
+      render(<Editor />);
+    });
+    expect(useEditorDraftStore.getState().nodes).toHaveLength(1);
+
+    // Click the "+ Command" node button → appends a command node (one action).
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "+ Command" }));
+    });
+    expect(useEditorDraftStore.getState().nodes).toHaveLength(2);
+
+    // Undo restores the single-start graph.
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    });
+    expect(useEditorDraftStore.getState().nodes).toHaveLength(1);
+
+    // Redo re-applies it.
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    });
+    expect(useEditorDraftStore.getState().nodes).toHaveLength(2);
+  });
+
+  it("shows the last-saved indicator with an em-dash before any save", () => {
+    useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
+    useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
+    act(() => {
+      render(<Editor />);
+    });
+    // No save yet (lastSavedAt === null) → the indicator still renders, with
+    // an em-dash placeholder for the datetime.
+    expect(screen.getByText("Last saved: —")).toBeTruthy();
+  });
+
+  it("shows a formatted datetime in the last-saved indicator after a save", () => {
+    useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
+    useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
+    act(() => {
+      render(<Editor />);
+    });
+
+    const iso = "2026-06-15T10:20:30.000Z";
+    act(() => {
+      useEditorDraftStore.setState({ lastSavedAt: iso });
+    });
+
+    // The placeholder is gone and the formatted datetime is shown instead.
+    expect(screen.queryByText("Last saved: —")).toBeNull();
+    expect(
+      screen.getByText(`Last saved: ${new Date(iso).toLocaleString()}`),
+    ).toBeTruthy();
+  });
+
+  // Local-command list (palette "Local commands" section).
+  function renderWithLocalCommand(): void {
+    useCommandStore.setState({
+      commands: [
+        makeCommand(),
+        makeCommand({
+          id: "cmd-local",
+          name: "Local helper",
+          scope: "local",
+          workflowId: "wf-1",
+        }),
+      ],
+      favorites: [],
+      seedsInitialized: false,
+      hydrated: true,
+    });
+    useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
+    useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
+    act(() => {
+      render(<Editor />);
+    });
+  }
+
+  it("lists only this workflow's local commands in the Local commands section", () => {
+    renderWithLocalCommand();
+    // The local command appears; the global "Build" fixture does NOT.
+    expect(screen.getByText("Local helper")).toBeTruthy();
+    expect(screen.queryByText("Build")).toBeNull();
+  });
+
+  it("opens the CommandView modal (no node added) when a local command is clicked", () => {
+    renderWithLocalCommand();
+    const before = useEditorDraftStore.getState().nodes.length;
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Local helper" }));
+    });
+    // Clicking opens the read-only view (its "Make global" action is present)
+    // and does NOT add a node to the canvas.
+    expect(screen.getByRole("button", { name: "Make global" })).toBeTruthy();
+    expect(useEditorDraftStore.getState().nodes).toHaveLength(before);
+  });
+
+  it("promotes a local command to global only after confirming the dialog", () => {
+    renderWithLocalCommand();
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Local helper" }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Make global" }));
+    });
+    // Confirm dialog is shown; the command is still local until confirmed.
+    // (Both the CommandView and the confirm use role="dialog"; target the
+    // confirm by its aria-label/title.)
+    const dialog = screen.getByRole("dialog", { name: "Make command global" });
+    expect(
+      useCommandStore.getState().commands.find((c) => c.id === "cmd-local")
+        ?.scope,
+    ).toBe("local");
+    act(() => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Yes" }));
+    });
+    // After confirming, the command became global (scope cleared to global).
+    const promoted = useCommandStore
+      .getState()
+      .commands.find((c) => c.id === "cmd-local");
+    expect(promoted?.scope).toBe("global");
+    expect(promoted?.workflowId).toBeUndefined();
   });
 });

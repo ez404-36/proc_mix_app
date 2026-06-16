@@ -19,6 +19,61 @@ export interface CommandFilter {
 }
 
 /**
+ * Whether a command is global (shared library) — `scope` undefined or
+ * `"global"`. The negation identifies workflow-private `"local"` commands.
+ */
+export function isGlobalCommand(cmd: Command): boolean {
+  return cmd.scope === undefined || cmd.scope === "global";
+}
+
+/**
+ * The subset of `commands` visible in the GLOBAL library: every command
+ * except workflow-private `"local"` ones. Used by the Library Commands tab
+ * (and its tag/category option derivation) so a local command never leaks
+ * into the shared library or its filters.
+ */
+export function globalCommands(
+  commands: ReadonlyArray<Command>,
+): Command[] {
+  return commands.filter(isGlobalCommand);
+}
+
+/**
+ * The commands usable inside the editor for the workflow identified by
+ * `workflowId`: every global command PLUS this workflow's own `"local"`
+ * commands. Other workflows' local commands are excluded. When `workflowId`
+ * is `null` (a brand-new, unsaved workflow), only global commands are
+ * returned — a local command cannot be owned until the workflow has an id.
+ */
+export function commandsForWorkflowScope(
+  commands: ReadonlyArray<Command>,
+  workflowId: string | null,
+): Command[] {
+  return commands.filter(
+    (cmd) =>
+      isGlobalCommand(cmd) ||
+      (workflowId !== null && cmd.workflowId === workflowId),
+  );
+}
+
+/**
+ * The `"local"` commands owned by the workflow identified by `workflowId`
+ * — i.e. workflow-private commands, excluding every global command and any
+ * other workflow's locals. Used by the editor palette's "Local commands"
+ * section. Returns an empty array for a brand-new (unsaved) workflow
+ * (`workflowId === null`), which cannot own a local command yet.
+ */
+export function localCommandsForWorkflow(
+  commands: ReadonlyArray<Command>,
+  workflowId: string | null,
+): Command[] {
+  if (workflowId === null) return [];
+  return commands.filter(
+    (cmd) => !isGlobalCommand(cmd) && cmd.workflowId === workflowId,
+  );
+}
+
+/**
  * Normalize a tag list for persistence: trim each entry, drop empties,
  * and dedupe case-insensitively while PRESERVING the casing of the first
  * occurrence. Order is preserved (first-seen wins). Used by the command

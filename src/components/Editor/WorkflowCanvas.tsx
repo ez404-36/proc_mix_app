@@ -19,15 +19,27 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useCommandStore } from "../../stores/commandStore";
+import {
+  deleteCommand as deleteCommandWithHistory,
+  promoteCommandToGlobal,
+} from "../../services/commandActions";
+import { triggerCommandRun } from "../../services/commandRunner";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { useWorkflowRunStore } from "../../stores/workflowRunStore";
 import {
   buildDraftForTarget,
+  fingerprintDraft,
+  isDraftDirty,
   useEditorDraftStore,
+  type EditorSnapshot,
 } from "../../stores/editorDraftStore";
-import type { WorkflowNodeKind } from "../../types";
+import type { Command, WorkflowNodeKind } from "../../types";
 import { getCommandName } from "../../utils/commandLabels";
+import {
+  commandsForWorkflowScope,
+  localCommandsForWorkflow,
+} from "../../utils/commandFilters";
 import { nodeRunOutput } from "../../utils/nodePreviewData";
 import {
   APPEND_GAP_X,
@@ -57,12 +69,15 @@ import { workflowNodeTypes } from "./nodes";
 import { NodeInspector } from "./NodeInspector";
 import { WorkflowMetaModal } from "./WorkflowMetaModal";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { CommandView } from "../CommandView";
 import {
   CancelIcon,
   FitViewIcon,
   FullscreenIcon,
+  RedoIcon,
   RunIcon,
   SaveIcon,
+  UndoIcon,
   ZoomInIcon,
   ZoomOutIcon,
 } from "../icons";
@@ -164,10 +179,12 @@ function WorkflowControls({
 
 function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const { t } = useTranslation();
-  const commands = useCommandStore((s) => s.commands);
+  const allCommands = useCommandStore((s) => s.commands);
   const workflows = useWorkflowStore((s) => s.workflows);
   const setEditorWorkflowId = useUIStore((s) => s.setEditorWorkflowId);
   const setView = useUIStore((s) => s.setView);
+  const setCommandEditorTarget = useUIStore((s) => s.setCommandEditorTarget);
+  const setCommandEditorDirty = useUIStore((s) => s.setCommandEditorDirty);
 
   // The working draft lives in the editor-draft store (not local state) so it
   // survives the editor unmounting when the user navigates to another menu
@@ -185,9 +202,63 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const setSelectedNodeId = useEditorDraftStore((s) => s.setSelectedNodeId);
   const hydrate = useEditorDraftStore((s) => s.hydrate);
   const reset = useEditorDraftStore((s) => s.reset);
+  // Undo/redo history + dirty tracking (action-grained; see `pushHistory`).
+  const pushHistory = useEditorDraftStore((s) => s.pushHistory);
+  const captureSnapshot = useEditorDraftStore((s) => s.captureSnapshot);
+  const commitHistory = useEditorDraftStore((s) => s.commitHistory);
+  const undo = useEditorDraftStore((s) => s.undo);
+  const redo = useEditorDraftStore((s) => s.redo);
+  const canUndo = useEditorDraftStore((s) => s.past.length > 0);
+  const canRedo = useEditorDraftStore((s) => s.future.length > 0);
+  const baseline = useEditorDraftStore((s) => s.baseline);
+  const lastSavedAt = useEditorDraftStore((s) => s.lastSavedAt);
+  const isDirty = useMemo(
+    () => isDraftDirty({ nodes, edges, meta, baseline }),
+    [nodes, edges, meta, baseline],
+  );
+
+  // \"Last saved: <datetime>\" header indicator. Always rendered: when there is
+  // no save data (new workflow, or a legacy/unmigrated value that parses as an
+  // invalid date) it shows an em-dash placeholder instead of hiding.
+  const savedAtLabel = useMemo((): string => {
+    const placeholder = "—";
+    if (lastSavedAt === null) {
+      return t("editor.lastSavedAt", { datetime: placeholder });
+    }
+    const d = new Date(lastSavedAt);
+    const datetime = Number.isNaN(d.getTime()) ? placeholder : d.toLocaleString();
+    return t("editor.lastSavedAt", { datetime });
+  }, [lastSavedAt, t]);
+
+  // Commands available to THIS workflow's nodes: every global command plus
+  // this workflow's own `local` commands. Other workflows' locals are hidden.
+  // Scoped once here and threaded into the palette and the node inspector so
+  // both pickers stay consistent. A brand-new (unsaved) workflow has
+  // `currentId === null` → only globals (a local can't be owned yet).
+  const commands = useMemo(
+    () => commandsForWorkflowScope(allCommands, currentId),
+    [allCommands, currentId],
+  );
+
+  // The palette's "Local commands" section lists ONLY this workflow's own
+  // `local` commands (globals are added to the canvas via the empty "Command"
+  // node + its picker instead). Empty for an unsaved workflow.
+  const localCommands = useMemo(
+    () => localCommandsForWorkflow(allCommands, currentId),
+    [allCommands, currentId],
+  );
 
   const [metaModalOpen, setMetaModalOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  // Unsaved-changes guard shown when Close is clicked with a dirty draft.
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  // The local command shown in the read-only CommandView modal (opened by
+  // clicking an item in the palette's "Local commands" list), or `null`.
+  const [viewCommand, setViewCommand] = useState<Command | null>(null);
+  // A command staged for promotion to global: the promote confirm dialog is
+  // open while this is non-null (set from the CommandView "Make global" button
+  // or the node inspector promote action). `null` when no confirm is pending.
+  const [promotePendingId, setPromotePendingId] = useState<string | null>(null);
   // Canvas interactivity (the "pin"/lock control): when false, nodes can't be
   // dragged / selected / connected — useful while panning a finished graph.
   const [interactive, setInteractive] = useState(true);
@@ -235,6 +306,15 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     WorkflowNodeData,
     unknown
   > | null>(null);
+
+  // Node-modal edit session for undo grouping: the draft snapshot taken when a
+  // node modal opens, and its fingerprint, so the many incremental config
+  // edits inside the modal collapse into ONE undo step committed on close.
+  // `skipNextModalCommit` suppresses that commit when the modal closes because
+  // the node was DELETED (delete records its own discrete history entry).
+  const modalOpenSnapshotRef = useRef<EditorSnapshot | null>(null);
+  const modalOpenFingerprintRef = useRef<string | null>(null);
+  const skipNextModalCommitRef = useRef(false);
 
   // Reimplement reactflow's change handlers against the store setters. The
   // setters accept an updater fn (matching reactflow's `useNodesState`
@@ -323,10 +403,12 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         targetEdgeId,
       );
       if (next === null) return;
+      // Splicing a node into an edge is one discrete, undoable action.
+      pushHistory();
       setNodes(next.nodes);
       setEdges(next.edges);
     },
-    [nodeDragEdgeId, clearNodeDragHint, setNodes, setEdges],
+    [nodeDragEdgeId, clearNodeDragHint, setNodes, setEdges, pushHistory],
   );
 
   const onConnect = useCallback(
@@ -344,9 +426,11 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         sourceHandle: connection.sourceHandle,
         targetHandle: connection.targetHandle,
       };
+      // Connecting two ports is one discrete, undoable action.
+      pushHistory();
       setEdges((eds) => addEdge(edge, eds));
     },
-    [setEdges],
+    [setEdges, pushHistory],
   );
 
   const onNodeClick = useCallback(
@@ -366,9 +450,11 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   // most discoverable affordance, so we expose it directly.
   const onEdgeClick = useCallback(
     (_event: unknown, edge: Edge) => {
+      // Removing a connection is one discrete, undoable action.
+      pushHistory();
       setEdges((eds) => eds.filter((e) => e.id !== edge.id));
     },
-    [setEdges],
+    [setEdges, pushHistory],
   );
 
   const makeNode = useCallback(
@@ -421,15 +507,74 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     [makeNode, setNodes, setEdges],
   );
 
-  // Click a palette command (instead of dragging) to append it after the
-  // current tail. A drag never fires click, so the two affordances do not
-  // conflict.
-  const onPaletteCommandClick = useCallback(
-    (commandId: string): void => {
-      appendNodeToTail("command", commandId);
+  // Create a workflow-LOCAL command from within the editor: open the
+  // full-screen command form pre-scoped to this workflow. Gated on the
+  // workflow having been saved (`currentId !== null`) so the new command has
+  // an owner to attach to. After creation the command appears only in THIS
+  // workflow's palette/picker (it is hidden from the global library).
+  const onCreateLocalCommand = useCallback((): void => {
+    if (currentId === null) return;
+    setCommandEditorDirty(false);
+    setCommandEditorTarget({
+      mode: "create",
+      commandId: null,
+      initialScope: "local",
+      initialWorkflowId: currentId,
+    });
+    setView("command-editor");
+  }, [currentId, setCommandEditorDirty, setCommandEditorTarget, setView]);
+
+  // Request promotion of a local command to global ("make global"): opens the
+  // confirm dialog. The actual promote happens on confirm. Used by the
+  // CommandView "Make global" button (opened from the Local commands list).
+  const onPromoteCommand = useCallback((commandId: string): void => {
+    setPromotePendingId(commandId);
+  }, []);
+
+  // Confirm/cancel the promote. On confirm the command leaves this workflow's
+  // private scope and joins the shared library (renamed on name conflict — see
+  // `promoteCommandToGlobal`); it then disappears from the "Local commands"
+  // list and the open CommandView (no longer local) is closed.
+  const confirmPromote = useCallback((): void => {
+    if (promotePendingId !== null) {
+      promoteCommandToGlobal(promotePendingId);
+    }
+    setPromotePendingId(null);
+    setViewCommand(null);
+  }, [promotePendingId]);
+  const cancelPromote = useCallback((): void => {
+    setPromotePendingId(null);
+  }, []);
+
+  // Open a local command in the read-only CommandView modal (clicking an item
+  // in the "Local commands" list). These items do not add a node — that is
+  // done via the empty "Command" node + its picker.
+  const onViewLocalCommand = useCallback((command: Command): void => {
+    setViewCommand(command);
+  }, []);
+
+  // Edit a local command from its CommandView: open the full-screen command
+  // editor, returning to THIS workflow editor on close (so the user lands back
+  // on the workflow). Mirrors the Library edit flow plus the `returnTo` hint.
+  const onEditViewedCommand = useCallback(
+    (command: Command): void => {
+      setViewCommand(null);
+      setCommandEditorDirty(false);
+      setCommandEditorTarget({
+        mode: "edit",
+        commandId: command.id,
+        returnTo: "editor",
+      });
+      setView("command-editor");
     },
-    [appendNodeToTail],
+    [setCommandEditorDirty, setCommandEditorTarget, setView],
   );
+
+  // Delete a local command from its CommandView (history-logged, restorable).
+  const onDeleteViewedCommand = useCallback((command: Command): void => {
+    setViewCommand(null);
+    deleteCommandWithHistory(command.id);
+  }, []);
 
   // Palette drag-and-drop (drag-over insert hint + drop placement). The hint
   // state (`dropTargetEdgeId`, `insertPreviewPos`) lives in the hook and is
@@ -440,7 +585,6 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     onDragOver,
     onDragLeave,
     onDrop,
-    onPaletteDragStart,
     onPaletteNodeDragStart,
   } = useWorkflowCanvasDnD({
     flowWrapperRef,
@@ -448,11 +592,34 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     makeNode,
     setNodes,
     setEdges,
+    onBeforeMutate: pushHistory,
   });
+
+  // History-aware palette add helpers: record one undo snapshot, then place
+  // the node. Used by the palette CLICK affordances (drag-drop records its own
+  // snapshot via the DnD hook's `onBeforeMutate`).
+  const paletteAddNode = useCallback(
+    (
+      kind: PaletteNodeKind,
+      commandId: string | undefined,
+      position: { x: number; y: number },
+    ): void => {
+      pushHistory();
+      addNode(kind, commandId, position);
+    },
+    [pushHistory, addNode],
+  );
+  const paletteAppendNode = useCallback(
+    (kind: PaletteNodeKind, commandId: string | undefined): void => {
+      pushHistory();
+      appendNodeToTail(kind, commandId);
+    },
+    [pushHistory, appendNodeToTail],
+  );
 
   // Save / run / meta-save lifecycle + the presentational `activeRunId`
   // highlight state.
-  const { save, run, runNode, saveMeta, activeRunId, setActiveRunId } =
+  const { save, saveAndExit, run, runNode, saveMeta, activeRunId, setActiveRunId } =
     useWorkflowCanvasPersistence({
       meta,
       nodes,
@@ -466,6 +633,19 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       onSaved: () => setView("library"),
       t,
     });
+
+  // Undo/redo are guarded against firing while a node modal is open: the modal
+  // groups its edits into a single history step on close, and an undo/redo
+  // mid-session would desync that grouping. The toolbar buttons sit behind the
+  // modal backdrop anyway, so this only matters for the keyboard shortcuts.
+  const handleUndo = useCallback((): void => {
+    if (selectedNodeId !== null) return;
+    undo();
+  }, [selectedNodeId, undo]);
+  const handleRedo = useCallback((): void => {
+    if (selectedNodeId !== null) return;
+    redo();
+  }, [selectedNodeId, redo]);
 
   // Hydrate the canvas only on a genuine TARGET switch — a navigation to a
   // different workflow id (or new ↔ existing). When the draft store already
@@ -581,6 +761,49 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     [selectedPredecessor, activeRun],
   );
 
+  // Group a node-modal edit session into ONE undo step. When the modal opens
+  // (selectedNodeId transitions null → id) capture the pre-edit snapshot; when
+  // it closes (id → null) commit that snapshot iff the draft actually changed,
+  // unless a delete already recorded its own discrete entry. Tracks the prior
+  // selection in a ref so we only act on genuine open/close transitions (not
+  // node-to-node switches, which both close the old session and open a new
+  // one).
+  const prevSelectedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevSelectedRef.current;
+    if (prev === selectedNodeId) return;
+
+    // Closing the previous session (the modal for `prev` is going away).
+    if (prev !== null) {
+      if (skipNextModalCommitRef.current) {
+        skipNextModalCommitRef.current = false;
+      } else if (
+        modalOpenSnapshotRef.current !== null &&
+        modalOpenFingerprintRef.current !== null
+      ) {
+        const current = fingerprintDraft({ nodes, edges, meta });
+        if (current !== modalOpenFingerprintRef.current) {
+          commitHistory(modalOpenSnapshotRef.current);
+        }
+      }
+      modalOpenSnapshotRef.current = null;
+      modalOpenFingerprintRef.current = null;
+    }
+
+    // Opening a new session: snapshot the current draft as the pre-edit state.
+    if (selectedNodeId !== null) {
+      const snapshot = captureSnapshot();
+      modalOpenSnapshotRef.current = snapshot;
+      modalOpenFingerprintRef.current = fingerprintDraft(snapshot);
+    }
+
+    prevSelectedRef.current = selectedNodeId;
+    // `nodes`/`edges`/`meta` are read only inside the close branch to compute
+    // the closing fingerprint; including them would re-run this effect on every
+    // edit. The transition is driven solely by `selectedNodeId`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodeId, captureSnapshot, commitHistory]);
+
   const handleNodeCommandChange = useCallback(
     (nodeId: string, commandId: string | undefined): void => {
       setNodes((nds) =>
@@ -618,11 +841,16 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       const { nodes: curNodes, edges: curEdges } =
         useEditorDraftStore.getState();
       const next = removeNodeReconnecting(curNodes, curEdges, nodeId);
+      // Deleting a node is one discrete, undoable action. The modal closes as
+      // a side effect — suppress the modal-session commit so we don't record
+      // the same change twice.
+      skipNextModalCommitRef.current = true;
+      pushHistory();
       setNodes(next.nodes);
       setEdges(next.edges);
       setSelectedNodeId(null);
     },
-    [setNodes, setEdges, setSelectedNodeId],
+    [setNodes, setEdges, setSelectedNodeId, pushHistory],
   );
 
   // Reset the canvas to its initial state, discarding unsaved edits. For an
@@ -637,6 +865,61 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     setActiveRunId(null);
     setClearConfirmOpen(false);
   }, [reset, currentId, workflows, setActiveRunId]);
+
+  // Leave the editor for the workflow list. A bare navigate; the dirty guard
+  // (below) decides whether to confirm first.
+  const leaveEditor = useCallback((): void => {
+    setView("library");
+  }, [setView]);
+
+  // Close button: warn about unsaved changes before leaving. A clean draft
+  // navigates immediately; a dirty one opens the discard confirmation.
+  const requestClose = useCallback((): void => {
+    if (isDirty) {
+      setCloseConfirmOpen(true);
+      return;
+    }
+    leaveEditor();
+  }, [isDirty, leaveEditor]);
+
+  const confirmDiscardAndClose = useCallback((): void => {
+    setCloseConfirmOpen(false);
+    leaveEditor();
+  }, [leaveEditor]);
+
+  // Editor-scoped keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z (or
+  // Ctrl+Y) = redo. Suppressed while typing in an input/textarea/select or a
+  // contenteditable so the shortcuts don't hijack text editing, and while a
+  // node modal is open (the modal owns its own keyboard handling and the
+  // history grouping). Bound on the document so the canvas need not be
+  // focused.
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      return target.isContentEditable;
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key !== "z" && event.key !== "Z" && event.key !== "y" && event.key !== "Y") {
+        return;
+      }
+      if (isEditableTarget(event.target)) return;
+      const wantRedo =
+        event.key === "y" ||
+        event.key === "Y" ||
+        ((event.key === "z" || event.key === "Z") && event.shiftKey);
+      event.preventDefault();
+      if (wantRedo) {
+        handleRedo();
+      } else {
+        handleUndo();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [handleUndo, handleRedo]);
 
   // Dynamic header title: a fresh draft reads "New workflow"; editing an
   // existing one reads the generic "Editing workflow" (the name is shown in
@@ -653,10 +936,11 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
           <p className="view-subtitle">{t("editor.subtitle")}</p>
         </div>
         <div className="wf-header__actions">
+          <span className="wf-header__saved-at">{savedAtLabel}</span>
           <button
             type="button"
             className="btn command-form__action command-form__action--cancel"
-            onClick={() => setView("library")}
+            onClick={requestClose}
           >
             <span className="command-form__action-icon--cancel">
               <CancelIcon />
@@ -665,11 +949,19 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
           </button>
           <button
             type="button"
-            className="btn btn--primary command-form__action"
+            className="btn btn--ghost command-form__action"
             onClick={save}
           >
             <SaveIcon />
             {t("common.save")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary command-form__action"
+            onClick={saveAndExit}
+          >
+            <SaveIcon />
+            {t("editor.saveAndExit")}
           </button>
         </div>
       </header>
@@ -682,9 +974,19 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             type="button"
             className="btn btn--ghost wf-palette__btn"
             draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "command")}
+            onClick={() => paletteAppendNode("command", undefined)}
+            title={t("editor.palette.nodeDragHint")}
+          >
+            + {t("editor.nodes.command")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            draggable
             onDragStart={(e) => onPaletteNodeDragStart(e, "condition")}
             onClick={() =>
-              addNode("condition", undefined, { x: 240, y: 200 })
+              paletteAddNode("condition", undefined, { x: 240, y: 200 })
             }
             title={t("editor.palette.nodeDragHint")}
           >
@@ -695,7 +997,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             className="btn btn--ghost wf-palette__btn"
             draggable
             onDragStart={(e) => onPaletteNodeDragStart(e, "switch")}
-            onClick={() => addNode("switch", undefined, { x: 240, y: 200 })}
+            onClick={() => paletteAddNode("switch", undefined, { x: 240, y: 200 })}
             title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.switch")}
@@ -705,7 +1007,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             className="btn btn--ghost wf-palette__btn"
             draggable
             onDragStart={(e) => onPaletteNodeDragStart(e, "loop")}
-            onClick={() => addNode("loop", undefined, { x: 240, y: 200 })}
+            onClick={() => paletteAddNode("loop", undefined, { x: 240, y: 200 })}
             title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.loop")}
@@ -715,7 +1017,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             className="btn btn--ghost wf-palette__btn"
             draggable
             onDragStart={(e) => onPaletteNodeDragStart(e, "try")}
-            onClick={() => addNode("try", undefined, { x: 240, y: 200 })}
+            onClick={() => paletteAddNode("try", undefined, { x: 240, y: 200 })}
             title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.try")}
@@ -725,7 +1027,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             className="btn btn--ghost wf-palette__btn"
             draggable
             onDragStart={(e) => onPaletteNodeDragStart(e, "data")}
-            onClick={() => appendNodeToTail("data", undefined)}
+            onClick={() => paletteAppendNode("data", undefined)}
             title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.data")}
@@ -735,7 +1037,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             className="btn btn--ghost wf-palette__btn"
             draggable
             onDragStart={(e) => onPaletteNodeDragStart(e, "parser")}
-            onClick={() => appendNodeToTail("parser", undefined)}
+            onClick={() => paletteAppendNode("parser", undefined)}
             title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.parser")}
@@ -745,7 +1047,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             className="btn btn--ghost wf-palette__btn"
             draggable
             onDragStart={(e) => onPaletteNodeDragStart(e, "text")}
-            onClick={() => appendNodeToTail("text", undefined)}
+            onClick={() => paletteAppendNode("text", undefined)}
             title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.text")}
@@ -755,32 +1057,49 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             className="btn btn--ghost wf-palette__btn"
             draggable
             onDragStart={(e) => onPaletteNodeDragStart(e, "end")}
-            onClick={() => appendNodeToTail("end", undefined)}
+            onClick={() => paletteAppendNode("end", undefined)}
             title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.end")}
           </button>
         </div>
         <div className="wf-palette__section">
-          <h3 className="wf-palette__title">{t("editor.palette.commands")}</h3>
-          <p className="wf-palette__hint">{t("editor.palette.dragHint")}</p>
+          <h3 className="wf-palette__title">
+            {t("editor.palette.localCommands")}
+          </h3>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            onClick={onCreateLocalCommand}
+            disabled={currentId === null}
+            title={
+              currentId === null
+                ? t("editor.palette.newLocalCommandHint")
+                : t("editor.palette.newLocalCommand")
+            }
+          >
+            + {t("editor.palette.newLocalCommand")}
+          </button>
+          {currentId === null ? (
+            <p className="wf-palette__hint">
+              {t("editor.palette.newLocalCommandHint")}
+            </p>
+          ) : null}
           <div className="wf-palette__list">
-            {commands.map((cmd) => (
+            {localCommands.map((cmd) => (
               <button
                 key={cmd.id}
                 type="button"
                 className="wf-palette__item"
-                draggable
-                onDragStart={(e) => onPaletteDragStart(e, cmd.id)}
-                onClick={() => onPaletteCommandClick(cmd.id)}
-                title={t("editor.palette.clickHint")}
+                onClick={() => onViewLocalCommand(cmd)}
+                title={t("editor.palette.openLocalCommandHint")}
               >
                 {getCommandName(cmd, t)}
               </button>
             ))}
-            {commands.length === 0 ? (
+            {currentId !== null && localCommands.length === 0 ? (
               <p className="wf-palette__hint">
-                {t("editor.palette.noCommands")}
+                {t("editor.palette.noLocalCommands")}
               </p>
             ) : null}
           </div>
@@ -800,6 +1119,26 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             onClick={() => setMetaModalOpen(true)}
           >
             {t("editor.details")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon"
+            onClick={handleUndo}
+            disabled={!canUndo}
+            aria-label={t("editor.undo")}
+            title={t("editor.undo")}
+          >
+            <UndoIcon />
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon"
+            onClick={handleRedo}
+            disabled={!canRedo}
+            aria-label={t("editor.redo")}
+            title={t("editor.redo")}
+          >
+            <RedoIcon />
           </button>
           <div className="wf-toolbar__spacer" />
           <button
@@ -929,6 +1268,35 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         danger
         onConfirm={confirmClear}
         onCancel={() => setClearConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={closeConfirmOpen}
+        title={t("editor.closeConfirmTitle")}
+        message={t("editor.closeConfirm")}
+        confirmLabel={t("editor.discard")}
+        danger
+        onConfirm={confirmDiscardAndClose}
+        onCancel={() => setCloseConfirmOpen(false)}
+      />
+
+      <CommandView
+        command={viewCommand}
+        onClose={() => setViewCommand(null)}
+        onEdit={onEditViewedCommand}
+        onRun={(cmd) => void triggerCommandRun(cmd)}
+        onDelete={onDeleteViewedCommand}
+        onPromote={(cmd) => onPromoteCommand(cmd.id)}
+      />
+
+      <ConfirmDialog
+        open={promotePendingId !== null}
+        title={t("editor.promoteConfirm.title")}
+        message={t("editor.promoteConfirm.message")}
+        confirmLabel={t("common.yes")}
+        cancelLabel={t("common.no")}
+        onConfirm={confirmPromote}
+        onCancel={cancelPromote}
       />
       </div>
     </>

@@ -227,6 +227,21 @@ pub struct CommandRecord {
     /// legacy payloads — which never sent this field — parsing cleanly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<OutputSchemaRecord>,
+    /// Visibility scope. `"global"` (the default) means the command lives
+    /// in the shared library. `"local"` means it belongs to a single
+    /// workflow (see `workflow_id`): it is hidden from the global library
+    /// and only usable inside its owning workflow's editor. Persisted as
+    /// the `scope` TEXT column (DEFAULT `'global'`). `#[serde(default)]`
+    /// keeps legacy payloads — which never sent this field — parsing
+    /// cleanly; `None` is interpreted as `"global"` by the TS boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Owning workflow id for a `"local"`-scoped command. `None` for
+    /// global commands. Persisted as the `workflow_id` TEXT column (NULL
+    /// when absent). Serialised as `workflowId` to match the TS `Command`
+    /// type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
 }
 
 /// Return every command in insertion order (oldest first).
@@ -235,7 +250,7 @@ pub async fn list_all(pool: &DbPool) -> Result<Vec<CommandRecord>, String> {
         "SELECT id, name, name_key, description, description_key, icon, script, shell, \
                 args_json, working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-                timeout_seconds, output_schema \
+                timeout_seconds, output_schema, scope, workflow_id \
          FROM commands \
          ORDER BY created_at ASC",
     )
@@ -314,8 +329,8 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             id, name, name_key, description, description_key, icon, script, shell, \
             args_json, working_dir, env_json, tags_json, category_id, favorite, \
             created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-            timeout_seconds, output_schema \
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            timeout_seconds, output_schema, scope, workflow_id \
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \
             name_key = excluded.name_key, \
@@ -336,7 +351,9 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             run_as_admin = excluded.run_as_admin, \
             variables = excluded.variables, \
             timeout_seconds = excluded.timeout_seconds, \
-            output_schema = excluded.output_schema",
+            output_schema = excluded.output_schema, \
+            scope = excluded.scope, \
+            workflow_id = excluded.workflow_id",
     )
     .bind(&cmd.id)
     .bind(&cmd.name)
@@ -360,6 +377,11 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
     .bind(&variables_json)
     .bind(cmd.timeout_seconds.map(|v| v as i64))
     .bind(&output_schema_json)
+    // Normalise an absent scope to the explicit `"global"` default so the
+    // column is never NULL (mirrors the schema DEFAULT). A `"local"` command
+    // carries its owning `workflow_id`; a global one binds NULL.
+    .bind(cmd.scope.clone().unwrap_or_else(|| "global".to_string()))
+    .bind(&cmd.workflow_id)
     .execute(pool.as_ref())
     .await
     .map_err(|e| format!("upsert: {e}"))?;
@@ -375,6 +397,19 @@ pub async fn delete(pool: &DbPool, id: &str) -> Result<(), String> {
         .execute(pool.as_ref())
         .await
         .map_err(|e| format!("delete: {e}"))?;
+    Ok(())
+}
+
+/// Remove every `local`-scoped command owned by the given workflow. Used to
+/// cascade-delete a workflow's private commands when the workflow itself is
+/// deleted — they live with the workflow, so they go with it. Idempotent: a
+/// workflow with no local commands is a no-op.
+pub async fn delete_local_for_workflow(pool: &DbPool, workflow_id: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM commands WHERE scope = 'local' AND workflow_id = ?")
+        .bind(workflow_id)
+        .execute(pool.as_ref())
+        .await
+        .map_err(|e| format!("delete_local_for_workflow: {e}"))?;
     Ok(())
 }
 
@@ -429,6 +464,12 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
         ),
         None => None,
     };
+    let scope: Option<String> = row
+        .try_get("scope")
+        .map_err(|e| format!("read scope: {e}"))?;
+    let workflow_id: Option<String> = row
+        .try_get("workflow_id")
+        .map_err(|e| format!("read workflow_id: {e}"))?;
 
     Ok(CommandRecord {
         id: row.try_get("id").map_err(|e| format!("read id: {e}"))?,
@@ -475,6 +516,8 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
         variables,
         timeout_seconds: timeout_seconds.map(|v| v as u64),
         output_schema,
+        scope,
+        workflow_id,
     })
 }
 
@@ -533,6 +576,8 @@ mod wire_format_tests {
                 return_field: Some("count".into()),
                 sample: None,
             }),
+            scope: Some("local".into()),
+            workflow_id: Some("wf-1".into()),
         }
     }
 
@@ -563,6 +608,8 @@ mod wire_format_tests {
         assert!(json.get("variables").is_some());
         assert!(json.get("timeoutSeconds").is_some());
         assert!(json.get("outputSchema").is_some());
+        assert!(json.get("scope").is_some());
+        assert!(json.get("workflowId").is_some());
         // The nested schema must also be camelCase on the wire.
         let schema = json.get("outputSchema").unwrap();
         assert!(schema.get("parser").is_some());
@@ -580,6 +627,7 @@ mod wire_format_tests {
         assert!(json.get("run_count").is_none());
         assert!(json.get("run_as_admin").is_none());
         assert!(json.get("timeout_seconds").is_none());
+        assert!(json.get("workflow_id").is_none());
     }
 
     /// Legacy clients that predate the admin feature don't include
@@ -784,6 +832,12 @@ mod sqlite_integration_tests {
             variables: Vec::new(),
             timeout_seconds: None,
             output_schema: None,
+            // `upsert` normalises an absent scope to `"global"` (and the column
+            // has a `'global'` DEFAULT), so a round-tripped global command
+            // always reads back `Some("global")`. The fixture reflects that
+            // persisted reality so the `upsert → list` equality holds.
+            scope: Some("global".into()),
+            workflow_id: None,
         }
     }
 
@@ -1049,5 +1103,71 @@ mod sqlite_integration_tests {
         upsert(&pool, &rec).await.unwrap();
         let listed = list_all(&pool).await.unwrap();
         assert!(listed[0].output_schema.is_none());
+    }
+
+    /// A `local`-scoped command round-trips its `scope` + `workflow_id`
+    /// through SQLite (verifies the new columns are bound on insert and read
+    /// back in `row_to_record`).
+    #[tokio::test]
+    async fn upsert_then_list_preserves_local_scope() {
+        let pool = make_pool().await;
+        let mut rec = fixture("local-cmd", false);
+        rec.scope = Some("local".into());
+        rec.workflow_id = Some("wf-42".into());
+        upsert(&pool, &rec).await.unwrap();
+        let listed = list_all(&pool).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].scope.as_deref(), Some("local"));
+        assert_eq!(listed[0].workflow_id.as_deref(), Some("wf-42"));
+    }
+
+    /// A command with no explicit scope is persisted (and read back) as
+    /// `"global"` — the column DEFAULT plus the `upsert` normalisation.
+    #[tokio::test]
+    async fn upsert_defaults_absent_scope_to_global() {
+        let pool = make_pool().await;
+        let mut rec = fixture("no-scope-cmd", false);
+        rec.scope = None;
+        rec.workflow_id = None;
+        upsert(&pool, &rec).await.unwrap();
+        let listed = list_all(&pool).await.unwrap();
+        assert_eq!(listed[0].scope.as_deref(), Some("global"));
+        assert!(listed[0].workflow_id.is_none());
+    }
+
+    /// Cascade-delete removes only the named workflow's `local` commands,
+    /// leaving globals and other workflows' locals untouched.
+    #[tokio::test]
+    async fn delete_local_for_workflow_removes_only_owned_locals() {
+        let pool = make_pool().await;
+
+        let mut local_a = fixture("local-a", false);
+        local_a.scope = Some("local".into());
+        local_a.workflow_id = Some("wf-1".into());
+        let mut local_b = fixture("local-b", false);
+        local_b.scope = Some("local".into());
+        local_b.workflow_id = Some("wf-2".into());
+        let global = fixture("global-c", false);
+
+        upsert(&pool, &local_a).await.unwrap();
+        upsert(&pool, &local_b).await.unwrap();
+        upsert(&pool, &global).await.unwrap();
+
+        delete_local_for_workflow(&pool, "wf-1").await.unwrap();
+
+        let listed = list_all(&pool).await.unwrap();
+        let ids: std::collections::HashSet<&str> = listed.iter().map(|c| c.id.as_str()).collect();
+        assert!(!ids.contains("local-a"), "owned local must be deleted");
+        assert!(
+            ids.contains("local-b"),
+            "other workflow's local must remain"
+        );
+        assert!(ids.contains("global-c"), "global command must remain");
+
+        // Idempotent: a workflow with no locals is a no-op.
+        delete_local_for_workflow(&pool, "wf-unknown")
+            .await
+            .unwrap();
+        assert_eq!(list_all(&pool).await.unwrap().len(), 2);
     }
 }

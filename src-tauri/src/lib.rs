@@ -146,6 +146,7 @@ pub fn run() {
             commands::list_commands,
             commands::upsert_command,
             commands::delete_command,
+            commands::delete_local_commands_for_workflow,
             commands::list_workflows,
             commands::upsert_workflow,
             commands::delete_workflow,

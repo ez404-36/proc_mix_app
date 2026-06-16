@@ -82,6 +82,46 @@ function commandCreatedEvent(id: string, commandId: string): HistoryEvent {
   };
 }
 
+function workflowRunEvent(
+  id: string,
+  opts: { withOutput: boolean },
+): HistoryEvent {
+  return {
+    id,
+    createdAt: "2026-05-28T15:00:00Z",
+    kind: "workflowRun",
+    workflowId: "wf-1",
+    workflowName: "Deploy",
+    executionId: "run-1",
+    exitCode: 0,
+    durationMs: 12,
+    status: "succeeded",
+    ...(opts.withOutput
+      ? { output: [{ stream: "stdout" as const, line: "built ok" }] }
+      : {}),
+  };
+}
+
+function commandRunEvent(
+  id: string,
+  opts: { withOutput: boolean },
+): HistoryEvent {
+  return {
+    id,
+    createdAt: "2026-05-28T16:00:00Z",
+    kind: "commandRun",
+    commandId: "cmd-x",
+    commandName: "Greet",
+    executionId: "exec-1",
+    exitCode: 0,
+    durationMs: 7,
+    status: "succeeded",
+    ...(opts.withOutput
+      ? { output: [{ stream: "stdout" as const, line: "hello world" }] }
+      : {}),
+  };
+}
+
 beforeEach(() => {
   undoEditMock.mockReset();
   restoreDeletedMock.mockReset();
@@ -160,5 +200,43 @@ describe("HistoryRow — button click dispatches to the store", () => {
     render(<HistoryRow event={commandDeletedEvent("e-restore", "cmd-x")} />);
     fireEvent.click(screen.getByRole("button", { name: /restore/i }));
     expect(restoreDeletedMock).toHaveBeenCalledWith("e-restore");
+  });
+});
+
+describe("HistoryRow — run output disclosure (commandRun / workflowRun)", () => {
+  it("renders an expandable disclosure with the captured output for a workflowRun WITH output", () => {
+    const { container } = render(
+      <HistoryRow event={workflowRunEvent("e-wf", { withOutput: true })} />,
+    );
+    // The row becomes a <details> disclosure revealing the persisted output.
+    const details = container.querySelector("details.history-row__disclosure");
+    expect(details).not.toBeNull();
+    expect(screen.getByText("built ok")).toBeTruthy();
+  });
+
+  it("renders a captured output disclosure for a commandRun WITH output", () => {
+    const { container } = render(
+      <HistoryRow event={commandRunEvent("e-cmd", { withOutput: true })} />,
+    );
+    expect(
+      container.querySelector("details.history-row__disclosure"),
+    ).not.toBeNull();
+    expect(screen.getByText("hello world")).toBeTruthy();
+  });
+
+  it("does NOT render a disclosure for a workflowRun WITHOUT persisted output (older row)", () => {
+    const { container } = render(
+      <HistoryRow event={workflowRunEvent("e-wf2", { withOutput: false })} />,
+    );
+    // A run with no persisted output stays a plain, non-expandable row so we
+    // never show an empty expander for pre-persistence history.
+    expect(container.querySelector("details")).toBeNull();
+  });
+
+  it("does NOT render a disclosure for a commandRun WITHOUT persisted output", () => {
+    const { container } = render(
+      <HistoryRow event={commandRunEvent("e-cmd2", { withOutput: false })} />,
+    );
+    expect(container.querySelector("details")).toBeNull();
   });
 });

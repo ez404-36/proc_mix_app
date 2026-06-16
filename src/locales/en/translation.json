@@ -6,6 +6,8 @@
     "clear": "Clear",
     "close": "Close",
     "confirm": "Confirm",
+    "yes": "Yes",
+    "no": "No",
     "decrement": "Decrease",
     "delete": "Delete",
     "edit": "Edit",
@@ -123,6 +125,18 @@
     "untitled": "Untitled workflow",
     "details": "Properties",
     "saved": "Workflow saved",
+    "lastSavedAt": "Last saved: {{datetime}}",
+    "saveAndExit": "Save & Exit",
+    "undo": "Undo",
+    "redo": "Redo",
+    "closeConfirmTitle": "Discard unsaved changes?",
+    "closeConfirm": "You have unsaved changes that will be lost if you leave the editor. Close anyway?",
+    "makeGlobal": "Make global",
+    "makeGlobalHint": "Move this local command into the shared library so other workflows can use it.",
+    "promoteConfirm": {
+      "title": "Make command global",
+      "message": "The command will become globally available. Continue?"
+    },
     "insertPreview": "Insert here",
     "controls": {
       "zoomIn": "Zoom in",
@@ -173,11 +187,13 @@
     },
     "palette": {
       "nodes": "Nodes",
-      "commands": "Commands",
-      "dragHint": "Drag a command onto the canvas, or click it to append a step. Drop on a connection to insert between steps.",
-      "clickHint": "Click to append after the last step",
-      "nodeDragHint": "Drag onto the canvas, or click to append. Drop on a connection to insert between steps.",
-      "noCommands": "No commands yet. Create one in the Library first."
+      "nodeDragHint": "Drag a node onto the canvas or click",
+      "localCommands": "Local commands",
+      "newLocalCommand": "New command",
+      "newLocalCommandHint": "Save the workflow first to add a command that lives only inside it.",
+      "noLocalCommands": "No local commands",
+      "openLocalCommandHint": "Open this local command",
+      "localBadge": "local"
     },
     "conditionSummary": {
       "contains": "contains",
@@ -186,6 +202,8 @@
     "inspector": {
       "command": "Command",
       "pickCommand": "Pick a command…",
+      "searchCommand": "Search commands…",
+      "localSuffix": "(local)",
       "deleteNode": "Delete",
       "subject": {
         "exitCode": "Exit code",
@@ -597,6 +615,7 @@
   "commandForm": {
     "title": {
       "create": "New command",
+      "createLocal": "New command (workflow \"{{workflow}}\")",
       "edit": "Edit command"
     },
     "tabs": {

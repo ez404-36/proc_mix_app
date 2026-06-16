@@ -1674,6 +1674,8 @@ mod compute_due_tests {
             variables: vec![],
             timeout_seconds: None,
             output_schema: None,
+            scope: None,
+            workflow_id: None,
         }
     }
 
