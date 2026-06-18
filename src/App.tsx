@@ -34,6 +34,7 @@ import { useGlobalShortcut } from "./hooks/useGlobalShortcut";
 import { useI18nBridge } from "./hooks/useI18nBridge";
 import { useSeedBootstrap } from "./hooks/useSeedBootstrap";
 import { useTrayLocalization } from "./hooks/useTrayLocalization";
+import logoUrl from "./assets/logo.svg";
 
 interface NavItem {
   view: View;
@@ -179,6 +180,14 @@ function App(): ReactElement {
             }`}
           >
             <div className="app-sidebar__brand">
+              <img
+                className="app-sidebar__brand-logo"
+                src={logoUrl}
+                alt=""
+                aria-hidden="true"
+                width={24}
+                height={24}
+              />
               {!sidebarCollapsed && (
                 <span className="app-sidebar__brand-text">
                   {t("common.appName")}

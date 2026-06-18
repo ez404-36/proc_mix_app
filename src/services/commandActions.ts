@@ -74,6 +74,46 @@ export function createCommand(input: NewCommandInput): Command {
 }
 
 /**
+ * Duplicate an existing command: build a fresh `NewCommandInput` from the
+ * source's user-authored fields, prefix its name (e.g. "(copy) …"), and
+ * create it via {@link createCommand} so the copy is persisted AND logged
+ * as a `commandCreated` event.
+ *
+ * Excluded from the copy:
+ *   - identity/lifecycle fields (`id`, timestamps, `runCount`, `lastRunAt`)
+ *     are stripped by the `NewCommandInput` shape / re-stamped by the store;
+ *   - `nameKey`/`descriptionKey` (seed i18n keys) are never copied — the
+ *     duplicate is a user command with literal `name`/`description`;
+ *   - `favorite` is reset to `false` so a copy doesn't inherit the star.
+ *
+ * Scope IS preserved: duplicating a workflow-local command keeps it local to
+ * the same `workflowId`. Returns the materialised copy so the caller can
+ * navigate to its editor.
+ */
+export function duplicateCommand(
+  source: Command,
+  namePrefix: string,
+): Command {
+  const {
+    id: _id,
+    createdAt: _createdAt,
+    updatedAt: _updatedAt,
+    runCount: _runCount,
+    lastRunAt: _lastRunAt,
+    nameKey: _nameKey,
+    descriptionKey: _descriptionKey,
+    favorite: _favorite,
+    name,
+    ...rest
+  } = source;
+  return createCommand({
+    ...rest,
+    name: `${namePrefix}${name}`,
+    favorite: false,
+  });
+}
+
+/**
  * Patch an existing command via the store and log a `commandEdited`
  * event carrying BOTH the before and after snapshots. The before
  * snapshot is what powers undo from the History view.

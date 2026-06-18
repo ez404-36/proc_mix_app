@@ -913,6 +913,32 @@ pub async fn clear_all(pool: &DbPool) -> Result<(), String> {
     Ok(())
 }
 
+/// Drop history rows OLDER than `before` (`created_at < before`, an ISO-8601
+/// cutoff matched with the same lexicographic comparison the filter uses).
+/// Backs the "older than N days" clear option. Does not touch the
+/// `commands` table.
+pub async fn clear_before(pool: &DbPool, before: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM history_events WHERE created_at < ?")
+        .bind(before)
+        .execute(pool.as_ref())
+        .await
+        .map_err(|e| format!("clear history before {before}: {e}"))?;
+    Ok(())
+}
+
+/// Drop history rows AT OR NEWER than `after` (`created_at >= after`, an
+/// ISO-8601 cutoff). Backs the recency-window clear options (last hour /
+/// today / last week), which delete the most recent records and keep older
+/// ones. Does not touch the `commands` table.
+pub async fn clear_after(pool: &DbPool, after: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM history_events WHERE created_at >= ?")
+        .bind(after)
+        .execute(pool.as_ref())
+        .await
+        .map_err(|e| format!("clear history after {after}: {e}"))?;
+    Ok(())
+}
+
 /// One-time security migration: strip any `sensitive` variable's
 /// `defaultValue` out of the command snapshots embedded in OLD history rows.
 ///
@@ -2267,6 +2293,53 @@ mod sqlite_integration_tests {
             .await
             .unwrap();
         assert_eq!(page.total, 0);
+    }
+
+    #[tokio::test]
+    async fn clear_before_keeps_newer_rows() {
+        let pool = make_pool().await;
+        // Three rows across three days.
+        for (id, ts) in [
+            ("old", "2026-05-01T00:00:00Z"),
+            ("mid", "2026-05-10T00:00:00Z"),
+            ("new", "2026-05-20T00:00:00Z"),
+        ] {
+            insert_event(&pool, &created_evt(id, "n", ts))
+                .await
+                .unwrap();
+        }
+        // Clear everything strictly older than the mid timestamp: only `old`
+        // is removed; `mid` (equal, not strictly less) and `new` survive.
+        clear_before(&pool, "2026-05-10T00:00:00Z").await.unwrap();
+        let page = list_paginated(&pool, &HistoryFilter::default(), 1, 10)
+            .await
+            .unwrap();
+        let ids: Vec<String> = page.items.iter().map(|e| e.id.clone()).collect();
+        assert_eq!(page.total, 2);
+        assert_eq!(ids, vec!["new", "mid"]);
+    }
+
+    #[tokio::test]
+    async fn clear_after_keeps_older_rows() {
+        let pool = make_pool().await;
+        for (id, ts) in [
+            ("old", "2026-05-01T00:00:00Z"),
+            ("mid", "2026-05-10T00:00:00Z"),
+            ("new", "2026-05-20T00:00:00Z"),
+        ] {
+            insert_event(&pool, &created_evt(id, "n", ts))
+                .await
+                .unwrap();
+        }
+        // Clear everything at or newer than the mid timestamp: `mid` (equal)
+        // and `new` are removed; only the older `old` survives.
+        clear_after(&pool, "2026-05-10T00:00:00Z").await.unwrap();
+        let page = list_paginated(&pool, &HistoryFilter::default(), 1, 10)
+            .await
+            .unwrap();
+        let ids: Vec<String> = page.items.iter().map(|e| e.id.clone()).collect();
+        assert_eq!(page.total, 1);
+        assert_eq!(ids, vec!["old"]);
     }
 
     /// prune_to_limit must keep only the N newest entries (by

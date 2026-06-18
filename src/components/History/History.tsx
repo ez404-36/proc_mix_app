@@ -14,7 +14,8 @@
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { HISTORY_PAGE_SIZE, useHistoryStore } from "../../stores/historyStore";
-import { ConfirmDialog } from "../ConfirmDialog";
+import type { HistoryClearRange } from "../../utils/historyClearRange";
+import { HistoryClearDialog } from "./HistoryClearDialog";
 import { HistoryFilterBar } from "./HistoryFilterBar";
 import { HistoryRow } from "./HistoryRow";
 
@@ -74,9 +75,9 @@ export function History(): ReactElement {
   }, [filter]);
   const filterActive = activeFilterCount > 0;
 
-  const handleClearAllConfirmed = (): void => {
+  const handleClearConfirmed = (range: HistoryClearRange): void => {
     setClearConfirmOpen(false);
-    void clearAll();
+    void clearAll(range);
   };
 
   return (
@@ -169,13 +170,9 @@ export function History(): ReactElement {
         </nav>
       )}
 
-      <ConfirmDialog
+      <HistoryClearDialog
         open={clearConfirmOpen}
-        title={t("history.clearConfirmTitle")}
-        message={t("history.clearConfirm")}
-        confirmLabel={t("common.clear")}
-        danger
-        onConfirm={handleClearAllConfirmed}
+        onConfirm={handleClearConfirmed}
         onCancel={() => setClearConfirmOpen(false)}
       />
     </div>

@@ -12,6 +12,7 @@ import {
   getCommandDescription,
   getCommandName,
 } from "../../utils/commandLabels";
+import { globalCommands } from "../../utils/commandFilters";
 import {
   checkCommandBlockers,
   checkWorkflowBlockers,
@@ -409,7 +410,8 @@ type RecentEntry =
 
 export function Home(): ReactElement {
   const { t } = useTranslation();
-  const commands = useCommandStore((s) => s.commands);
+  const allCommands = useCommandStore((s) => s.commands);
+  const commands = useMemo(() => globalCommands(allCommands), [allCommands]);
   const workflows = useWorkflowStore((s) => s.workflows);
 
   type FavoriteEntry =

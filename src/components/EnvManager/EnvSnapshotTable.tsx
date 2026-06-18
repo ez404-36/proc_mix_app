@@ -73,8 +73,8 @@ export function EnvSnapshotTable({
             className={`btn btn--ghost btn--icon${viewMode === 'category' ? ' is-active' : ''}`}
             onClick={() => setViewMode('category')}
             aria-pressed={viewMode === 'category'}
-            aria-label={t('envManager.viewCategory', { defaultValue: 'By category' })}
-            title={t('envManager.viewCategory', { defaultValue: 'По категориям' })}
+            aria-label={t('envManager.viewCategory', { defaultValue: 'By file' })}
+            title={t('envManager.viewCategory', { defaultValue: 'По файлам' })}
           >
             <GroupIcon />
           </button>

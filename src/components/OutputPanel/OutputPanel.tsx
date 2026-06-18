@@ -257,8 +257,8 @@ export function OutputPanel(): ReactElement | null {
   const setPanelHeight = useExecutionStore((s) => s.setPanelHeight);
   const panelWidth = useExecutionStore((s) => s.panelWidth);
   const setPanelWidth = useExecutionStore((s) => s.setPanelWidth);
-  const consolePosition = useExecutionStore((s) => s.consolePosition);
-  const setConsolePosition = useExecutionStore((s) => s.setConsolePosition);
+  const consolePosition = useUIStore((s) => s.consolePosition);
+  const setConsolePosition = useUIStore((s) => s.setConsolePosition);
   const commands = useCommandStore((s) => s.commands);
   // The command currently open in the full-screen editor (if any) and its
   // live, possibly-unsaved Script body. A re-run of that exact command must
@@ -361,6 +361,20 @@ export function OutputPanel(): ReactElement | null {
 
   useEffect(() => {
     const root = document.documentElement;
+    // When the panel is closed the component renders `null` but stays
+    // mounted (it lives at the App root), so its cleanup never runs on
+    // close. Clear the `<html>` markers here, keyed on `panelOpen`, so the
+    // side-dock `app-shell` padding is released and the layout reclaims its
+    // full width the moment the console is closed.
+    const clearMarkers = (): void => {
+      root.removeAttribute("data-console-position");
+      root.removeAttribute("data-console-open");
+      root.style.removeProperty("--console-side-width");
+    };
+    if (!panelOpen) {
+      clearMarkers();
+      return;
+    }
     root.dataset["consolePosition"] = consolePosition;
     root.dataset["consoleOpen"] = "true";
     if (consolePosition !== "bottom") {
@@ -368,12 +382,8 @@ export function OutputPanel(): ReactElement | null {
     } else {
       root.style.removeProperty("--console-side-width");
     }
-    return () => {
-      root.removeAttribute("data-console-position");
-      root.removeAttribute("data-console-open");
-      root.style.removeProperty("--console-side-width");
-    };
-  }, [consolePosition, panelWidth]);
+    return clearMarkers;
+  }, [panelOpen, consolePosition, panelWidth]);
   const hasResult = active?.result !== undefined;
 
   // The command that produced the active execution, if it still exists.
@@ -424,18 +434,8 @@ export function OutputPanel(): ReactElement | null {
   const handleClear = (): void => {
     // Clear only terminal executions (finished / errored / cancelled);
     // anything still running stays so the user doesn't lose live output.
-    // Close the panel only when nothing is left to show.
+    // The panel stays open — closing is the "Close" button's job.
     clearTerminated();
-    const anyActive = recentIds.some((id) => {
-      const exec = executions[id];
-      return (
-        exec !== undefined &&
-        (exec.status === "running" || exec.status === "pending")
-      );
-    });
-    if (!anyActive) {
-      setPanelOpen(false);
-    }
   };
 
   const handleRerun = (): void => {

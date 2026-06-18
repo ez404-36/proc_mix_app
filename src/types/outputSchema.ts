@@ -23,6 +23,9 @@
  *     is the `rows` field (objects keyed by header or `col0`, `col1`, …),
  *     and a declared field with a `column` locator projects that column
  *     as an array of its values across all rows.
+ *   - "javascript" → run a user `function parse(data) { … }` (in `code`)
+ *     against the previous step's value, returning its result. Executed in
+ *     a sandboxed JS engine in the Rust backend (no FS/network access).
  */
 export type OutputParserKind =
   | "raw"
@@ -30,7 +33,8 @@ export type OutputParserKind =
   | "json"
   | "regex"
   | "keyValue"
-  | "table";
+  | "table"
+  | "javascript";
 
 /**
  * A single field extracted from stdout. The meaning of the locator
@@ -75,6 +79,19 @@ export interface OutputPipelineStep {
   delimiter?: string;
   /** Whether the first table row is a header (table parser). */
   hasHeader?: boolean;
+  /**
+   * Maximum number of columns the table parser splits a row into. When set,
+   * the row is split into at most this many fields — everything past the
+   * last delimiter goes into the final column unsplit. Useful for output
+   * like `ls -l` where the last column is a path that may contain spaces.
+   */
+  maxColumns?: number;
+  /**
+   * User-written `function parse(data) { … }` source (javascript parser).
+   * Ignored by every other parser kind. Executed in a sandboxed JS engine
+   * in the Rust backend.
+   */
+  code?: string;
   /** Declared fields. May be empty. */
   fields: OutputField[];
 }

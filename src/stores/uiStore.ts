@@ -11,6 +11,7 @@ import type {
   WorkflowViewState,
 } from "../types";
 import { detectInitialLanguage, type Language } from "../i18n";
+import type { ConsoleDockPosition } from "./executionStore";
 
 export const DEFAULT_TOGGLE_SHORTCUT = "CommandOrControl+Shift+P";
 
@@ -121,6 +122,8 @@ interface UIState {
    * `false`: it gates the entire feature.
    */
   processCaptureEnabled: boolean;
+  /** Which edge of the window the output console is docked to (persisted). */
+  consolePosition: ConsoleDockPosition;
   /**
    * Per-list sort + display-mode preferences for the Library Commands /
    * Workflows tabs and the Scheduler list. Persisted so the user's chosen
@@ -159,6 +162,7 @@ interface UIState {
   setToggleShortcut: (accel: string) => void;
   setLanguage: (lang: Language) => void;
   setProcessCaptureEnabled: (enabled: boolean) => void;
+  setConsolePosition: (position: ConsoleDockPosition) => void;
   /** Merge a partial patch into the Commands list view preference. */
   updateCommandsView: (patch: Partial<CommandViewState>) => void;
   /** Merge a partial patch into the Workflows list view preference. */
@@ -173,6 +177,7 @@ interface PersistedUIState {
   language: Language;
   processCaptureEnabled: boolean;
   sidebarCollapsed: boolean;
+  consolePosition: ConsoleDockPosition;
   commandsView: CommandViewState;
   workflowsView: WorkflowViewState;
   schedulesView: ScheduleViewState;
@@ -195,6 +200,7 @@ export const useUIStore = create<UIState>()(
       toggleShortcut: DEFAULT_TOGGLE_SHORTCUT,
       language: detectInitialLanguage(),
       processCaptureEnabled: false,
+      consolePosition: "bottom",
       commandsView: DEFAULT_COMMANDS_VIEW,
       workflowsView: DEFAULT_WORKFLOWS_VIEW,
       schedulesView: DEFAULT_SCHEDULES_VIEW,
@@ -248,6 +254,7 @@ export const useUIStore = create<UIState>()(
       setLanguage: (lang) => set({ language: lang }),
       setProcessCaptureEnabled: (enabled) =>
         set({ processCaptureEnabled: enabled }),
+      setConsolePosition: (position) => set({ consolePosition: position }),
       updateCommandsView: (patch) =>
         set((s) => ({ commandsView: { ...s.commandsView, ...patch } })),
       updateWorkflowsView: (patch) =>
@@ -263,6 +270,7 @@ export const useUIStore = create<UIState>()(
         language: state.language,
         processCaptureEnabled: state.processCaptureEnabled,
         sidebarCollapsed: state.sidebarCollapsed,
+        consolePosition: state.consolePosition,
         commandsView: state.commandsView,
         workflowsView: state.workflowsView,
         schedulesView: state.schedulesView,

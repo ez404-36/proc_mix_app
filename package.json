@@ -1,7 +1,7 @@
 {
   "name": "procmix",
   "private": true,
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "ProcMix - cross-platform automation tool",
   "productName": "ProcMix",
   "author": "Zenkin Egor Andreevich",
@@ -15,11 +15,11 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "tauri": "tauri",
-    "tauri:dev": "cross-env PROCMIX_DEV_LICENSE=pro tauri dev --config src-tauri/tauri.conf.dev.json",
-    "tauri:dev-basic": "cross-env PROCMIX_DEV_LICENSE=basic tauri dev --config src-tauri/tauri.conf.dev.json",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.conf.dev.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "bench": "vitest bench --run"
   },
   "dependencies": {
     "@arco-design/web-react": "^2.66.15",
@@ -48,7 +48,6 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "@vitest/coverage-v8": "^4.1.7",
-    "cross-env": "^10.1.0",
     "dependency-cruiser": "^17.4.3",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",

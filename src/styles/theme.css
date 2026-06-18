@@ -215,6 +215,22 @@ select {
   white-space: nowrap;
 }
 
+/* Brand logo — the app's multi-colour gradient mark (not a monochrome
+   icon-family glyph). Sits left of the "ProcMix" wordmark and stays
+   visible when the sidebar is collapsed. */
+.app-sidebar__brand-logo {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+/* Keep the collapse toggle pinned to the right so the logo + wordmark
+   group on the left rather than spreading across the brand row. */
+.app-sidebar__brand .app-sidebar__collapse-toggle {
+  margin-left: auto;
+}
+
 .app-sidebar__collapse-toggle {
   display: flex;
   align-items: center;
@@ -350,9 +366,18 @@ select {
 }
 
 .app-sidebar--collapsed .app-sidebar__brand {
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
   padding-left: 0;
   padding-right: 0;
+}
+
+/* Collapsed: the logo sits centered on its own row above the toggle, so the
+   `margin-left: auto` that pins the toggle right in the expanded row must not
+   apply (it would push the toggle off-centre). */
+.app-sidebar--collapsed .app-sidebar__brand .app-sidebar__collapse-toggle {
+  margin-left: 0;
 }
 
 .app-sidebar--collapsed .app-sidebar__nav-button {
@@ -1348,6 +1373,43 @@ body.is-editor-fullscreen .output-panel {
    border rule. */
 .output-panel__actions .btn--view {
   border-color: var(--color-border);
+}
+
+/* Side docks (left / right): the header is narrow, so the title row moves
+   ABOVE the action bar (header becomes a column), but the action controls
+   themselves (mode selector, Clear, Close) stay on a SINGLE row, wrapping
+   only if they truly cannot fit. */
+.output-panel--right .output-panel__header,
+.output-panel--left .output-panel__header {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.output-panel--right .output-panel__actions,
+.output-panel--left .output-panel__actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  /* Stretch so the mode selector matches the Clear / Close button height
+     instead of rendering shorter than them. */
+  align-items: stretch;
+}
+
+/* The Dropdown wraps its trigger in a `span.dropdown { width: 100% }`, which
+   in the side dock would claim the whole action row and push Clear / Close
+   onto the next line. Shrink the wrapper to its content so all three controls
+   sit on ONE row. */
+.output-panel--right .output-panel__actions .dropdown,
+.output-panel--left .output-panel__actions .dropdown {
+  width: auto;
+}
+
+/* Match the mode dropdown to the action buttons' padding/height in the side
+   docks so all three sit flush at the same size (the bottom-dock compact 3px
+   padding looks undersized next to the buttons here). */
+.output-panel--right .output-panel__actions .output-panel__position-select.dropdown__trigger,
+.output-panel--left .output-panel__actions .output-panel__position-select.dropdown__trigger {
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 
 .output-panel__script {
@@ -3009,6 +3071,23 @@ body.is-editor-fullscreen .output-panel {
   line-height: 1.5;
 }
 
+/* The javascript `parse(data)` editor reuses the monospace sample styling
+   but is a hand-edited code field: let the user resize it vertically and
+   scroll a long function instead of clipping it. */
+.command-form__output-schema-code {
+  resize: vertical;
+  overflow-y: auto;
+  white-space: pre;
+  margin-bottom: 8px;
+}
+
+/* Constrain the "Max columns" NumberStepper to a compact, fixed width
+   (~1.5× the old 120px raw input) so it reads as a small numeric field and
+   doesn't stretch across the schema panel. */
+.command-form__output-schema-max-columns {
+  max-width: 180px;
+}
+
 /* Subtle "updating…" status shown beside the Preview title while the
    debounced auto-preview is running. */
 .command-form__output-schema-preview-status {
@@ -4086,6 +4165,33 @@ body.is-editor-fullscreen .output-panel {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Ranged "Clear history" dialog: a vertical list of range radios plus the
+   conditional "older than N days" stepper. */
+.history-clear__options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 0;
+  /* Match the modal title / message horizontal inset (20px). */
+  padding: 0 20px;
+}
+
+.history-clear__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.history-clear__days {
+  /* Align with the title / message / options inset. */
+  padding: 0 20px;
+  /* Extra top gap to separate the day stepper from the radio list. */
+  margin-top: 12px;
+  margin-bottom: 4px;
 }
 
 .history-row {
@@ -5969,14 +6075,14 @@ body.is-editor-fullscreen .output-panel {
 }
 
 .command-form__env-key {
-  flex: 0 0 180px;
+  flex: 1 1 0;
   min-width: 0;
   font-family: var(--font-mono);
   font-size: 13px;
 }
 
 .command-form__env-value {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
 }
 

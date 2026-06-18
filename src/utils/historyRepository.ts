@@ -585,8 +585,23 @@ export async function deleteHistoryEventInDb(id: string): Promise<void> {
   await invoke("delete_history_event", { id });
 }
 
-export async function clearHistoryInDb(): Promise<void> {
-  await invoke("clear_history");
+/**
+ * Clear history rows. The UI computes ISO-8601 bound(s) from the chosen range
+ * and passes exactly one:
+ *   - `after`  → delete rows AT OR NEWER than the cutoff (recent records:
+ *     last hour / today / last week).
+ *   - `before` → delete rows OLDER than the cutoff (older than N days).
+ *   - neither  → clear the whole table ("all time").
+ */
+export async function clearHistoryInDb(
+  bounds: { after?: string; before?: string } = {},
+): Promise<void> {
+  // `null` maps to the Rust `Option<String>::None`. Passing both as null
+  // clears everything — identical to the original no-arg behaviour.
+  await invoke("clear_history", {
+    after: bounds.after ?? null,
+    before: bounds.before ?? null,
+  });
 }
 
 /**

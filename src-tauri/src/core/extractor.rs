@@ -94,6 +94,11 @@ pub enum ExtractError {
     },
     #[error("pipeline step {step}: input value cannot be used as text for parser {parser}")]
     PipelineInputNotText { step: usize, parser: String },
+    /// A `javascript` parser step failed. Wraps the sandboxed runner's typed
+    /// error, which carries only structural detail (never `data` / output) so
+    /// no sensitive value can leak through the message.
+    #[error("javascript parser: {0}")]
+    JavaScript(#[from] crate::core::js_parser::JsParseError),
 }
 
 /// The intermediate value flowing between pipeline steps. The first step
@@ -204,6 +209,22 @@ fn apply_step(
     input: PipelineValue,
     step_idx: usize,
 ) -> Result<PipelineValue, ExtractError> {
+    // `javascript` is special: it receives the previous step's value WHOLE as
+    // its `data` argument — NOT coerced to text, and NOT mapped element-wise
+    // over an array. Handle it before the array-map / text-coercion branches.
+    if step.parser == "javascript" {
+        let code = step.code.as_deref().unwrap_or("");
+        let json = input.into_json();
+        let result = crate::core::js_parser::run_js(code, &json).map_err(|e| {
+            ExtractError::PipelineStep {
+                step: step_idx,
+                parser: step.parser.clone(),
+                source: Box::new(ExtractError::JavaScript(e)),
+            }
+        })?;
+        return Ok(PipelineValue::Json(result));
+    }
+
     match input {
         PipelineValue::Array(items) => {
             let mapped: Result<Vec<PipelineValue>, ExtractError> = items
@@ -243,6 +264,7 @@ fn step_to_pipeline_value(
         pattern: step.pattern.clone(),
         delimiter: step.delimiter.clone(),
         has_header: step.has_header,
+        max_columns: step.max_columns,
         fields: step.fields.clone(),
         pipeline: Vec::new(),
         return_field: None,
@@ -346,13 +368,18 @@ pub fn extract(schema: &OutputSchemaRecord, stdout: &str) -> Result<ExtractedOut
     let steps: std::borrow::Cow<[OutputPipelineStepRecord]> = if !schema.pipeline.is_empty() {
         std::borrow::Cow::Borrowed(&schema.pipeline)
     } else {
-        // Legacy single-parser record: promote to a one-step pipeline.
+        // Legacy single-parser record: promote to a one-step pipeline. A
+        // top-level `javascript` parser is not producible by the editor (it
+        // only ever writes pipeline-mode schemas), so there is no top-level
+        // `code` to carry — `code: None`.
         std::borrow::Cow::Owned(vec![OutputPipelineStepRecord {
             parser: schema.parser.clone(),
             pattern: schema.pattern.clone(),
             delimiter: schema.delimiter.clone(),
             has_header: schema.has_header,
+            max_columns: schema.max_columns,
             fields: schema.fields.clone(),
+            code: None,
         }])
     };
 
@@ -581,7 +608,7 @@ fn parse_table(schema: &OutputSchemaRecord, stdout: &str) -> BTreeMap<String, Va
     let rows: Vec<Vec<String>> = split_lines(stdout)
         .into_iter()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| split_columns(l, schema.delimiter.as_deref()))
+        .map(|l| split_columns(l, schema.delimiter.as_deref(), schema.max_columns))
         .collect();
 
     let mut iter = rows.iter();
@@ -649,11 +676,52 @@ fn column_key(column: &str, header: &[String]) -> String {
 /// when no delimiter is set. A delimiter split keeps empty fields
 /// (`a,,c` → 3 columns); the whitespace split collapses runs and drops
 /// leading/trailing empties (typical for `ps`/`ls`-style output).
-fn split_columns(line: &str, delimiter: Option<&str>) -> Vec<String> {
+///
+/// When `max_columns` is `Some(n)` with `n >= 1`, at most `n` columns are
+/// produced: the row is split into `n − 1` fields and whatever remains
+/// becomes the final column unsplit (`n == 1` keeps the whole line as a
+/// single column). This handles output like `ls -l` where the last field
+/// is a path that may contain the delimiter (typically spaces).
+fn split_columns(line: &str, delimiter: Option<&str>, max_columns: Option<usize>) -> Vec<String> {
     match delimiter.filter(|d| !d.is_empty()) {
-        Some(d) => line.split(d).map(|s| s.to_string()).collect(),
-        None => line.split_whitespace().map(|s| s.to_string()).collect(),
+        Some(d) => match max_columns.filter(|&n| n >= 1) {
+            Some(n) => line.splitn(n, d).map(|s| s.to_string()).collect(),
+            None => line.split(d).map(|s| s.to_string()).collect(),
+        },
+        None => match max_columns.filter(|&n| n >= 1) {
+            Some(n) => splitn_whitespace(line, n),
+            None => line.split_whitespace().map(|s| s.to_string()).collect(),
+        },
     }
+}
+
+/// Whitespace-aware `splitn`: splits into at most `n` fields where the
+/// first `n − 1` are individual whitespace-separated tokens and the last
+/// is the untouched remainder of the line (preserving internal spaces).
+fn splitn_whitespace(line: &str, n: usize) -> Vec<String> {
+    let mut result: Vec<String> = Vec::with_capacity(n);
+    let mut rest = line.trim_start();
+    for _ in 1..n {
+        if rest.is_empty() {
+            break;
+        }
+        match rest.find(char::is_whitespace) {
+            Some(pos) => {
+                result.push(rest[..pos].to_string());
+                rest = rest[pos..].trim_start();
+            }
+            None => {
+                // No more whitespace — this token is the last one.
+                result.push(rest.to_string());
+                rest = "";
+                break;
+            }
+        }
+    }
+    if !rest.is_empty() {
+        result.push(rest.to_string());
+    }
+    result
 }
 
 /// Split text into lines, dropping a single trailing empty line caused by
@@ -756,6 +824,7 @@ mod tests {
             pattern: None,
             delimiter: None,
             has_header: None,
+            max_columns: None,
             fields: Vec::new(),
             pipeline: Vec::new(),
             return_field: None,
@@ -1002,6 +1071,41 @@ mod tests {
     }
 
     #[test]
+    fn table_max_columns_keeps_trailing_spaces_in_last_column() {
+        // `ls -l`-style rows whose last field is a path containing a space.
+        // max_columns = 3 → exactly 3 columns, the path stays whole.
+        let mut s = schema("table");
+        s.max_columns = Some(3);
+        let out = extract(
+            &s,
+            "-rw-r 703M /home/egor/My Files/a.db\n-rw-r 12M /tmp/b.db\n",
+        )
+        .unwrap();
+        let rows = out.return_value.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["col0"], Value::String("-rw-r".into()));
+        assert_eq!(rows[0]["col1"], Value::String("703M".into()));
+        assert_eq!(
+            rows[0]["col2"],
+            Value::String("/home/egor/My Files/a.db".into())
+        );
+        // No spurious extra column from the space in the path.
+        assert!(rows[0].get("col3").is_none());
+    }
+
+    #[test]
+    fn table_max_columns_one_keeps_whole_line() {
+        // max_columns = 1 → the entire line is a single column.
+        let mut s = schema("table");
+        s.max_columns = Some(1);
+        let out = extract(&s, "alpha beta gamma\none two three\n").unwrap();
+        let rows = out.return_value.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["col0"], Value::String("alpha beta gamma".into()));
+        assert!(rows[0].get("col1").is_none());
+    }
+
+    #[test]
     fn table_column_projects_by_header_name() {
         // With declared fields, step_to_pipeline_value projects each row.
         let mut s = schema("table");
@@ -1088,7 +1192,22 @@ mod tests {
             pattern: None,
             delimiter: None,
             has_header: None,
+            max_columns: None,
             fields: Vec::new(),
+            code: None,
+        }
+    }
+
+    /// A `javascript` pipeline step carrying the given `parse(data)` source.
+    fn js_step(code: &str) -> OutputPipelineStepRecord {
+        OutputPipelineStepRecord {
+            parser: "javascript".into(),
+            pattern: None,
+            delimiter: None,
+            has_header: None,
+            max_columns: None,
+            fields: Vec::new(),
+            code: Some(code.into()),
         }
     }
 
@@ -1180,5 +1299,122 @@ mod tests {
             out.return_value.get("a").unwrap(),
             &Value::String("1".into())
         );
+    }
+
+    // ---- javascript parser ------------------------------------------------
+
+    #[test]
+    fn javascript_transforms_the_raw_value() {
+        // raw stdout → javascript: uppercase + trim → string result.
+        let mut s = schema("raw");
+        s.pipeline = vec![js_step(
+            "function parse(data) { return data.trim().toUpperCase(); }",
+        )];
+        let out = extract(&s, "hello\n").unwrap();
+        assert_eq!(out.return_value, Value::String("HELLO".into()));
+    }
+
+    #[test]
+    fn javascript_returns_object_and_number() {
+        let mut s = schema("raw");
+        s.pipeline = vec![js_step(
+            "function parse(data) { return { len: data.length, ok: true }; }",
+        )];
+        let out = extract(&s, "abcd").unwrap();
+        assert_eq!(out.return_value["len"], Value::from(4));
+        assert_eq!(out.return_value["ok"], Value::Bool(true));
+
+        let mut s2 = schema("raw");
+        s2.pipeline = vec![js_step("function parse(data) { return data.length * 2; }")];
+        let out2 = extract(&s2, "ab").unwrap();
+        assert_eq!(out2.return_value, Value::from(4));
+    }
+
+    #[test]
+    fn javascript_receives_array_whole_no_map() {
+        // lines → Array(["a","b","c"]); javascript must receive the WHOLE
+        // array as `data` (not be mapped element-wise), so `data.length` is 3.
+        let mut s = schema("raw");
+        s.pipeline = vec![
+            step("lines"),
+            js_step("function parse(data) { return { count: data.length, first: data[0] }; }"),
+        ];
+        let out = extract(&s, "a\nb\nc\n").unwrap();
+        assert_eq!(out.return_value["count"], Value::from(3));
+        assert_eq!(out.return_value["first"], Value::String("a".into()));
+    }
+
+    #[test]
+    fn javascript_undefined_return_is_null() {
+        let mut s = schema("raw");
+        s.pipeline = vec![js_step("function parse(data) { /* no return */ }")];
+        let out = extract(&s, "x").unwrap();
+        assert_eq!(out.return_value, Value::Null);
+    }
+
+    #[test]
+    fn javascript_runtime_error_is_typed_not_panic() {
+        let mut s = schema("raw");
+        s.pipeline = vec![js_step("function parse(data) { return data.nope.boom; }")];
+        let err = extract(&s, "x").unwrap_err();
+        // Wrapped with the step index; inner is a JavaScript error.
+        match err {
+            ExtractError::PipelineStep {
+                step, ref source, ..
+            } => {
+                assert_eq!(step, 0);
+                assert!(matches!(**source, ExtractError::JavaScript(_)));
+            }
+            other => panic!("expected PipelineStep, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn javascript_missing_parse_function_is_typed() {
+        let mut s = schema("raw");
+        s.pipeline = vec![js_step("var notParse = 1;")];
+        let err = extract(&s, "x").unwrap_err();
+        match err {
+            ExtractError::PipelineStep { ref source, .. } => assert!(matches!(
+                **source,
+                ExtractError::JavaScript(
+                    crate::core::js_parser::JsParseError::MissingParseFunction
+                )
+            )),
+            other => panic!("expected PipelineStep, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn javascript_infinite_loop_is_bounded() {
+        // A `while (true)` must be killed by the loop-iteration limit and
+        // surface as a typed Timeout, never hang the synchronous extractor.
+        let mut s = schema("raw");
+        s.pipeline = vec![js_step(
+            "function parse(data) { while (true) {} return 1; }",
+        )];
+        let err = extract(&s, "x").unwrap_err();
+        match err {
+            ExtractError::PipelineStep { ref source, .. } => assert!(matches!(
+                **source,
+                ExtractError::JavaScript(crate::core::js_parser::JsParseError::Timeout)
+            )),
+            other => panic!("expected PipelineStep timeout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn javascript_pipeline_lines_then_js_count() {
+        // lines → javascript that reduces the array to a single number.
+        let mut s = schema("raw");
+        s.pipeline = vec![
+            step("lines"),
+            js_step(
+                "function parse(data) { return data.filter(function(l){ return l.length > 0; }).length; }",
+            ),
+        ];
+        let out = extract(&s, "a\n\nb\n").unwrap();
+        // "a\n\nb\n" → ["a","","b"] → non-empty count = 2.
+        assert_eq!(out.return_value, Value::from(2));
     }
 }

@@ -132,6 +132,18 @@ export function useCommandLiveRun(
   useEffect(() => {
     envRowsRef.current = form.envRows;
   }, [form.envRows]);
+  /** Ref mirror of the working-directory fields so the run callbacks carry
+   *  the in-form value onto the synthetic command without depending on
+   *  `form.workingDir` / `form.promptWorkingDir` directly. Without this an
+   *  unsaved run dropped the working dir and fell back to the home dir. */
+  const workingDirRef = useRef(form.workingDir);
+  useEffect(() => {
+    workingDirRef.current = form.workingDir;
+  }, [form.workingDir]);
+  const promptWorkingDirRef = useRef(form.promptWorkingDir);
+  useEffect(() => {
+    promptWorkingDirRef.current = form.promptWorkingDir;
+  }, [form.promptWorkingDir]);
 
   // --- Global-console run target (runTarget === "global") -------------
   // When the host routes runs to the app-wide console, we track the
@@ -376,6 +388,14 @@ export function useCommandLiveRun(
       ...(envRowsToRecord(envRowsRef.current) !== undefined
         ? { env: envRowsToRecord(envRowsRef.current) }
         : {}),
+      // Carry the in-form working directory so an UNSAVED run honours it.
+      // Without this the synthetic command had no `workingDir` and the
+      // executor fell back to the home directory (see runCommand: it reads
+      // `cmd.workingDir`). A blank field means "default" → omit the key.
+      ...(workingDirRef.current.trim() !== ""
+        ? { workingDir: workingDirRef.current.trim() }
+        : {}),
+      ...(promptWorkingDirRef.current ? { promptWorkingDir: true } : {}),
     };
 
     // Resolve variable values up front, BEFORE flipping the panel
@@ -540,6 +560,14 @@ export function useCommandLiveRun(
       ...(envRowsToRecord(envRowsRef.current) !== undefined
         ? { env: envRowsToRecord(envRowsRef.current) }
         : {}),
+      // Carry the in-form working directory + prompt flag so an UNSAVED
+      // global run honours them. `triggerCommandRun` reads `cmd.workingDir`
+      // (and prompts when `cmd.promptWorkingDir`); without these the run
+      // fell back to the home directory.
+      ...(form.workingDir.trim() !== ""
+        ? { workingDir: form.workingDir.trim() }
+        : {}),
+      ...(form.promptWorkingDir ? { promptWorkingDir: true } : {}),
     };
     const executionId = await triggerCommandRun(synthetic, {
       elevated: form.runAsAdmin,
@@ -558,6 +586,8 @@ export function useCommandLiveRun(
     form.variables,
     form.timeoutSeconds,
     form.outputSchema,
+    form.workingDir,
+    form.promptWorkingDir,
     t,
   ]);
 

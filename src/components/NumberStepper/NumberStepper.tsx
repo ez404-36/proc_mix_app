@@ -54,6 +54,14 @@ interface NumberStepperNullableProps extends NumberStepperBaseProps {
   onChange: (value: number | null) => void;
   /** Placeholder shown when the value is `null` (e.g. "No limit"). */
   placeholder?: string;
+  /**
+   * When `true`, decrementing AT the floor (`value === min`) clears the field
+   * to `null` ("no limit") instead of disabling the "−" button. Incrementing
+   * from empty still lands on `min`. Use for fields where `min` is the lowest
+   * meaningful value and the step below it means "unset" (e.g. table
+   * `maxColumns`: min 1, "−" at 1 → no limit).
+   */
+  clearAtFloor?: boolean;
 }
 
 type NumberStepperProps = NumberStepperNumericProps | NumberStepperNullableProps;
@@ -79,6 +87,7 @@ export function NumberStepper(props: NumberStepperProps): ReactElement {
 
   const allowEmpty = props.allowEmpty === true;
   const isEmpty = allowEmpty && value === null;
+  const clearAtFloor = props.allowEmpty === true && props.clearAtFloor === true;
 
   const commit = (next: number): void => {
     props.onChange(clamp(Math.trunc(next), min, max));
@@ -89,7 +98,15 @@ export function NumberStepper(props: NumberStepperProps): ReactElement {
   // the current value. Decrement is disabled while empty, so it always has a
   // concrete value to step down from.
   const increment = (): void => commit(value === null ? min : value + step);
-  const decrement = (): void => commit((value ?? min) - step);
+  const decrement = (): void => {
+    // In `clearAtFloor` mode, stepping down from the floor clears the field
+    // ("no limit") instead of clamping back to `min`.
+    if (clearAtFloor && value !== null && value <= min) {
+      props.onChange(null);
+      return;
+    }
+    commit((value ?? min) - step);
+  };
 
   const handleInput = (raw: string): void => {
     if (props.allowEmpty === true && raw.trim() === "") {
@@ -109,7 +126,10 @@ export function NumberStepper(props: NumberStepperProps): ReactElement {
         ? String(value).padStart(padLength, "0")
         : value;
 
-  const decrementDisabled = isEmpty || (value !== null && value <= min);
+  // Disabled only while empty; at the floor it's still enabled in
+  // `clearAtFloor` mode (it clears the field) but disabled otherwise.
+  const decrementDisabled =
+    isEmpty || (!clearAtFloor && value !== null && value <= min);
   const incrementDisabled = value !== null && value >= max;
 
   return (

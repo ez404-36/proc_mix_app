@@ -25,7 +25,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{oneshot, Mutex};
 
-use crate::core::executor::{self, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus};
+use crate::core::executor::{
+    self, CapturedLine, CapturedStream, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus,
+};
 use crate::core::extractor::{self, ExtractedOutput};
 use crate::core::workflow_condition::{self, EvalContext};
 use crate::storage::commands::CommandRecord;
@@ -305,6 +307,7 @@ fn build_request(
     workflow_run_id: String,
     variable_values: BTreeMap<String, String>,
     silent: bool,
+    capture_output: bool,
 ) -> ExecuteRequest {
     let env = cmd
         .env
@@ -340,10 +343,11 @@ fn build_request(
         // completion channel — the runner threads them into the next
         // node's variable values (data-flow).
         output_schema: cmd.output_schema.clone(),
-        // v1 captures workflow output via the per-node completion channel /
-        // workflow events, not the scheduler's history-capture path, so the
-        // node itself does not request `capture_output`.
-        capture_output: false,
+        // A streaming run (live UI) builds the aggregate console from the
+        // per-node `execution-event`s and needs no per-node buffer. A
+        // scheduled fire has no UI, so it asks each node to buffer its output
+        // and the traversal assembles the aggregate log for history.
+        capture_output,
         // A SILENT (planned) workflow fire suppresses every node's
         // `execution-event` too — without this, a planned fire would still
         // stream each node's stdout to the live console even though the
@@ -417,6 +421,12 @@ struct RunContext<'a> {
     /// `execution-event` for this run (planned cron fire). Threaded into
     /// `build_request` so the node's executor run is silent too.
     silent: bool,
+    /// When `true`, each node's executor run buffers its stdout/stderr so the
+    /// traversal can assemble an aggregate console log for history (used by a
+    /// scheduled workflow fire). When `false` (the default streaming path) no
+    /// per-node buffer is allocated — the live UI builds the aggregate from
+    /// the per-node `execution-event`s instead.
+    capture_output: bool,
 }
 
 /// Run a single command node: build the request, spawn it through the
@@ -464,6 +474,7 @@ async fn run_command_node<R: Runtime>(
         ctx.run_id.to_string(),
         variable_values,
         ctx.silent,
+        ctx.capture_output,
     );
     executor::spawn_execution_with_completion(app.clone(), executor_state.clone(), req, Some(tx))
         .await
@@ -485,6 +496,31 @@ async fn run_command_node<R: Runtime>(
         outcome = &mut rx => {
             outcome.map_err(|_| WorkflowError::LostOutcome(node_id.to_string()))
         }
+    }
+}
+
+/// Append a command-bearing node's captured output to the run's aggregate
+/// console log, prefixed by a `meta` step-header line (`▶ <command name>`)
+/// so the persisted history reads like the live workflow console. A no-op
+/// when capture is disabled (`acc` is `None`) or the node produced no buffer.
+/// Each node's lines are ALREADY sensitive-redacted by the streaming reader,
+/// so no secret lands here verbatim. The overall byte budget is bounded by
+/// the executor's per-node capture caps plus the scheduler's
+/// `MAX_HISTORY_OUTPUT_BYTES` truncation at persist time.
+fn append_node_capture(
+    acc: &mut Option<Vec<CapturedLine>>,
+    command_name: &str,
+    outcome: &NodeOutcome,
+) {
+    let Some(lines) = acc.as_mut() else {
+        return;
+    };
+    lines.push(CapturedLine {
+        stream: CapturedStream::Meta,
+        line: format!("▶ {command_name}"),
+    });
+    if let Some(node_lines) = outcome.output.as_ref() {
+        lines.extend(node_lines.iter().cloned());
     }
 }
 
@@ -1006,6 +1042,7 @@ async fn run_command_bearing_node<R: Runtime>(
     ctx: RunContext<'_>,
     retry: Option<&RetryConfigRecord>,
     cancel_rx: &mut oneshot::Receiver<()>,
+    capture: &mut Option<Vec<CapturedLine>>,
 ) -> Result<(NodeOutcome, u32), WorkflowError> {
     let command_id = node
         .command_id
@@ -1056,10 +1093,12 @@ async fn run_command_bearing_node<R: Runtime>(
         }
 
         // Success, or no retries left → this is the final outcome. Carry its
-        // extracted fields and return.
+        // extracted fields, fold its captured output into the run aggregate,
+        // and return.
         let succeeded = outcome.exit_code == Some(0);
         if succeeded || attempt > max_retries {
             *data_flow = extracted_to_values(&outcome);
+            append_node_capture(capture, &cmd.name, &outcome);
             return Ok((outcome, attempt));
         }
 
@@ -1117,6 +1156,7 @@ async fn traverse<R: Runtime>(
     silent: bool,
     start: TraverseStart,
     mut cancel_rx: oneshot::Receiver<()>,
+    capture: &mut Option<Vec<CapturedLine>>,
 ) -> Result<(), WorkflowError> {
     let node_index: HashMap<String, usize> = workflow
         .nodes
@@ -1156,6 +1196,10 @@ async fn traverse<R: Runtime>(
         run_id,
         workflow_id: &workflow.id,
         silent,
+        // Per-node buffering is on exactly when the caller wants an aggregate
+        // log (a scheduled fire passes `Some(vec)`); the streaming UI passes
+        // `None` and pays no buffering cost.
+        capture_output: capture.is_some(),
     };
 
     // Data-flow carry: the extracted output fields of the most recently
@@ -1262,6 +1306,7 @@ async fn traverse<R: Runtime>(
                     ctx,
                     None,
                     &mut cancel_rx,
+                    capture,
                 )
                 .await?;
                 prev = Some(PrevOutcome::from_outcome(&outcome));
@@ -1286,6 +1331,7 @@ async fn traverse<R: Runtime>(
                     ctx,
                     None,
                     &mut cancel_rx,
+                    capture,
                 )
                 .await?;
                 let eval_ctx = build_eval_context(&outcome);
@@ -1311,6 +1357,7 @@ async fn traverse<R: Runtime>(
                     ctx,
                     None,
                     &mut cancel_rx,
+                    capture,
                 )
                 .await?;
                 let eval_ctx = build_eval_context(&outcome);
@@ -1390,6 +1437,7 @@ async fn traverse<R: Runtime>(
                     ctx,
                     node.retry.as_ref(),
                     &mut cancel_rx,
+                    capture,
                 )
                 .await?;
                 let branch = if outcome.exit_code == Some(0) {
@@ -1448,6 +1496,94 @@ async fn traverse<R: Runtime>(
         }
 
         current = target;
+    }
+}
+
+/// Terminal outcome of a workflow run driven to completion in-process by
+/// [`execute_workflow_blocking`]. Carries the aggregate console log and the
+/// final node's exit code so a headless caller (the scheduler) can persist a
+/// `scheduledRun` history event with viewable output — the streaming UI path
+/// does not need this because it assembles the same log from events.
+#[derive(Debug, Default)]
+pub struct WorkflowRunCapture {
+    /// `true` when the run finished without a graph/command fault.
+    pub succeeded: bool,
+    /// `true` when the run was cancelled mid-flight (vs a genuine error).
+    pub cancelled: bool,
+    /// Aggregate, per-node-prefixed console log (already sensitive-redacted),
+    /// or `None` when no command-bearing node produced output.
+    pub output: Option<Vec<CapturedLine>>,
+}
+
+/// Drive a workflow to completion IN-PROCESS (awaiting the traversal) and
+/// return its aggregate captured output. Unlike [`execute_workflow`] — which
+/// spawns the traversal and returns immediately for the live UI — this awaits
+/// the run so a headless caller (the scheduler) can record the output in
+/// history. Always silent (no live stream) and always capturing.
+///
+/// Cancellation is registered exactly like the spawned path, so an in-flight
+/// scheduled workflow can still be cancelled via [`cancel_workflow`].
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_workflow_blocking<R: Runtime>(
+    app: AppHandle<R>,
+    executor_state: Arc<ExecutorState>,
+    state: Arc<WorkflowExecutorState>,
+    workflow: WorkflowRecord,
+    commands: HashMap<String, CommandRecord>,
+    node_variable_values: HashMap<String, BTreeMap<String, String>>,
+) -> WorkflowRunCapture {
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+
+    {
+        let mut running = state.running.lock().await;
+        running.insert(
+            run_id.clone(),
+            WorkflowRunningEntry {
+                cancel_tx: Some(cancel_tx),
+            },
+        );
+    }
+
+    // Capturing accumulator: its `Some`-ness turns on per-node buffering.
+    let mut capture: Option<Vec<CapturedLine>> = Some(Vec::new());
+    let result = traverse(
+        &app,
+        executor_state,
+        &workflow,
+        &commands,
+        &node_variable_values,
+        &run_id,
+        // Always silent: a scheduled fire never streams to the live console.
+        true,
+        TraverseStart::Start,
+        cancel_rx,
+        &mut capture,
+    )
+    .await;
+
+    {
+        let mut map = state.running.lock().await;
+        map.remove(&run_id);
+    }
+
+    let output = capture.filter(|lines| !lines.is_empty());
+    match result {
+        Ok(()) => WorkflowRunCapture {
+            succeeded: true,
+            cancelled: false,
+            output,
+        },
+        Err(WorkflowError::Cancelled) => WorkflowRunCapture {
+            succeeded: false,
+            cancelled: true,
+            output,
+        },
+        Err(_) => WorkflowRunCapture {
+            succeeded: false,
+            cancelled: false,
+            output,
+        },
     }
 }
 
@@ -1562,6 +1698,10 @@ async fn spawn_traversal<R: Runtime>(
     let running_arc = state.running.clone();
     tokio::spawn(async move {
         let started = Instant::now();
+        // The streaming (spawned) path never captures: the live UI assembles
+        // the aggregate console from the per-node `execution-event`s. Pass a
+        // `None` accumulator so no per-node buffer is allocated.
+        let mut capture: Option<Vec<CapturedLine>> = None;
         let result = traverse(
             &app,
             executor_state,
@@ -1572,6 +1712,7 @@ async fn spawn_traversal<R: Runtime>(
             silent,
             start,
             cancel_rx,
+            &mut capture,
         )
         .await;
 

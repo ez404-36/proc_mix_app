@@ -8,6 +8,11 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    // `vitest bench` discovers these separately from the test `include`
+    // above (which is overridden, so the default bench glob would not apply).
+    benchmark: {
+      include: ["src/**/*.bench.{ts,tsx}"],
+    },
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "json-summary"],

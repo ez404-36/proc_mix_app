@@ -642,10 +642,28 @@ pub async fn delete_history_event(pool: State<'_, DbPool>, id: String) -> Result
     storage_history::delete(pool.inner(), &id).await
 }
 
-/// Drop every history row. Backs the "Clear history" UI action.
+/// Drop history rows. Backs the "Clear history" UI action. The UI computes
+/// an ISO-8601 cutoff from the chosen range and passes exactly one bound:
+///
+///   * `after = Some(iso)`  → delete rows AT OR NEWER than the cutoff
+///     (`created_at >= after`). Used by the recency-window options
+///     (last hour / today / last week) which clear the most recent records.
+///   * `before = Some(iso)` → delete rows OLDER than the cutoff
+///     (`created_at < before`). Used by "older than N days".
+///   * both `None`          → clear the whole table ("all time").
+///
+/// `after` takes precedence if both are somehow set.
 #[tauri::command]
-pub async fn clear_history(pool: State<'_, DbPool>) -> Result<(), String> {
-    storage_history::clear_all(pool.inner()).await
+pub async fn clear_history(
+    pool: State<'_, DbPool>,
+    after: Option<String>,
+    before: Option<String>,
+) -> Result<(), String> {
+    match (after, before) {
+        (Some(cutoff), _) => storage_history::clear_after(pool.inner(), &cutoff).await,
+        (None, Some(cutoff)) => storage_history::clear_before(pool.inner(), &cutoff).await,
+        (None, None) => storage_history::clear_all(pool.inner()).await,
+    }
 }
 
 // ----------------------------------------------------------------------

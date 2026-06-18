@@ -143,3 +143,60 @@ describe("NumberStepper — allowEmpty mode", () => {
     expect(onChange).toHaveBeenLastCalledWith(100);
   });
 });
+
+describe("NumberStepper — allowEmpty + clearAtFloor", () => {
+  it("keeps decrement enabled at the floor", () => {
+    render(
+      <NumberStepper
+        allowEmpty
+        clearAtFloor
+        value={1}
+        min={1}
+        max={100}
+        onChange={vi.fn()}
+        placeholder="No limit"
+        {...labels}
+      />,
+    );
+    expect(
+      (screen.getByRole("button", { name: "Decrement" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("decrementing at the floor clears to null", () => {
+    const onChange = vi.fn();
+    render(
+      <NumberStepper
+        allowEmpty
+        clearAtFloor
+        value={1}
+        min={1}
+        max={100}
+        onChange={onChange}
+        placeholder="No limit"
+        {...labels}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Decrement" }));
+    expect(onChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("incrementing from empty still lands on min (1)", () => {
+    const onChange = vi.fn();
+    render(
+      <NumberStepper
+        allowEmpty
+        clearAtFloor
+        value={null}
+        min={1}
+        max={100}
+        onChange={onChange}
+        placeholder="No limit"
+        {...labels}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Increment" }));
+    expect(onChange).toHaveBeenLastCalledWith(1);
+  });
+});

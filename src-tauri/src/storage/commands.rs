@@ -111,7 +111,8 @@ pub struct OutputFieldRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputPipelineStepRecord {
-    /// One of: "raw", "lines", "json", "regex", "keyValue", "table".
+    /// One of: "raw", "lines", "json", "regex", "keyValue", "table",
+    /// "javascript".
     pub parser: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
@@ -119,8 +120,19 @@ pub struct OutputPipelineStepRecord {
     pub delimiter: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_header: Option<bool>,
+    /// Maximum number of columns the table parser splits a row into. When set,
+    /// the row is split into at most this many fields — everything past the
+    /// last delimiter goes into the final column unsplit (useful for output
+    /// like `ls -l` where the last column is a path that may contain spaces).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_columns: Option<usize>,
     #[serde(default)]
     pub fields: Vec<OutputFieldRecord>,
+    /// User-written `function parse(data) { … }` source for the `javascript`
+    /// parser. Ignored by every other parser kind. Run in a sandboxed Boa
+    /// context by `core::js_parser` (no FS/network; time + size bounded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 fn default_parser_kind() -> String {
@@ -159,6 +171,8 @@ pub struct OutputSchemaRecord {
     pub delimiter: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_header: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_columns: Option<usize>,
     #[serde(default)]
     pub fields: Vec<OutputFieldRecord>,
     /// Pipeline of parser steps. When non-empty, takes precedence over
@@ -564,6 +578,7 @@ mod wire_format_tests {
                 pattern: None,
                 delimiter: None,
                 has_header: None,
+                max_columns: None,
                 fields: vec![OutputFieldRecord {
                     name: "count".into(),
                     path: Some("items.length".into()),
@@ -1062,6 +1077,7 @@ mod sqlite_integration_tests {
             pattern: Some(r"(?P<ip>\d+\.\d+\.\d+\.\d+)".into()),
             delimiter: None,
             has_header: None,
+            max_columns: None,
             fields: vec![OutputFieldRecord {
                 name: "ip".into(),
                 path: None,
@@ -1093,6 +1109,7 @@ mod sqlite_integration_tests {
             pattern: None,
             delimiter: None,
             has_header: None,
+            max_columns: None,
             fields: Vec::new(),
             pipeline: Vec::new(),
             return_field: None,

@@ -6,7 +6,10 @@ import type {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { deleteCommand as deleteCommandWithHistory } from "../../services/commandActions";
+import {
+  deleteCommand as deleteCommandWithHistory,
+  duplicateCommand,
+} from "../../services/commandActions";
 import { deleteWorkflow as deleteWorkflowWithHistory } from "../../services/workflowActions";
 import { useCommandStore } from "../../stores/commandStore";
 import { useScheduleStore } from "../../stores/scheduleStore";
@@ -73,6 +76,8 @@ interface CommandCardProps {
   onEdit: (cmd: Command) => void;
   /** Double-click opens the read-only view modal (vs. explicit Edit). */
   onView: (cmd: Command) => void;
+  /** Create a copy of the command and open its editor. */
+  onDuplicate: (cmd: Command) => void;
 }
 
 function buildCommandCardMenuItems(
@@ -84,6 +89,7 @@ function buildCommandCardMenuItems(
     onDelete: (id: string) => void;
     onEdit: (cmd: Command) => void;
     onView: (cmd: Command) => void;
+    onDuplicate: (cmd: Command) => void;
   },
 ): ContextMenuEntry[] {
   return [
@@ -98,6 +104,11 @@ function buildCommandCardMenuItems(
       id: "view",
       label: t("contextMenu.view"),
       onSelect: () => actions.onView(cmd),
+    },
+    {
+      id: "duplicate",
+      label: t("contextMenu.duplicate"),
+      onSelect: () => actions.onDuplicate(cmd),
     },
     {
       id: "favorite",
@@ -137,6 +148,7 @@ function CommandCard({
   onDelete,
   onEdit,
   onView,
+  onDuplicate,
 }: CommandCardProps): ReactElement {
   const { t } = useTranslation();
   const { show } = useContextMenu();
@@ -158,6 +170,7 @@ function CommandCard({
         onDelete,
         onEdit,
         onView,
+        onDuplicate,
       }),
     });
   };
@@ -551,6 +564,7 @@ interface CommandGroupSectionProps {
   onDelete: (id: string) => void;
   onEdit: (cmd: Command) => void;
   onView: (cmd: Command) => void;
+  onDuplicate: (cmd: Command) => void;
 }
 
 /** A collapsible category section in the grouped Commands view. */
@@ -563,6 +577,7 @@ function CommandGroupSection({
   onDelete,
   onEdit,
   onView,
+  onDuplicate,
 }: CommandGroupSectionProps): ReactElement {
   return (
     <section className="list-group">
@@ -590,6 +605,7 @@ function CommandGroupSection({
                 onDelete={onDelete}
                 onEdit={onEdit}
                 onView={onView}
+                onDuplicate={onDuplicate}
               />
             ))}
           </div>
@@ -767,6 +783,16 @@ function CommandsTab(): ReactElement {
     setViewCommand(cmd);
   };
 
+  // Duplicate a command (context-menu "Create copy"): persist a copy with a
+  // localized name prefix, then open the new copy's editor so the user lands
+  // straight in it — mirrors `handleEdit`'s navigation.
+  const handleDuplicate = (cmd: Command): void => {
+    const copy = duplicateCommand(cmd, t("contextMenu.duplicatePrefix"));
+    setCommandEditorDirty(false);
+    setCommandEditorTarget({ mode: "edit", commandId: copy.id });
+    setView("command-editor");
+  };
+
   // Stage a delete: check for dependent workflows/schedules first. If any
   // exist, show the BlockedDeleteDialog instead of the confirm dialog.
   const requestDelete = (id: string): void => {
@@ -893,6 +919,7 @@ function CommandsTab(): ReactElement {
             onDelete={requestDelete}
             onEdit={handleEdit}
             onView={handleView}
+            onDuplicate={handleDuplicate}
           />
         ))
       ) : showTable ? (
@@ -925,6 +952,7 @@ function CommandsTab(): ReactElement {
               onDelete={requestDelete}
               onEdit={handleEdit}
               onView={handleView}
+              onDuplicate={handleDuplicate}
             />
           ))}
         </div>

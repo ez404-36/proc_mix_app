@@ -36,6 +36,10 @@ import {
   listHistoryFromDb,
   recordHistoryEventInDb,
 } from "../utils/historyRepository";
+import {
+  clearRangeBounds,
+  type HistoryClearRange,
+} from "../utils/historyClearRange";
 import { useCommandStore } from "./commandStore";
 
 /**
@@ -114,7 +118,12 @@ interface HistoryState {
   ) => void;
   undoEdit: (eventId: string) => Promise<void>;
   restoreDeleted: (eventId: string) => Promise<void>;
-  clearAll: () => Promise<void>;
+  /**
+   * Clear history. With no argument (or the `all` range) the whole table is
+   * dropped; with a bounded range only rows older than its cutoff are
+   * removed and the current page is reloaded to reflect what remains.
+   */
+  clearAll: (range?: HistoryClearRange) => Promise<void>;
 }
 
 /**
@@ -352,10 +361,20 @@ export const useHistoryStore = create<HistoryState>()((set, get) => ({
       );
     }
   },
-  clearAll: async () => {
+  clearAll: async (range: HistoryClearRange = { kind: "all" }) => {
     try {
-      await clearHistoryInDb();
-      set({ items: [], total: 0, page: 1 });
+      const bounds = clearRangeBounds(range);
+      await clearHistoryInDb(bounds);
+      if (bounds.after === undefined && bounds.before === undefined) {
+        // Whole-table wipe — nothing can remain, so reset to the empty page
+        // without a round-trip.
+        set({ items: [], total: 0, page: 1 });
+      } else {
+        // A bounded clear may leave other rows; reload from page 1 so the
+        // list and total reflect exactly what survived.
+        set({ page: 1 });
+        await get().load();
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       Message.error(

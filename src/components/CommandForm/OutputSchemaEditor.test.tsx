@@ -106,6 +106,25 @@ describe("OutputSchemaEditor", () => {
     expect(screen.getAllByText(/"alice"/).length).toBeGreaterThan(0);
   });
 
+  it("auto-previews a saved sample on mount (no user typing)", async () => {
+    previewSpy.mockResolvedValue({
+      fields: { name: "bob" },
+      returnValue: "bob",
+    });
+    // A schema that already carries a persisted sample — opening the editor
+    // must run the preview immediately so the saved result is shown.
+    const value: OutputSchema = {
+      pipeline: [{ parser: "keyValue", delimiter: "=", fields: [] }],
+      sample: "name=bob",
+    };
+    render(<OutputSchemaEditor value={value} onChange={vi.fn()} t={t} />);
+
+    await waitFor(() =>
+      expect(previewSpy).toHaveBeenCalledWith(value, "name=bob"),
+    );
+    expect(screen.getAllByText(/"bob"/).length).toBeGreaterThan(0);
+  });
+
   it("return value dropdown shows declared fields for table", () => {
     // With declared fields the dropdown offers them as return value options.
     const value: OutputSchema = {
@@ -164,5 +183,26 @@ describe("OutputSchemaEditor", () => {
         "invalid JSON output: x",
       ),
     );
+  });
+
+  it("a javascript step shows the parse(data) code editor", () => {
+    const value: OutputSchema = {
+      pipeline: [
+        {
+          parser: "javascript",
+          fields: [],
+          code: "function parse(data) { return data; }",
+        },
+      ],
+    };
+    render(<OutputSchemaEditor value={value} onChange={vi.fn()} t={t} />);
+
+    // The monospace code textarea is rendered with the step's source...
+    const code = screen.getByDisplayValue(
+      "function parse(data) { return data; }",
+    );
+    expect(code).toBeTruthy();
+    // ...and the regex pattern / table delimiter inputs are NOT shown for it.
+    expect(screen.queryByPlaceholderText("(?P<name>\\w+)")).toBeNull();
   });
 });

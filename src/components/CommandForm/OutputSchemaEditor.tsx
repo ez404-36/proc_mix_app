@@ -19,8 +19,10 @@ import { Message } from "@arco-design/web-react";
 import { ArrowDownIcon } from "../icons";
 import { previewExtraction } from "../../services/outputExtraction";
 import { copyText } from "../../utils/consoleClipboard";
+import { inferTsType, jsTemplate } from "../../utils/jsParserTemplate";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
+import { NumberStepper } from "../NumberStepper";
 
 /**
  * Parsers offered in the editor. Order matches the conceptual
@@ -33,6 +35,7 @@ const PARSER_KINDS: readonly OutputParserKind[] = [
   "regex",
   "keyValue",
   "table",
+  "javascript",
 ];
 
 /** Which parser surfaces which optional config inputs. */
@@ -53,6 +56,11 @@ function usesFields(parser: OutputParserKind): boolean {
     parser === "table" ||
     parser === "lines"
   );
+}
+/** The javascript parser shows a `parse(data)` code editor instead of the
+ *  pattern/delimiter/header/fields config. */
+function usesCode(parser: OutputParserKind): boolean {
+  return parser === "javascript";
 }
 
 
@@ -112,6 +120,18 @@ export function OutputSchemaEditor(
   // authoritative — we stop auto-filling it from run output so a fresh
   // run can't clobber what they're editing.
   const sampleEditedRef = useRef<boolean>(false);
+
+  // When the schema's persisted sample changes from the outside (the user
+  // opens a different command, or the schema is loaded for the first time
+  // after a prop update), sync the local `sample` state and reset the
+  // "user-edited" flag so the auto-preview fires with the saved sample.
+  const savedSample = value?.sample;
+  useEffect(() => {
+    if (savedSample !== undefined) {
+      setSample(savedSample);
+      sampleEditedRef.current = false;
+    }
+  }, [savedSample]);
 
   // Whether the typed sample is persisted with the schema.
   const saveSample = value?.sample !== undefined;
@@ -198,14 +218,27 @@ export function OutputSchemaEditor(
   const handleStepParserChange = useCallback(
     (stepIndex: number, next: string): void => {
       if (value === undefined || !PARSER_KINDS.includes(next as OutputParserKind)) return;
-      const pipeline = value.pipeline.map((s, i) =>
-        i === stepIndex
-          ? { parser: next as OutputParserKind, fields: [] }
-          : s,
-      );
+      const parser = next as OutputParserKind;
+      const pipeline = value.pipeline.map((s, i) => {
+        if (i !== stepIndex) return s;
+        const base: OutputPipelineStep = { parser, fields: [] };
+        // Seed a `parse(data)` template when switching TO javascript, with the
+        // `data` type inferred from the previous step's preview (or `unknown`
+        // for the first step / no preview yet).
+        if (parser === "javascript") {
+          const prevPreview =
+            stepIndex > 0 ? stepPreviews[stepIndex - 1] : null;
+          const label =
+            prevPreview != null
+              ? inferTsType(prevPreview.returnValue)
+              : "unknown";
+          return { ...base, code: jsTemplate(label) };
+        }
+        return base;
+      });
       onChange({ ...value, pipeline });
     },
-    [onChange, value],
+    [onChange, value, stepPreviews],
   );
 
   const patchStep = useCallback(
@@ -688,6 +721,73 @@ export function OutputSchemaEditor(
                           {t("commandForm.outputSchema.hasHeader", { defaultValue: "First row is a header" })}
                         </span>
                       </label>
+                    ) : null}
+
+                    {step.parser === "table" ? (
+                      <label className="command-form__field">
+                        <span className="command-form__label">
+                          {t("commandForm.outputSchema.maxColumns", {
+                            defaultValue: "Max columns",
+                          })}
+                        </span>
+                        <div className="command-form__output-schema-max-columns">
+                          <NumberStepper
+                            allowEmpty
+                            clearAtFloor
+                            value={step.maxColumns ?? null}
+                            onChange={(next) =>
+                              patchStep(si, {
+                                // null = "no limit"; "+" from empty lands on 1,
+                                // "−" at 1 clears back to no limit.
+                                maxColumns: next === null ? undefined : next,
+                              })
+                            }
+                            min={1}
+                            max={Number.MAX_SAFE_INTEGER}
+                            placeholder={t("commandForm.outputSchema.maxColumnsPlaceholder", {
+                              defaultValue: "no limit",
+                            })}
+                            ariaLabel={t("commandForm.outputSchema.maxColumns", {
+                              defaultValue: "Max columns",
+                            })}
+                            decrementLabel={t("commandForm.timeout.decrement")}
+                            incrementLabel={t("commandForm.timeout.increment")}
+                          />
+                        </div>
+                        <span className="command-form__hint" role="note">
+                          {t("commandForm.outputSchema.maxColumnsHint", {
+                            defaultValue:
+                              "Limit the number of columns. Everything past the last split goes into the final column (useful when the last field may contain spaces, e.g. file paths).",
+                          })}
+                        </span>
+                      </label>
+                    ) : null}
+
+                    {usesCode(step.parser) ? (
+                      <div className="command-form__field">
+                        <span className="command-form__label">
+                          {t("commandForm.outputSchema.code", {
+                            defaultValue: "parse(data) function",
+                          })}
+                        </span>
+                        <textarea
+                          className="input command-form__output-schema-sample command-form__output-schema-code"
+                          value={step.code ?? ""}
+                          rows={8}
+                          spellCheck={false}
+                          onChange={(e) => patchStep(si, { code: e.target.value })}
+                          placeholder={t("commandForm.outputSchema.codePlaceholder", {
+                            defaultValue:
+                              "function parse(data) {\n  return data;\n}",
+                          })}
+                        />
+                        <span className="command-form__hint" role="note">
+                          {t("commandForm.outputSchema.codeHint", {
+                            defaultValue:
+                              "Runs in a sandboxed JS engine (no file/network access). `data` is the previous step's value; return the transformed result.",
+                          })}
+                        </span>
+                      </div>
                     ) : null}
 
                     {usesFields(step.parser) ? (

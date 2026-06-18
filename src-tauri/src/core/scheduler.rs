@@ -30,7 +30,9 @@ use chrono::{DateTime, Local};
 use tauri::{AppHandle, Runtime};
 use tokio::sync::{Mutex, Notify};
 
-use crate::core::executor::{self, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus};
+use crate::core::executor::{
+    self, CapturedLine, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus,
+};
 use crate::core::workflow::{self, WorkflowExecutorState};
 use crate::storage::commands::{self as storage_commands, CommandRecord};
 use crate::storage::history::{
@@ -501,9 +503,10 @@ impl FireStatus {
 /// result) the history record persists. The capture fields are populated ONLY
 /// when the schedule has `capture_output = true` AND a run actually produced an
 /// outcome; otherwise they are `None` and the `ScheduledRun` record stays
-/// minimal. Workflow targets do NOT capture in v1 — `fire_workflow` returns a
-/// bare `FireStatus` and the workflow's `ScheduledRun` keeps all capture fields
-/// `None` (documented limitation).
+/// minimal. Workflow targets now capture too: a scheduled (silent) workflow
+/// fire is driven to completion by `workflow::execute_workflow_blocking`, whose
+/// aggregate per-node log is mapped into `output` here (the `exit_code` /
+/// `duration_ms` / `result` fields remain command-only).
 #[derive(Debug, Default)]
 struct CommandFireResult {
     status_exit_code: Option<i32>,
@@ -987,17 +990,14 @@ async fn fire_schedule<R: Runtime>(
             .await;
         }
         "workflow" => {
-            // v1: workflow targets do not capture output — record the minimal
-            // event.
-            let status =
-                fire_workflow(app, pool, executor_state, workflow_state, rec, silent).await;
+            let fire = fire_workflow(app, pool, executor_state, workflow_state, rec, silent).await;
             record_outcome(
                 pool,
                 rec,
                 &now_iso,
-                status,
+                fire.status,
                 next_run.as_deref(),
-                &CommandFireResult::default(),
+                &fire.capture,
             )
             .await;
         }
@@ -1160,7 +1160,125 @@ async fn fire_workflow<R: Runtime>(
     executor_state: &Arc<ExecutorState>,
     workflow_state: &Arc<WorkflowExecutorState>,
     rec: &ScheduleRecord,
-    silent: bool,
+    _silent: bool,
+) -> CommandFire {
+    let wf = match storage_workflows::list_all(pool).await {
+        Ok(list) => match list.into_iter().find(|w| w.id == rec.target_id) {
+            Some(wf) => wf,
+            None => {
+                eprintln!(
+                    "scheduler: schedule {} references missing workflow {}",
+                    rec.id, rec.target_id
+                );
+                return CommandFire {
+                    status: FireStatus::Error,
+                    capture: CommandFireResult::default(),
+                };
+            }
+        },
+        Err(e) => {
+            eprintln!(
+                "scheduler: failed to load workflows for schedule {}: {e}",
+                rec.id
+            );
+            return CommandFire {
+                status: FireStatus::Error,
+                capture: CommandFireResult::default(),
+            };
+        }
+    };
+
+    let all_commands = match storage_commands::list_all(pool).await {
+        Ok(list) => list,
+        Err(e) => {
+            eprintln!(
+                "scheduler: failed to load commands for schedule {}: {e}",
+                rec.id
+            );
+            return CommandFire {
+                status: FireStatus::Error,
+                capture: CommandFireResult::default(),
+            };
+        }
+    };
+    let commands: HashMap<String, CommandRecord> = all_commands
+        .into_iter()
+        .map(|c| (c.id.clone(), c))
+        .collect();
+
+    let node_variable_values = workflow_variable_values(&rec.variable_values);
+
+    // Drive the workflow to completion in-process so we can record its
+    // aggregate output. A scheduled fire is always headless (no live stream);
+    // `execute_workflow_blocking` runs silent and capturing.
+    let run = workflow::execute_workflow_blocking(
+        app.clone(),
+        executor_state.clone(),
+        workflow_state.clone(),
+        wf,
+        commands,
+        node_variable_values,
+    )
+    .await;
+
+    let status = if run.succeeded {
+        FireStatus::Success
+    } else {
+        FireStatus::Error
+    };
+
+    // Persist the captured aggregate log only when the schedule enabled
+    // capture; otherwise the history row stays minimal (status only).
+    let capture = if rec.capture_output {
+        CommandFireResult {
+            output: run.output.as_deref().map(map_workflow_capture),
+            ..CommandFireResult::default()
+        }
+    } else {
+        CommandFireResult::default()
+    };
+
+    CommandFire { status, capture }
+}
+
+/// Map a workflow run's aggregate [`CapturedLine`]s into history log lines,
+/// applying the [`MAX_HISTORY_OUTPUT_BYTES`] cap with a trailing truncation
+/// marker — the same shape `map_captured_output` produces for a command.
+fn map_workflow_capture(lines: &[CapturedLine]) -> Vec<HistoryLogLine> {
+    let mut out: Vec<HistoryLogLine> = Vec::with_capacity(lines.len());
+    let mut bytes = 0usize;
+    let mut truncated = false;
+    for line in lines {
+        if bytes.saturating_add(line.line.len()) > MAX_HISTORY_OUTPUT_BYTES {
+            truncated = true;
+            break;
+        }
+        bytes += line.line.len();
+        out.push(HistoryLogLine {
+            stream: line.stream.as_str().to_string(),
+            line: line.line.clone(),
+        });
+    }
+    if truncated {
+        out.push(HistoryLogLine {
+            stream: "meta".to_string(),
+            line: "…(truncated)".to_string(),
+        });
+    }
+    out
+}
+
+/// Launch a workflow target for a MANUAL "Run now": fire-and-return through
+/// the streaming `execute_workflow` so the live console shows progress. No
+/// output is captured for history (the manual path is interactive). Returns
+/// only the launch status — a spawn failure is an error, a successful launch
+/// is recorded as success (the streamed run reports its own per-node result).
+async fn fire_workflow_streaming<R: Runtime>(
+    app: &AppHandle<R>,
+    pool: &DbPool,
+    executor_state: &Arc<ExecutorState>,
+    workflow_state: &Arc<WorkflowExecutorState>,
+    rec: &ScheduleRecord,
 ) -> FireStatus {
     let wf = match storage_workflows::list_all(pool).await {
         Ok(list) => match list.into_iter().find(|w| w.id == rec.target_id) {
@@ -1206,7 +1324,8 @@ async fn fire_workflow<R: Runtime>(
         wf,
         commands,
         node_variable_values,
-        silent,
+        // Manual run streams live.
+        false,
     )
     .await
     {
@@ -1447,9 +1566,12 @@ pub async fn run_now<R: Runtime>(
             (fire.status, fire.capture)
         }
         "workflow" => {
-            // v1: workflow targets do not capture output.
+            // Manual "Run now" streams live to the console (it has a UI), so it
+            // uses the fire-and-return `execute_workflow` rather than the
+            // blocking+silent scheduled path — the live aggregate is built from
+            // events on the frontend. No history output is captured here.
             let status =
-                fire_workflow(app, pool, executor_state, workflow_state, &rec, false).await;
+                fire_workflow_streaming(app, pool, executor_state, workflow_state, &rec).await;
             (status, CommandFireResult::default())
         }
         other => {

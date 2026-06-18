@@ -18,7 +18,9 @@ use std::time::Duration;
 use procmix_lib::core::executor::{
     spawn_execution, ExecuteRequest, ExecutionEvent, ExecutorState, EXECUTION_EVENT,
 };
-use procmix_lib::storage::commands::{OutputFieldRecord, OutputSchemaRecord};
+use procmix_lib::storage::commands::{
+    OutputFieldRecord, OutputPipelineStepRecord, OutputSchemaRecord,
+};
 use tauri::test::mock_builder;
 use tauri::Listener;
 
@@ -102,6 +104,7 @@ async fn result_event_emitted_after_stdout_and_before_finished() {
         pattern: None,
         delimiter: Some("=".into()),
         has_header: None,
+        max_columns: None,
         fields: vec![OutputFieldRecord {
             name: "name".into(),
             path: None,
@@ -171,6 +174,7 @@ async fn result_event_carries_error_on_invalid_json() {
         pattern: None,
         delimiter: None,
         has_header: None,
+        max_columns: None,
         fields: Vec::new(),
         pipeline: Vec::new(),
         return_field: None,
@@ -206,6 +210,60 @@ async fn result_event_carries_error_on_invalid_json() {
 }
 
 #[tokio::test]
+async fn javascript_step_transforms_real_run_output() {
+    let (app, state, events) = make_app();
+
+    // raw stdout → javascript step that uppercases the trimmed output. This
+    // proves the `javascript` parser runs in the BACKEND extractor on a real
+    // run (the same path scheduled / headless runs take), not in the webview.
+    let schema = OutputSchemaRecord {
+        parser: "raw".into(),
+        source: Some("stdout".into()),
+        pattern: None,
+        delimiter: None,
+        has_header: None,
+        max_columns: None,
+        fields: Vec::new(),
+        pipeline: vec![OutputPipelineStepRecord {
+            parser: "javascript".into(),
+            pattern: None,
+            delimiter: None,
+            has_header: None,
+            max_columns: None,
+            fields: Vec::new(),
+            code: Some("function parse(data) { return data.trim().toUpperCase(); }".into()),
+        }],
+        return_field: None,
+        sample: None,
+    };
+    let req = request_with_schema("echo hello", schema);
+
+    spawn_execution(app, state, req)
+        .await
+        .expect("spawn_execution succeeded");
+
+    let collected = wait_terminal(events, Duration::from_secs(5)).await;
+
+    let result = collected
+        .iter()
+        .find_map(|e| match e {
+            ExecutionEvent::Result {
+                return_value,
+                error,
+                ..
+            } => Some((return_value.clone(), error.clone())),
+            _ => None,
+        })
+        .expect("a result event was emitted");
+    assert!(
+        result.1.is_none(),
+        "extraction should succeed: {:?}",
+        result.1
+    );
+    assert_eq!(result.0, serde_json::json!("HELLO"));
+}
+
+#[tokio::test]
 async fn no_schema_emits_no_result_event() {
     let (app, state, events) = make_app();
 
@@ -217,6 +275,7 @@ async fn no_schema_emits_no_result_event() {
             pattern: None,
             delimiter: None,
             has_header: None,
+            max_columns: None,
             fields: Vec::new(),
             pipeline: Vec::new(),
             return_field: None,

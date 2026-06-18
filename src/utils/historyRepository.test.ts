@@ -489,11 +489,32 @@ describe("IPC wrappers", () => {
     });
   });
 
-  it("clearHistoryInDb calls the command with no args", async () => {
+  it("clearHistoryInDb with no bounds clears all (after/before null)", async () => {
     invokeMock.mockResolvedValueOnce(undefined);
     await clearHistoryInDb();
-    // The mock wrapper receives (cmd, undefined) when `invoke(cmd)` is
-    // called with no payload — the second slot is the args object.
-    expect(invokeMock).toHaveBeenCalledWith("clear_history", undefined);
+    // Both bounds collapse to `null`, which the Rust side maps to `None`
+    // (clear everything) — identical to the original behaviour.
+    expect(invokeMock).toHaveBeenCalledWith("clear_history", {
+      after: null,
+      before: null,
+    });
+  });
+
+  it("clearHistoryInDb forwards an `after` bound (recent records)", async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await clearHistoryInDb({ after: "2026-06-01T00:00:00.000Z" });
+    expect(invokeMock).toHaveBeenCalledWith("clear_history", {
+      after: "2026-06-01T00:00:00.000Z",
+      before: null,
+    });
+  });
+
+  it("clearHistoryInDb forwards a `before` bound (old records)", async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await clearHistoryInDb({ before: "2026-06-01T00:00:00.000Z" });
+    expect(invokeMock).toHaveBeenCalledWith("clear_history", {
+      after: null,
+      before: "2026-06-01T00:00:00.000Z",
+    });
   });
 });

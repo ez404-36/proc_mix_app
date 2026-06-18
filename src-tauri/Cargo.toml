@@ -1,6 +1,6 @@
 [package]
 name = "procmix"
-version = "0.7.1"
+version = "0.7.2"
 description = "ProcMix - cross-platform automation tool"
 authors = ["Zenkin Egor Andreevich"]
 edition = "2021"
@@ -78,6 +78,18 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # user-supplied patterns parsing command stdout.
 regex = "1"
 
+# Sandboxed JavaScript engine for the `javascript` output parser in
+# `core::extractor` / `core::js_parser`. A fresh `Context::default()`
+# exposes ONLY ECMAScript builtins (Object/Array/Math/JSON/Date/RegExp/…) —
+# it has NO filesystem, network, process, env, timer, or host access by
+# construction. Host capabilities live in the SEPARATE `boa_runtime` crate,
+# which we deliberately DO NOT depend on, and we register zero native
+# functions/globals, so user `parse(data)` code can touch nothing but its
+# `data` argument and the JS standard library. Pure Rust → compiles on every
+# target (no `#[cfg]` gate). Resource abuse is bounded by an instruction
+# budget (kills infinite loops) and a source-size cap (see `core::js_parser`).
+boa_engine = "0.20"
+
 # Native open/save file dialogs for the JSON Import/Export feature.
 # Used INSIDE Tauri commands (not as a JS plugin) so the app keeps a
 # minimal allowlist — `rfd` opens the OS dialog and `std::fs` does the
@@ -144,4 +156,17 @@ windows = { version = "0.57", features = [
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
+
+# Statistical micro-benchmark harness for the output-extraction hot path
+# (`core::extractor`) and the sandboxed JS parser (`core::js_parser`).
+# Dev-only — never linked into the app binary. Run with `cargo bench`.
+# `html_reports` is off to keep the dependency tree (and CI output) lean.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+# Output-extraction benchmarks: the parser pipeline (raw/lines/json/regex/
+# keyValue/table) plus the JS `parse(data)` step. `harness = false` lets
+# Criterion own `main` instead of the default libtest harness.
+[[bench]]
+name = "extraction"
+harness = false
 
