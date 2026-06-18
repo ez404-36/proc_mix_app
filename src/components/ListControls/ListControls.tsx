@@ -3,7 +3,12 @@ import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Dropdown } from "../Dropdown/Dropdown";
 import type { DropdownOption } from "../Dropdown/Dropdown";
-import { GroupIcon, TableViewIcon, TilesViewIcon } from "../icons";
+import {
+  CompactTilesIcon,
+  GroupIcon,
+  TableViewIcon,
+  TilesViewIcon,
+} from "../icons";
 import type { ListSortKey, SortDir, ViewMode } from "../../types";
 
 /**
@@ -129,6 +134,18 @@ export function ListControls<K extends ListSortKey>(
           title={t("listView.tilesView")}
         >
           <TilesViewIcon />
+        </button>
+        <button
+          type="button"
+          className={
+            "btn btn--ghost btn--icon" + (mode === "compact" ? " is-active" : "")
+          }
+          onClick={() => onModeChange("compact")}
+          aria-pressed={mode === "compact"}
+          aria-label={t("listView.compactView")}
+          title={t("listView.compactView")}
+        >
+          <CompactTilesIcon />
         </button>
         <button
           type="button"

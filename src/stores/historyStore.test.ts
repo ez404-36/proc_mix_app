@@ -79,6 +79,7 @@ function resetHistoryStore(): void {
     filter: __test__.EMPTY_FILTER,
     loading: false,
     error: undefined,
+    selectedIds: [],
   });
 }
 
@@ -457,5 +458,69 @@ describe("clearAll", () => {
     expect(useHistoryStore.getState().items).toHaveLength(0);
     expect(useHistoryStore.getState().total).toBe(0);
     expect(useHistoryStore.getState().page).toBe(1);
+  });
+});
+
+describe("selection (toggleSelected / clearSelection / deleteSelected)", () => {
+  it("toggleSelected adds then removes an id", () => {
+    useHistoryStore.getState().toggleSelected("e1");
+    expect(useHistoryStore.getState().selectedIds).toEqual(["e1"]);
+    useHistoryStore.getState().toggleSelected("e2");
+    expect(useHistoryStore.getState().selectedIds).toEqual(["e1", "e2"]);
+    // Toggling an already-selected id removes it.
+    useHistoryStore.getState().toggleSelected("e1");
+    expect(useHistoryStore.getState().selectedIds).toEqual(["e2"]);
+  });
+
+  it("clearSelection empties the selection", () => {
+    useHistoryStore.setState({ selectedIds: ["e1", "e2"] });
+    useHistoryStore.getState().clearSelection();
+    expect(useHistoryStore.getState().selectedIds).toEqual([]);
+  });
+
+  it("load resets the selection (visible slice changed)", async () => {
+    listHistoryFromDbMock.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: HISTORY_PAGE_SIZE,
+    });
+    useHistoryStore.setState({ selectedIds: ["e1"] });
+    await useHistoryStore.getState().load();
+    expect(useHistoryStore.getState().selectedIds).toEqual([]);
+  });
+
+  it("deleteSelected is a no-op when nothing is selected", async () => {
+    await useHistoryStore.getState().deleteSelected();
+    expect(deleteHistoryEventInDbMock).not.toHaveBeenCalled();
+  });
+
+  it("deleteSelected deletes every selected id, clears selection, and reloads", async () => {
+    deleteHistoryEventInDbMock.mockResolvedValue(undefined);
+    listHistoryFromDbMock.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: HISTORY_PAGE_SIZE,
+    });
+    useHistoryStore.setState({ selectedIds: ["e1", "e2", "e3"] });
+    await useHistoryStore.getState().deleteSelected();
+    expect(deleteHistoryEventInDbMock).toHaveBeenCalledTimes(3);
+    expect(deleteHistoryEventInDbMock).toHaveBeenCalledWith("e1");
+    expect(deleteHistoryEventInDbMock).toHaveBeenCalledWith("e3");
+    expect(useHistoryStore.getState().selectedIds).toEqual([]);
+    expect(listHistoryFromDbMock).toHaveBeenCalled();
+  });
+
+  it("deleteSelected keeps the selection when a delete fails (no reload)", async () => {
+    deleteHistoryEventInDbMock
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("db locked"));
+    useHistoryStore.setState({ selectedIds: ["e1", "e2"] });
+    await useHistoryStore.getState().deleteSelected();
+    // First delete ran, second threw → selection is NOT cleared and no reload.
+    expect(deleteHistoryEventInDbMock).toHaveBeenCalledTimes(2);
+    expect(useHistoryStore.getState().selectedIds).toEqual(["e1", "e2"]);
+    expect(listHistoryFromDbMock).not.toHaveBeenCalled();
   });
 });

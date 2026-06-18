@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { HISTORY_PAGE_SIZE, useHistoryStore } from "../../stores/historyStore";
 import type { HistoryClearRange } from "../../utils/historyClearRange";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { HistoryClearDialog } from "./HistoryClearDialog";
 import { HistoryFilterBar } from "./HistoryFilterBar";
 import { HistoryRow } from "./HistoryRow";
@@ -30,6 +31,9 @@ export function History(): ReactElement {
   const setPage = useHistoryStore((s) => s.setPage);
   const clearAll = useHistoryStore((s) => s.clearAll);
   const filter = useHistoryStore((s) => s.filter);
+  const selectedIds = useHistoryStore((s) => s.selectedIds);
+  const toggleSelected = useHistoryStore((s) => s.toggleSelected);
+  const deleteSelected = useHistoryStore((s) => s.deleteSelected);
 
   // Filter panel is hidden by default; the user reveals it by clicking
   // the "Filters" toggle in the header. We preserve filter VALUES in
@@ -39,6 +43,8 @@ export function History(): ReactElement {
   // invisible state.
   const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState<boolean>(false);
+  const [deleteSelectedConfirmOpen, setDeleteSelectedConfirmOpen] =
+    useState<boolean>(false);
 
   // Trigger an initial load on mount. We deliberately use `load`
   // (which reads the current filter + page from store state) instead
@@ -80,6 +86,12 @@ export function History(): ReactElement {
     void clearAll(range);
   };
 
+  const selectedCount = selectedIds.length;
+  const handleDeleteSelectedConfirmed = (): void => {
+    setDeleteSelectedConfirmOpen(false);
+    void deleteSelected();
+  };
+
   return (
     <div>
       <header className="view-header">
@@ -88,6 +100,15 @@ export function History(): ReactElement {
           <p className="view-subtitle">{t("history.subtitle")}</p>
         </div>
         <div className="view-header__actions">
+          {selectedCount > 0 && (
+            <button
+              type="button"
+              className="btn btn--danger"
+              onClick={() => setDeleteSelectedConfirmOpen(true)}
+            >
+              {t("history.deleteSelected", { count: selectedCount })}
+            </button>
+          )}
           <button
             type="button"
             className={
@@ -138,7 +159,12 @@ export function History(): ReactElement {
       ) : (
         <ul className="history-list">
           {items.map((evt) => (
-            <HistoryRow key={evt.id} event={evt} />
+            <HistoryRow
+              key={evt.id}
+              event={evt}
+              selected={selectedIds.includes(evt.id)}
+              onToggleSelect={toggleSelected}
+            />
           ))}
         </ul>
       )}
@@ -174,6 +200,16 @@ export function History(): ReactElement {
         open={clearConfirmOpen}
         onConfirm={handleClearConfirmed}
         onCancel={() => setClearConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={deleteSelectedConfirmOpen}
+        title={t("history.deleteSelectedConfirmTitle")}
+        message={t("history.deleteSelectedConfirm", { count: selectedCount })}
+        confirmLabel={t("common.delete")}
+        danger
+        onConfirm={handleDeleteSelectedConfirmed}
+        onCancel={() => setDeleteSelectedConfirmOpen(false)}
       />
     </div>
   );

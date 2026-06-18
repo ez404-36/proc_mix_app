@@ -8,29 +8,36 @@ import type {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useContextMenu } from "../ContextMenu";
+import type { ContextMenuEntry } from "../ContextMenu";
 import { buildConsoleCopyMenu } from "../../utils/consoleClipboard";
 import { useExecutionStore } from "../../stores/executionStore";
 import type { ConsoleDockPosition } from "../../stores/executionStore";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
 import { useCommandStore } from "../../stores/commandStore";
+import { useWorkflowStore } from "../../stores/workflowStore";
 import { useUIStore } from "../../stores/uiStore";
 import type {
   Command,
   Execution,
   ExecutionStatus,
   ExtractedResult,
+  Workflow,
 } from "../../types";
 import { cancelExecution } from "../../utils/executor";
 import { triggerCommandRun } from "../../services/commandRunner";
+import { triggerWorkflowRun } from "../../services/workflowRunner";
 import { cancelWorkflow } from "../../utils/workflowRunner";
 import {
   CancelIcon,
   ClearIcon,
+  EditIcon,
+  PinIcon,
   RerunIcon,
   SpinnerIcon,
   StatusCheckIcon,
   StatusCrossIcon,
+  TrashIcon,
 } from "../icons";
 
 const RECENT_VISIBLE = 10;
@@ -253,6 +260,9 @@ export function OutputPanel(): ReactElement | null {
   const setActiveExecution = useExecutionStore((s) => s.setActiveExecution);
   const clearTerminated = useExecutionStore((s) => s.clearTerminated);
   const clearExecution = useExecutionStore((s) => s.clearExecution);
+  const renameExecution = useExecutionStore((s) => s.renameExecution);
+  const setPinned = useExecutionStore((s) => s.setPinned);
+  const reorderRecent = useExecutionStore((s) => s.reorderRecent);
   const panelHeight = useExecutionStore((s) => s.panelHeight);
   const setPanelHeight = useExecutionStore((s) => s.setPanelHeight);
   const panelWidth = useExecutionStore((s) => s.panelWidth);
@@ -260,6 +270,8 @@ export function OutputPanel(): ReactElement | null {
   const consolePosition = useUIStore((s) => s.consolePosition);
   const setConsolePosition = useUIStore((s) => s.setConsolePosition);
   const commands = useCommandStore((s) => s.commands);
+  const workflows = useWorkflowStore((s) => s.workflows);
+  const { show } = useContextMenu();
   // The command currently open in the full-screen editor (if any) and its
   // live, possibly-unsaved Script body. A re-run of that exact command must
   // replay what the user is editing — not the last-saved version.
@@ -359,6 +371,54 @@ export function OutputPanel(): ReactElement | null {
     setActiveTab("output");
   }, [activeExecutionId]);
 
+  // The recents-strip button currently being renamed inline (its execution id),
+  // plus the live text. `null` = no rename in progress. Commit on Enter/blur.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState<string>("");
+
+  const beginRename = (exec: Execution): void => {
+    setRenamingId(exec.id);
+    setRenameDraft(exec.customName ?? exec.commandName);
+  };
+  const commitRename = (): void => {
+    if (renamingId !== null) {
+      renameExecution(renamingId, renameDraft);
+    }
+    setRenamingId(null);
+    setRenameDraft("");
+  };
+  const cancelRename = (): void => {
+    setRenamingId(null);
+    setRenameDraft("");
+  };
+
+  // Native drag-and-drop reordering of the recents strip. `draggingId` is the
+  // run being dragged; `dropTargetId` is the run currently hovered as a drop
+  // slot — used to highlight a valid target. A drop calls `reorderRecent`,
+  // which itself rejects moves that would cross the pinned/unpinned boundary,
+  // so we only need to surface the constraint visually here.
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+  const handleRecentDrop = (overId: string): void => {
+    if (draggingId !== null && draggingId !== overId) {
+      reorderRecent(draggingId, overId);
+    }
+    setDraggingId(null);
+    setDropTargetId(null);
+  };
+
+  // Whether a drag from `draggingId` may legally drop onto `overId` — same
+  // pinned/unpinned partition. Mirrors the store's constraint so the hovered
+  // target is only highlighted (and the cursor allowed) for valid drops.
+  const canDropOn = (overId: string): boolean => {
+    if (draggingId === null || draggingId === overId) return false;
+    const a = executions[draggingId];
+    const b = executions[overId];
+    if (!a || !b) return false;
+    return (a.pinned ?? false) === (b.pinned ?? false);
+  };
+
   useEffect(() => {
     const root = document.documentElement;
     // When the panel is closed the component renders `null` but stays
@@ -386,18 +446,25 @@ export function OutputPanel(): ReactElement | null {
   }, [panelOpen, consolePosition, panelWidth]);
   const hasResult = active?.result !== undefined;
 
-  // The command that produced the active execution, if it still exists.
-  // Drives the Re-run button: an execution whose source command was
-  // deleted (or that was never tied to a command, e.g. a transient
-  // live-run) cannot be replayed, so the button is hidden in those cases.
-  // A workflow aggregate has no single source command and is excluded
-  // explicitly (it also has no `commandId`, but the marker makes intent
-  // clear and is robust if a workflow ever carries one).
-  const rerunSource = useMemo(() => {
-    if (active?.isWorkflow) return null;
+  // The source that produced the active execution, if it still exists. Drives
+  // the Re-run button:
+  //   - a command execution → the source Command (replayed via triggerCommandRun)
+  //   - a workflow aggregate → the source Workflow (replayed via triggerWorkflowRun)
+  // An execution whose source was deleted, or a transient live-run with no
+  // source id, cannot be replayed, so the button is hidden in those cases.
+  const rerunSource = useMemo(():
+    | { kind: "command"; command: Command }
+    | { kind: "workflow"; workflow: Workflow }
+    | null => {
+    if (active?.isWorkflow) {
+      if (!active.workflowId) return null;
+      const wf = workflows.find((w) => w.id === active.workflowId);
+      return wf ? { kind: "workflow", workflow: wf } : null;
+    }
     if (!active?.commandId) return null;
-    return commands.find((c) => c.id === active.commandId) ?? null;
-  }, [active?.isWorkflow, active?.commandId, commands]);
+    const cmd = commands.find((c) => c.id === active.commandId);
+    return cmd ? { kind: "command", command: cmd } : null;
+  }, [active?.isWorkflow, active?.workflowId, active?.commandId, commands, workflows]);
 
   const recents = useMemo(
     () =>
@@ -440,17 +507,28 @@ export function OutputPanel(): ReactElement | null {
 
   const handleRerun = (): void => {
     if (!rerunSource || !active) return;
+
+    if (rerunSource.kind === "workflow") {
+      // Re-run a whole workflow. Drop the previous aggregate from the current
+      // terminal first so the replay visually replaces it; a fresh run id is
+      // assigned by triggerWorkflowRun.
+      clearExecution(active.id);
+      void triggerWorkflowRun(rerunSource.workflow);
+      return;
+    }
+
+    const sourceCommand = rerunSource.command;
     // If the user is editing this exact command in the full-screen editor,
     // replay the live (possibly unsaved) Script body rather than the saved
     // record — running while editing must reflect the edit. Otherwise run the
     // persisted command verbatim.
     const isEditingThisCommand =
       editorTarget?.mode === "edit" &&
-      editorTarget.commandId === rerunSource.id &&
+      editorTarget.commandId === sourceCommand.id &&
       editorLiveScript !== null;
     const target: Command = isEditingThisCommand
-      ? { ...rerunSource, script: editorLiveScript }
-      : rerunSource;
+      ? { ...sourceCommand, script: editorLiveScript }
+      : sourceCommand;
 
     // Re-run in the CURRENT terminal: drop the previous execution (clearing
     // its log) so the re-run doesn't pile up as a separate entry in the
@@ -466,6 +544,32 @@ export function OutputPanel(): ReactElement | null {
       variableValues: active.variableValuesRaw ?? {},
     });
   };
+
+  // Build the recents-strip context menu for one run: rename, pin/unpin, delete.
+  const buildRecentMenu = (exec: Execution): ContextMenuEntry[] => [
+    {
+      id: "rename",
+      label: t("outputPanel.recentMenu.rename"),
+      icon: <EditIcon />,
+      onSelect: () => beginRename(exec),
+    },
+    {
+      id: "pin",
+      label: exec.pinned
+        ? t("outputPanel.recentMenu.unpin")
+        : t("outputPanel.recentMenu.pin"),
+      icon: <PinIcon />,
+      onSelect: () => setPinned(exec.id, !exec.pinned),
+    },
+    { id: "div1", divider: true },
+    {
+      id: "delete",
+      label: t("outputPanel.recentMenu.delete"),
+      icon: <TrashIcon />,
+      danger: true,
+      onSelect: () => clearExecution(exec.id),
+    },
+  ];
 
   const panelStyle =
     consolePosition === "bottom"
@@ -491,7 +595,9 @@ export function OutputPanel(): ReactElement | null {
       <div className="output-panel__header">
         <div className="output-panel__title-row">
           <span className="output-panel__title">
-            {active ? active.commandName : t("outputPanel.defaultTitle")}
+            {active
+              ? (active.customName ?? active.commandName)
+              : t("outputPanel.defaultTitle")}
           </span>
           {active ? (
             <span
@@ -665,27 +771,103 @@ export function OutputPanel(): ReactElement | null {
         </div>
       )}
 
-      {recents.length > 1 ? (
+      {recents.length >= 1 ? (
         <div className="output-panel__recents">
-          {recents.map((exec) => (
-            <button
-              key={exec.id}
-              type="button"
-              className={`output-panel__recent${
-                exec.id === activeExecutionId ? " is-active" : ""
-              }`}
-              onClick={() => setActiveExecution(exec.id)}
-              title={exec.commandName}
-            >
-              <span
-                className={`output-panel__recent-dot output-panel__recent-dot--${exec.status}`}
-                aria-hidden="true"
-              />
-              <span className="output-panel__recent-name">
-                {exec.commandName}
-              </span>
-            </button>
-          ))}
+          {recents.map((exec) => {
+            const displayName = exec.customName ?? exec.commandName;
+            if (renamingId === exec.id) {
+              return (
+                <input
+                  key={exec.id}
+                  type="text"
+                  className="input output-panel__recent-rename"
+                  value={renameDraft}
+                  autoFocus
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitRename();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelRename();
+                    }
+                  }}
+                  aria-label={t("outputPanel.recentMenu.rename")}
+                />
+              );
+            }
+            const isDropTarget = dropTargetId === exec.id && canDropOn(exec.id);
+            return (
+              <button
+                key={exec.id}
+                type="button"
+                draggable
+                className={`output-panel__recent${
+                  exec.id === activeExecutionId ? " is-active" : ""
+                }${exec.pinned ? " output-panel__recent--pinned" : ""}${
+                  draggingId === exec.id ? " is-dragging" : ""
+                }${isDropTarget ? " is-drop-target" : ""}`}
+                onClick={() => setActiveExecution(exec.id)}
+                onContextMenu={(e) =>
+                  show({
+                    event: {
+                      clientX: e.clientX,
+                      clientY: e.clientY,
+                      preventDefault: () => e.preventDefault(),
+                    },
+                    items: buildRecentMenu(exec),
+                  })
+                }
+                onDragStart={(e) => {
+                  setDraggingId(exec.id);
+                  // Required for Firefox to initiate the drag; the payload is
+                  // unused (state holds the dragged id).
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", exec.id);
+                }}
+                onDragOver={(e) => {
+                  // Only accept the drop (and show the move cursor) when the
+                  // target is in the same partition as the dragged run.
+                  if (canDropOn(exec.id)) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dropTargetId !== exec.id) setDropTargetId(exec.id);
+                  } else {
+                    e.dataTransfer.dropEffect = "none";
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dropTargetId === exec.id) setDropTargetId(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleRecentDrop(exec.id);
+                }}
+                onDragEnd={() => {
+                  setDraggingId(null);
+                  setDropTargetId(null);
+                }}
+                title={displayName}
+              >
+                {exec.pinned ? (
+                  <span
+                    className="output-panel__recent-pin"
+                    aria-label={t("outputPanel.pinnedLabel")}
+                    title={t("outputPanel.pinnedLabel")}
+                  >
+                    <PinIcon />
+                  </span>
+                ) : null}
+                <span
+                  className={`output-panel__recent-dot output-panel__recent-dot--${exec.status}`}
+                  aria-hidden="true"
+                />
+                <span className="output-panel__recent-name">{displayName}</span>
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>

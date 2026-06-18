@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import type {
   Execution,
   ExecutionLogLine,
@@ -75,8 +76,14 @@ interface ExecutionState {
    * keyed by the workflow `runId`. Marks it `isWorkflow` so the panel cancels
    * the workflow and hides Re-run, opens the panel, and makes it active —
    * mirroring `startExecution`'s panel behavior. Idempotent on the same id.
+   * `workflowId` is the source workflow's id, captured so the console can
+   * offer "Repeat" on the finished aggregate.
    */
-  startWorkflowExecution: (runId: string, title: string) => void;
+  startWorkflowExecution: (
+    runId: string,
+    title: string,
+    workflowId?: string,
+  ) => void;
   /**
    * Append an app-injected `meta` separator line (step header / exit
    * trailer) to the aggregated workflow execution. No-op if the execution
@@ -103,6 +110,18 @@ interface ExecutionState {
   setConsolePosition: (position: ConsoleDockPosition) => void;
   clearExecution: (id: string) => void;
   clearAll: () => void;
+  /** Set (or clear, with an empty string) the user-facing display name of a
+   *  console run. No-op if the execution does not exist. */
+  renameExecution: (id: string, name: string) => void;
+  /** Pin or unpin a console run. Pinned runs survive Clear and reloads, and
+   *  are kept ahead of unpinned runs in the recents order. */
+  setPinned: (id: string, pinned: boolean) => void;
+  /**
+   * Re-order the recents strip: move `activeId` onto `overId`'s slot. The move
+   * is constrained to a single pinned/unpinned partition — a drag that would
+   * place an unpinned run ahead of a pinned one (or vice versa) is ignored.
+   */
+  reorderRecent: (activeId: string, overId: string) => void;
   /**
    * Clear every TERMINAL execution (success / error / cancelled),
    * keeping any that are still `running` (or `pending`) so an in-flight
@@ -127,18 +146,107 @@ function setStatusIfMissing(
   return patch.status ?? current.status;
 }
 
-function pushRecent(recentIds: string[], id: string): string[] {
-  return [id, ...recentIds.filter((r) => r !== id)].slice(0, MAX_RECENT);
+/**
+ * Prepend `id` to the recents order (a fresh / restarted run goes to the
+ * front), de-duplicating and capping the list. A newly-started run is always
+ * unpinned, so when pinned runs exist it is inserted at the FRONT of the
+ * unpinned block rather than at absolute index 0 — preserving the
+ * "pinned runs stay left" invariant. `pinnedCount` is the number of pinned
+ * ids currently leading `recentIds` (0 when the caller hasn't computed it,
+ * which keeps the old behaviour for the no-pins case).
+ */
+function pushRecent(
+  recentIds: string[],
+  id: string,
+  pinnedCount = 0,
+): string[] {
+  const without = recentIds.filter((r) => r !== id);
+  without.splice(pinnedCount, 0, id);
+  return without.slice(0, MAX_RECENT);
 }
 
-export const useExecutionStore = create<ExecutionState>()((set) => ({
-  executions: {},
-  recentIds: [],
-  activeExecutionId: null,
-  panelOpen: false,
-  panelHeight: DEFAULT_PANEL_HEIGHT,
-  panelWidth: DEFAULT_PANEL_WIDTH,
-  consolePosition: "bottom",
+/** Count pinned ids leading the recents order (after partitioning they are
+ *  always the prefix). */
+function leadingPinnedCount(
+  recentIds: string[],
+  executions: Record<string, Execution>,
+): number {
+  let count = 0;
+  for (const id of recentIds) {
+    if (executions[id]?.pinned) count += 1;
+    else break;
+  }
+  return count;
+}
+
+/**
+ * Re-order `recentIds` so every pinned run comes before every unpinned run,
+ * keeping the relative order WITHIN each group stable. Pinned runs are shown
+ * first (left) in the console recents strip; this is the invariant that
+ * {@link ExecutionState.setPinned} and {@link ExecutionState.reorderRecent}
+ * both maintain.
+ */
+function partitionByPinned(
+  recentIds: string[],
+  executions: Record<string, Execution>,
+): string[] {
+  const pinned: string[] = [];
+  const rest: string[] = [];
+  for (const id of recentIds) {
+    if (executions[id]?.pinned) pinned.push(id);
+    else rest.push(id);
+  }
+  return [...pinned, ...rest];
+}
+
+/**
+ * Move `activeId` to the slot occupied by `overId` within `recentIds`.
+ * The move is REJECTED (returns the array unchanged) when the two ids are not
+ * in the same pinned/unpinned partition — a pinned run can never be ordered
+ * after an unpinned one, and vice versa. Both ids must exist.
+ */
+function moveWithinPartition(
+  recentIds: string[],
+  executions: Record<string, Execution>,
+  activeId: string,
+  overId: string,
+): string[] {
+  if (activeId === overId) return recentIds;
+  const fromIdx = recentIds.indexOf(activeId);
+  const toIdx = recentIds.indexOf(overId);
+  if (fromIdx === -1 || toIdx === -1) return recentIds;
+  // Reject cross-partition moves: keep pinned ahead of unpinned.
+  const activePinned = executions[activeId]?.pinned ?? false;
+  const overPinned = executions[overId]?.pinned ?? false;
+  if (activePinned !== overPinned) return recentIds;
+  const next = [...recentIds];
+  next.splice(fromIdx, 1);
+  next.splice(next.indexOf(overId) + (toIdx > fromIdx ? 1 : 0), 0, activeId);
+  return next;
+}
+
+/**
+ * Persisted slice: ONLY pinned runs survive a reload. We deliberately never
+ * persist the whole store — restoring a `running` execution would resurrect a
+ * zombie process entry with no live event stream behind it. So `partialize`
+ * keeps just the pinned executions and the matching recent-id order; the panel
+ * boots closed and with no active selection.
+ */
+interface PersistedExecutionState {
+  executions: Record<string, Execution>;
+  recentIds: string[];
+}
+
+export const useExecutionStore = create<ExecutionState>()(
+  persist(
+    (set) => ({
+      executions: {},
+      recentIds: [],
+      activeExecutionId: null,
+      panelOpen: false,
+      panelHeight: DEFAULT_PANEL_HEIGHT,
+      panelWidth: DEFAULT_PANEL_WIDTH,
+      consolePosition: "bottom",
 
   startExecution: (id, commandId, commandName, script, shell, variables, env, variableValuesRaw) =>
     set((state) => {
@@ -172,13 +280,13 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
           };
       return {
         executions: { ...state.executions, [id]: execution },
-        recentIds: pushRecent(state.recentIds, id),
+        recentIds: pushRecent(state.recentIds, id, leadingPinnedCount(state.recentIds, state.executions)),
         activeExecutionId: id,
         panelOpen: true,
       };
     }),
 
-  startWorkflowExecution: (runId, title) =>
+  startWorkflowExecution: (runId, title, workflowId) =>
     set((state) => {
       const existing = state.executions[runId];
       // Idempotent: a re-entrant start (e.g. an out-of-order node event
@@ -189,18 +297,20 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
             ...existing,
             commandName: existing.commandName || title,
             isWorkflow: true,
+            workflowId: existing.workflowId ?? workflowId,
           }
         : {
             id: runId,
             commandName: title,
             isWorkflow: true,
+            workflowId,
             status: "running",
             startedAt: Date.now(),
             log: [],
           };
       return {
         executions: { ...state.executions, [runId]: execution },
-        recentIds: pushRecent(state.recentIds, runId),
+        recentIds: pushRecent(state.recentIds, runId, leadingPinnedCount(state.recentIds, state.executions)),
         activeExecutionId: runId,
         panelOpen: true,
       };
@@ -241,7 +351,7 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
         };
         return {
           executions: { ...state.executions, [id]: stub },
-          recentIds: pushRecent(state.recentIds, id),
+          recentIds: pushRecent(state.recentIds, id, leadingPinnedCount(state.recentIds, state.executions)),
           activeExecutionId: state.activeExecutionId ?? id,
           panelOpen: true,
         };
@@ -271,7 +381,7 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
         };
         return {
           executions: { ...state.executions, [id]: stub },
-          recentIds: pushRecent(state.recentIds, id),
+          recentIds: pushRecent(state.recentIds, id, leadingPinnedCount(state.recentIds, state.executions)),
           activeExecutionId: state.activeExecutionId ?? id,
           panelOpen: true,
         };
@@ -302,7 +412,7 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
         };
         return {
           executions: { ...state.executions, [id]: stub },
-          recentIds: pushRecent(state.recentIds, id),
+          recentIds: pushRecent(state.recentIds, id, leadingPinnedCount(state.recentIds, state.executions)),
           activeExecutionId: state.activeExecutionId ?? id,
         };
       }
@@ -355,24 +465,75 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
     }),
 
   clearAll: () =>
-    set({
-      executions: {},
-      recentIds: [],
-      activeExecutionId: null,
+    set((state) => {
+      // "Clear all" keeps pinned runs — the user pinned them precisely so a
+      // bulk clear would not drop them. Everything else is removed.
+      const kept: Record<string, Execution> = {};
+      for (const [id, exec] of Object.entries(state.executions)) {
+        if (exec.pinned) kept[id] = exec;
+      }
+      const recentIds = state.recentIds.filter((id) => kept[id] !== undefined);
+      const activeExecutionId =
+        state.activeExecutionId !== null &&
+        kept[state.activeExecutionId] !== undefined
+          ? state.activeExecutionId
+          : (recentIds[0] ?? null);
+      return { executions: kept, recentIds, activeExecutionId };
     }),
+
+  renameExecution: (id, name) =>
+    set((state) => {
+      const existing = state.executions[id];
+      if (!existing) return {};
+      const trimmed = name.trim();
+      const updated: Execution = {
+        ...existing,
+        // An empty rename clears the custom name, falling back to commandName.
+        customName: trimmed === "" ? undefined : trimmed,
+      };
+      return { executions: { ...state.executions, [id]: updated } };
+    }),
+
+  setPinned: (id, pinned) =>
+    set((state) => {
+      const existing = state.executions[id];
+      if (!existing) return {};
+      const executions = {
+        ...state.executions,
+        [id]: { ...existing, pinned },
+      };
+      // Re-partition so the (un)pinned run lands in the correct block: pinning
+      // moves it into the pinned block (kept ahead of unpinned); unpinning
+      // moves it to the front of the unpinned block.
+      return {
+        executions,
+        recentIds: partitionByPinned(state.recentIds, executions),
+      };
+    }),
+
+  reorderRecent: (activeId, overId) =>
+    set((state) => ({
+      recentIds: moveWithinPartition(
+        state.recentIds,
+        state.executions,
+        activeId,
+        overId,
+      ),
+    })),
 
   clearTerminated: () =>
     set((state) => {
-      // Keep only the executions that are still in progress.
+      // Keep executions that are still in progress OR pinned. A pinned run
+      // is never auto-cleared so the user's saved entries persist.
       const kept: Record<string, Execution> = {};
       for (const [id, exec] of Object.entries(state.executions)) {
-        if (isActiveStatus(exec.status)) {
+        if (isActiveStatus(exec.status) || exec.pinned) {
           kept[id] = exec;
         }
       }
       const recentIds = state.recentIds.filter((id) => kept[id] !== undefined);
       // If the active execution was cleared, fall back to the most recent
-      // surviving (running) one, or null when nothing is left.
+      // surviving one, or null when nothing is left.
       const activeStillPresent =
         state.activeExecutionId !== null &&
         kept[state.activeExecutionId] !== undefined;
@@ -381,4 +542,22 @@ export const useExecutionStore = create<ExecutionState>()((set) => ({
         : (recentIds[0] ?? null);
       return { executions: kept, recentIds, activeExecutionId };
     }),
-}));
+    }),
+    {
+      name: "procmix-executions",
+      // Persist ONLY pinned runs (see PersistedExecutionState). Restored
+      // entries are always terminal — a pinned run is pinned after it has
+      // finished — so no zombie "running" state is reintroduced.
+      partialize: (state): PersistedExecutionState => {
+        const executions: Record<string, Execution> = {};
+        for (const [id, exec] of Object.entries(state.executions)) {
+          if (exec.pinned) executions[id] = exec;
+        }
+        const recentIds = state.recentIds.filter(
+          (id) => executions[id] !== undefined,
+        );
+        return { executions, recentIds };
+      },
+    },
+  ),
+);

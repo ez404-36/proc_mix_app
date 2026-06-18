@@ -30,10 +30,12 @@ export type ListSortKey = CommandSortKey | WorkflowSortKey | ScheduleSortKey;
 
 /**
  * How a list renders its items:
- *   - "tiles" → the card grid (no pagination, whole list shown).
- *   - "table" → a paginated table.
+ *   - "tiles"   → the expanded card grid (description + labelled buttons).
+ *   - "compact" → a denser card grid: no description, icon-only Run/View
+ *                 buttons placed before the favorite toggle.
+ *   - "table"   → a paginated table.
  */
-export type ViewMode = "tiles" | "table";
+export type ViewMode = "tiles" | "compact" | "table";
 
 /** Page size for the table view. Only these two sizes are offered. */
 export type PageSize = 10 | 25;

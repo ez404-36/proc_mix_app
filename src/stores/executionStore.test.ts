@@ -304,6 +304,116 @@ describe("executionStore.clearAll", () => {
   });
 });
 
+describe("executionStore pin / rename (console recents)", () => {
+  function finish(id: string): void {
+    useExecutionStore
+      .getState()
+      .finishExecution(id, { status: "success", finishedAt: Date.now() });
+  }
+
+  it("renameExecution sets a custom name; empty clears it", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "Orig");
+    useExecutionStore.getState().renameExecution("e1", "  My run  ");
+    expect(useExecutionStore.getState().executions["e1"].customName).toBe(
+      "My run",
+    );
+    useExecutionStore.getState().renameExecution("e1", "  ");
+    expect(
+      useExecutionStore.getState().executions["e1"].customName,
+    ).toBeUndefined();
+  });
+
+  it("setPinned marks/unmarks the run as pinned", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "n");
+    useExecutionStore.getState().setPinned("e1", true);
+    expect(useExecutionStore.getState().executions["e1"].pinned).toBe(true);
+    useExecutionStore.getState().setPinned("e1", false);
+    expect(useExecutionStore.getState().executions["e1"].pinned).toBe(false);
+  });
+
+  it("clearTerminated keeps a pinned terminal run", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "keep");
+    useExecutionStore.getState().startExecution("e2", undefined, "drop");
+    finish("e1");
+    finish("e2");
+    useExecutionStore.getState().setPinned("e1", true);
+    useExecutionStore.getState().clearTerminated();
+    const state = useExecutionStore.getState();
+    expect(state.executions["e1"]).toBeDefined();
+    expect(state.executions["e2"]).toBeUndefined();
+    expect(state.recentIds).toEqual(["e1"]);
+  });
+
+  it("clearAll keeps a pinned run and drops the rest", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "keep");
+    useExecutionStore.getState().startExecution("e2", undefined, "drop");
+    useExecutionStore.getState().setPinned("e1", true);
+    useExecutionStore.getState().clearAll();
+    const state = useExecutionStore.getState();
+    expect(Object.keys(state.executions)).toEqual(["e1"]);
+    expect(state.recentIds).toEqual(["e1"]);
+  });
+
+  it("pinning moves a run ahead of unpinned runs in recents", () => {
+    // recents order is newest-first: e3, e2, e1.
+    useExecutionStore.getState().startExecution("e1", undefined, "a");
+    useExecutionStore.getState().startExecution("e2", undefined, "b");
+    useExecutionStore.getState().startExecution("e3", undefined, "c");
+    // Pin the oldest — it must jump to the front of the strip.
+    useExecutionStore.getState().setPinned("e1", true);
+    expect(useExecutionStore.getState().recentIds).toEqual(["e1", "e3", "e2"]);
+  });
+
+  it("a new run is inserted after the pinned block, not at index 0", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "a");
+    useExecutionStore.getState().setPinned("e1", true);
+    useExecutionStore.getState().startExecution("e2", undefined, "b");
+    // e1 stays pinned-left; the fresh e2 lands at the front of the unpinned block.
+    expect(useExecutionStore.getState().recentIds).toEqual(["e1", "e2"]);
+  });
+});
+
+describe("executionStore.reorderRecent (console recents drag-and-drop)", () => {
+  it("reorders two unpinned runs within their partition", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "a");
+    useExecutionStore.getState().startExecution("e2", undefined, "b");
+    useExecutionStore.getState().startExecution("e3", undefined, "c");
+    // order: e3, e2, e1. Move e3 onto e1's slot (to the end).
+    useExecutionStore.getState().reorderRecent("e3", "e1");
+    expect(useExecutionStore.getState().recentIds).toEqual(["e2", "e1", "e3"]);
+  });
+
+  it("rejects moving an unpinned run across the pinned boundary", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "a");
+    useExecutionStore.getState().startExecution("e2", undefined, "b");
+    useExecutionStore.getState().setPinned("e1", true);
+    // order: e1 (pinned), e2 (unpinned). Try to move e2 onto e1 — must no-op.
+    const before = [...useExecutionStore.getState().recentIds];
+    useExecutionStore.getState().reorderRecent("e2", "e1");
+    expect(useExecutionStore.getState().recentIds).toEqual(before);
+  });
+
+  it("rejects moving a pinned run across the boundary onto an unpinned one", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "a");
+    useExecutionStore.getState().startExecution("e2", undefined, "b");
+    useExecutionStore.getState().setPinned("e1", true);
+    const before = [...useExecutionStore.getState().recentIds];
+    useExecutionStore.getState().reorderRecent("e1", "e2");
+    expect(useExecutionStore.getState().recentIds).toEqual(before);
+  });
+
+  it("reorders within the pinned partition", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "a");
+    useExecutionStore.getState().startExecution("e2", undefined, "b");
+    useExecutionStore.getState().setPinned("e1", true);
+    useExecutionStore.getState().setPinned("e2", true);
+    // Both pinned. order: e2, e1 (e2 pinned later → front of pinned block).
+    const order = useExecutionStore.getState().recentIds;
+    useExecutionStore.getState().reorderRecent(order[0], order[1]);
+    expect(useExecutionStore.getState().recentIds).toEqual([order[1], order[0]]);
+  });
+});
+
 describe("executionStore.startWorkflowExecution (aggregated process)", () => {
   it("should create one execution keyed by the run id, marked isWorkflow, and open the panel", () => {
     useExecutionStore.getState().startWorkflowExecution("run-1", "My Flow");

@@ -92,6 +92,14 @@ interface HistoryState {
   filter: HistoryStoreFilter;
   loading: boolean;
   /**
+   * Ids of history rows the user has ticked for bulk deletion. Transient
+   * (never persisted) and scoped to the visible page: any navigation that
+   * changes the rendered slice (setPage / setFilter / resetFilter / load)
+   * clears it, so a checkbox can never refer to a row that is no longer on
+   * screen.
+   */
+  selectedIds: string[];
+  /**
    * Last error message surfaced by an IPC failure. Cleared on the next
    * successful `load`. Components that want to display the error use a
    * stable selector against this field — we don't surface every error
@@ -116,6 +124,17 @@ interface HistoryState {
     executionId: string,
     patch: RunCompletionPatch,
   ) => void;
+  /** Toggle a row's membership in the bulk-delete selection. */
+  toggleSelected: (eventId: string) => void;
+  /** Drop the entire bulk-delete selection. */
+  clearSelection: () => void;
+  /**
+   * Delete every currently-selected history row from SQLite, then clear the
+   * selection and reload the page so the list and total reflect what remains.
+   * A no-op when nothing is selected. Surfaces a toast on failure (mirrors
+   * {@link HistoryState.clearAll}).
+   */
+  deleteSelected: () => Promise<void>;
   undoEdit: (eventId: string) => Promise<void>;
   restoreDeleted: (eventId: string) => Promise<void>;
   /**
@@ -191,6 +210,7 @@ export const useHistoryStore = create<HistoryState>()((set, get) => ({
   filter: EMPTY_FILTER,
   loading: false,
   error: undefined,
+  selectedIds: [],
   load: async () => {
     const { filter, page, pageSize } = get();
     set({ loading: true, error: undefined });
@@ -206,6 +226,9 @@ export const useHistoryStore = create<HistoryState>()((set, get) => ({
         page: result.page,
         pageSize: result.pageSize,
         loading: false,
+        // The visible slice just changed — any prior tick selection may now
+        // refer to rows that are no longer rendered, so reset it.
+        selectedIds: [],
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -229,6 +252,34 @@ export const useHistoryStore = create<HistoryState>()((set, get) => ({
     const safe = Math.max(1, page);
     set({ page: safe });
     void get().load();
+  },
+  toggleSelected: (eventId) => {
+    set((s) => ({
+      selectedIds: s.selectedIds.includes(eventId)
+        ? s.selectedIds.filter((id) => id !== eventId)
+        : [...s.selectedIds, eventId],
+    }));
+  },
+  clearSelection: () => set({ selectedIds: [] }),
+  deleteSelected: async () => {
+    const ids = get().selectedIds;
+    if (ids.length === 0) return;
+    try {
+      // Delete sequentially: the repository wraps each call in its own
+      // statement and the volume here is bounded by the page size, so a
+      // parallel burst buys nothing and a sequential loop keeps the failure
+      // point obvious. A single failure aborts the rest and surfaces a toast.
+      for (const id of ids) {
+        await deleteHistoryEventInDb(id);
+      }
+      set({ selectedIds: [] });
+      await get().load();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Message.error(
+        `${i18n.t("history.deleteSelectedFailed", { defaultValue: "Failed to delete selected entries" })}: ${msg}`,
+      );
+    }
   },
   applyRunCompletion: (executionId, patch) => {
     set((s) => {

@@ -610,6 +610,45 @@ select {
   margin-top: 4px;
 }
 
+/* Compact tile mode: a denser grid of smaller cards with no description and
+   icon-only Run/View buttons sitting next to the favorite toggle in the head. */
+.command-list--compact {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.list-tile--compact {
+  padding: 10px 12px;
+  gap: 6px;
+}
+
+/* The title block flexes so the head-action cluster hugs the right edge. */
+.list-tile__heading {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.list-tile--compact .list-tile__head {
+  align-items: center;
+  /* No bottom action row in compact, so the head needn't grow to push it down. */
+  flex: 0 0 auto;
+}
+
+.list-tile--compact .list-tile__title {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Icon Run/View buttons + favorite toggle, grouped at the right of the head. */
+.list-tile__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1675,6 +1714,46 @@ body.is-editor-fullscreen .output-panel {
   text-overflow: ellipsis;
 }
 
+/* Pin glyph shown at the left of a pinned recent button. Inherits the chip's
+   text color via currentColor; sized to match the status dot. */
+.output-panel__recent-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--color-primary);
+}
+
+.output-panel__recent--pinned {
+  border-color: var(--color-primary);
+}
+
+/* Drag-and-drop reordering of the recents strip. The dragged chip dims; a
+   valid drop target shows an accent edge marking where it will land. */
+.output-panel__recent[draggable="true"] {
+  cursor: grab;
+}
+
+.output-panel__recent.is-dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.output-panel__recent.is-drop-target {
+  border-color: var(--color-primary);
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+
+/* Inline rename field replacing a recent button while editing its title. */
+.output-panel__recent-rename {
+  width: 160px;
+  flex: none;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
 /* Shortcut settings */
 .shortcut-list {
   display: flex;
@@ -2266,6 +2345,12 @@ body.is-editor-fullscreen .output-panel {
   flex-shrink: 0;
   white-space: nowrap;
   cursor: pointer;
+}
+
+/* Compact schedule tile: the enable toggle drops its text label and sits in
+   the head-action cluster next to the icon Run/View buttons. */
+.list-schedule-card__toggle--compact {
+  gap: 0;
 }
 
 /* Run metadata in the card (next run / last run / run count). Stacked so the
@@ -4211,6 +4296,36 @@ body.is-editor-fullscreen .output-panel {
   gap: 10px;
   min-width: 0;
   flex: 1;
+}
+
+/* Bulk-delete checkbox column. The plain row is a horizontal flex container,
+   so the checkbox sits at the start with the existing 16px gap. */
+.history-row__select {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--color-primary);
+}
+
+/* A scheduled (expandable) row is a column container; when it also carries a
+   selection checkbox we lay the checkbox alongside the disclosure instead of
+   above it, and let the disclosure take the remaining width. The checkbox
+   aligns with the summary's first line via top padding matching the summary. */
+.history-row--scheduled.history-row--selectable {
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.history-row--scheduled.history-row--selectable .history-row__select {
+  margin: 16px 0 0 16px;
+  align-self: flex-start;
+}
+
+.history-row--scheduled.history-row--selectable .history-row__disclosure {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Action-icon column: a colored glyph (not text) identifying the history

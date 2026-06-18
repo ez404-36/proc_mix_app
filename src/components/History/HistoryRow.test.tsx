@@ -32,9 +32,27 @@ vi.mock("../../utils/commandRepository", () => ({
 }));
 
 import "../../i18n";
+import type { ReactElement } from "react";
 import { useCommandStore } from "../../stores/commandStore";
 import type { Command, HistoryEvent } from "../../types";
 import { HistoryRow } from "./HistoryRow";
+
+/**
+ * Render a row with the bulk-selection props defaulted to unselected /
+ * no-op. Tests that exercise selection pass an explicit override.
+ */
+function rowEl(
+  event: HistoryEvent,
+  props?: { selected?: boolean; onToggleSelect?: (id: string) => void },
+): ReactElement {
+  return (
+    <HistoryRow
+      event={event}
+      selected={props?.selected ?? false}
+      onToggleSelect={props?.onToggleSelect ?? (() => {})}
+    />
+  );
+}
 
 const sampleCommand: Command = {
   id: "cmd-1",
@@ -147,13 +165,13 @@ describe("HistoryRow — Undo button visibility (commandEdited)", () => {
     useCommandStore.setState({
       commands: [{ ...sampleCommand, id: "cmd-x" }],
     });
-    render(<HistoryRow event={commandEditedEvent("e1", "cmd-x")} />);
+    render(rowEl(commandEditedEvent("e1", "cmd-x")));
     expect(screen.getByRole("button", { name: /undo/i })).toBeTruthy();
   });
 
   it("hides Undo when the command was later deleted", () => {
     useCommandStore.setState({ commands: [] });
-    render(<HistoryRow event={commandEditedEvent("e1", "cmd-x")} />);
+    render(rowEl(commandEditedEvent("e1", "cmd-x")));
     expect(screen.queryByRole("button", { name: /undo/i })).toBeNull();
   });
 });
@@ -161,7 +179,7 @@ describe("HistoryRow — Undo button visibility (commandEdited)", () => {
 describe("HistoryRow — Restore button visibility (commandDeleted)", () => {
   it("shows Restore when the command is currently absent", () => {
     useCommandStore.setState({ commands: [] });
-    render(<HistoryRow event={commandDeletedEvent("e1", "cmd-x")} />);
+    render(rowEl(commandDeletedEvent("e1", "cmd-x")));
     expect(screen.getByRole("button", { name: /restore/i })).toBeTruthy();
   });
 
@@ -169,7 +187,7 @@ describe("HistoryRow — Restore button visibility (commandDeleted)", () => {
     useCommandStore.setState({
       commands: [{ ...sampleCommand, id: "cmd-x" }],
     });
-    render(<HistoryRow event={commandDeletedEvent("e1", "cmd-x")} />);
+    render(rowEl(commandDeletedEvent("e1", "cmd-x")));
     expect(screen.queryByRole("button", { name: /restore/i })).toBeNull();
   });
 });
@@ -179,7 +197,7 @@ describe("HistoryRow — non-undoable kinds have no action buttons", () => {
     useCommandStore.setState({
       commands: [{ ...sampleCommand, id: "cmd-x" }],
     });
-    render(<HistoryRow event={commandCreatedEvent("e1", "cmd-x")} />);
+    render(rowEl(commandCreatedEvent("e1", "cmd-x")));
     expect(screen.queryByRole("button", { name: /undo/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /restore/i })).toBeNull();
   });
@@ -190,23 +208,43 @@ describe("HistoryRow — button click dispatches to the store", () => {
     useCommandStore.setState({
       commands: [{ ...sampleCommand, id: "cmd-x" }],
     });
-    render(<HistoryRow event={commandEditedEvent("e-undo", "cmd-x")} />);
+    render(rowEl(commandEditedEvent("e-undo", "cmd-x")));
     fireEvent.click(screen.getByRole("button", { name: /undo/i }));
     expect(undoEditMock).toHaveBeenCalledWith("e-undo");
   });
 
   it("Restore click calls restoreDeleted with the event id", () => {
     useCommandStore.setState({ commands: [] });
-    render(<HistoryRow event={commandDeletedEvent("e-restore", "cmd-x")} />);
+    render(rowEl(commandDeletedEvent("e-restore", "cmd-x")));
     fireEvent.click(screen.getByRole("button", { name: /restore/i }));
     expect(restoreDeletedMock).toHaveBeenCalledWith("e-restore");
+  });
+});
+
+describe("HistoryRow — bulk-selection checkbox", () => {
+  it("renders a checkbox reflecting the selected prop", () => {
+    render(rowEl(commandCreatedEvent("e-sel", "cmd-x"), { selected: true }));
+    const box = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+  });
+
+  it("calls onToggleSelect with the event id when ticked", () => {
+    const onToggle = vi.fn();
+    render(
+      rowEl(commandCreatedEvent("e-sel2", "cmd-x"), {
+        selected: false,
+        onToggleSelect: onToggle,
+      }),
+    );
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(onToggle).toHaveBeenCalledWith("e-sel2");
   });
 });
 
 describe("HistoryRow — run output disclosure (commandRun / workflowRun)", () => {
   it("renders an expandable disclosure with the captured output for a workflowRun WITH output", () => {
     const { container } = render(
-      <HistoryRow event={workflowRunEvent("e-wf", { withOutput: true })} />,
+      rowEl(workflowRunEvent("e-wf", { withOutput: true })),
     );
     // The row becomes a <details> disclosure revealing the persisted output.
     const details = container.querySelector("details.history-row__disclosure");
@@ -216,7 +254,7 @@ describe("HistoryRow — run output disclosure (commandRun / workflowRun)", () =
 
   it("renders a captured output disclosure for a commandRun WITH output", () => {
     const { container } = render(
-      <HistoryRow event={commandRunEvent("e-cmd", { withOutput: true })} />,
+      rowEl(commandRunEvent("e-cmd", { withOutput: true })),
     );
     expect(
       container.querySelector("details.history-row__disclosure"),
@@ -226,7 +264,7 @@ describe("HistoryRow — run output disclosure (commandRun / workflowRun)", () =
 
   it("does NOT render a disclosure for a workflowRun WITHOUT persisted output (older row)", () => {
     const { container } = render(
-      <HistoryRow event={workflowRunEvent("e-wf2", { withOutput: false })} />,
+      rowEl(workflowRunEvent("e-wf2", { withOutput: false })),
     );
     // A run with no persisted output stays a plain, non-expandable row so we
     // never show an empty expander for pre-persistence history.
@@ -235,7 +273,7 @@ describe("HistoryRow — run output disclosure (commandRun / workflowRun)", () =
 
   it("does NOT render a disclosure for a commandRun WITHOUT persisted output", () => {
     const { container } = render(
-      <HistoryRow event={commandRunEvent("e-cmd2", { withOutput: false })} />,
+      rowEl(commandRunEvent("e-cmd2", { withOutput: false })),
     );
     expect(container.querySelector("details")).toBeNull();
   });

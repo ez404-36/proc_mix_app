@@ -88,6 +88,10 @@ function ActionIcon({ kind }: { kind: HistoryEvent["kind"] }): ReactElement {
 
 interface HistoryRowProps {
   event: HistoryEvent;
+  /** Whether this row is ticked for bulk deletion. */
+  selected: boolean;
+  /** Toggle this row's bulk-delete selection. */
+  onToggleSelect: (eventId: string) => void;
 }
 
 /**
@@ -111,7 +115,11 @@ function kindKey(event: HistoryEvent): `history.kinds.${HistoryEvent["kind"]}` {
   return `history.kinds.${event.kind}` as const;
 }
 
-export function HistoryRow({ event }: HistoryRowProps): ReactElement {
+export function HistoryRow({
+  event,
+  selected,
+  onToggleSelect,
+}: HistoryRowProps): ReactElement {
   const { t } = useTranslation();
   const undoEdit = useHistoryStore((s) => s.undoEdit);
   const restoreDeleted = useHistoryStore((s) => s.restoreDeleted);
@@ -173,6 +181,21 @@ export function HistoryRow({ event }: HistoryRowProps): ReactElement {
       </span>
     );
   }
+
+  // Bulk-delete checkbox. Rendered as a direct child of the row's wrapper
+  // (a sibling of any `<details>` summary) so a click toggles only the
+  // selection, never the disclosure. `stopPropagation` guards the run-row
+  // case where the surrounding `<summary>` would otherwise toggle on click.
+  const selectBox = (
+    <input
+      type="checkbox"
+      className="history-row__select"
+      checked={selected}
+      onChange={() => onToggleSelect(event.id)}
+      onClick={(e) => e.stopPropagation()}
+      aria-label={t("history.selectRow")}
+    />
+  );
 
   const icon = (
     <span
@@ -241,7 +264,8 @@ export function HistoryRow({ event }: HistoryRowProps): ReactElement {
 
   if (runDetail !== undefined) {
     return (
-      <li className="history-row history-row--scheduled">
+      <li className="history-row history-row--scheduled history-row--selectable">
+        {selectBox}
         <details className="history-row__disclosure">
           <summary className="history-row__summary">
             <div className="history-row__main">
@@ -261,7 +285,8 @@ export function HistoryRow({ event }: HistoryRowProps): ReactElement {
   }
 
   return (
-    <li className="history-row">
+    <li className="history-row history-row--selectable">
+      {selectBox}
       <div className="history-row__main">
         {icon}
         {title}

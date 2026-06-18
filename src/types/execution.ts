@@ -197,4 +197,23 @@ export interface Execution {
    * OutputPanel "Result" tab. Absent for commands without a schema.
    */
   result?: ExtractedResult;
+  /**
+   * Source workflow id for a workflow aggregate (`isWorkflow === true`).
+   * Captured at run start so the console can offer "Repeat" on a finished
+   * workflow run — looking the workflow up by id and re-triggering it.
+   * Absent for plain command executions.
+   */
+  workflowId?: string;
+  /**
+   * User-supplied display name for this run's console entry, set via the
+   * recents context-menu "Rename" action. When present it overrides
+   * {@link Execution.commandName} in the recents strip and panel title.
+   */
+  customName?: string;
+  /**
+   * Whether the user pinned this run in the console. A pinned run is never
+   * removed by "Clear" (terminated or all) and is persisted across restarts
+   * (see `executionStore`'s persist config) so it survives reloads.
+   */
+  pinned?: boolean;
 }

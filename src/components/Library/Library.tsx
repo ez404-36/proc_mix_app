@@ -78,6 +78,8 @@ interface CommandCardProps {
   onView: (cmd: Command) => void;
   /** Create a copy of the command and open its editor. */
   onDuplicate: (cmd: Command) => void;
+  /** Render the dense layout: no description, icon-only Run/View buttons. */
+  compact?: boolean;
 }
 
 function buildCommandCardMenuItems(
@@ -149,6 +151,7 @@ function CommandCard({
   onEdit,
   onView,
   onDuplicate,
+  compact = false,
 }: CommandCardProps): ReactElement {
   const { t } = useTranslation();
   const { show } = useContextMenu();
@@ -201,27 +204,62 @@ function CommandCard({
 
   return (
     <div
-      className="list-tile list-tile--command"
+      className={`list-tile list-tile--command${compact ? " list-tile--compact" : ""}`}
       onContextMenu={handleContextMenu}
       onDoubleClick={handleDoubleClick}
     >
       <div className="list-tile__head">
-        <div>
+        <div className="list-tile__heading">
           <h3 className="list-tile__title">{displayName}</h3>
-          {displayDesc ? (
+          {!compact && displayDesc ? (
             <p className="list-tile__desc">{displayDesc}</p>
           ) : null}
         </div>
-        <button
-          type="button"
-          className={`favorite-toggle${isFavorite ? " is-on" : ""}`}
-          onClick={handleFavoriteClick}
-          onDoubleClick={(e) => e.stopPropagation()}
-          aria-label={favoriteLabel}
-          title={favoriteLabel}
-        >
-          {isFavorite ? "♥" : "♡"}
-        </button>
+        {compact ? (
+          <div className="list-tile__head-actions">
+            <button
+              type="button"
+              className="btn btn--run btn--icon"
+              onClick={handleRunClick}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={t("common.run")}
+              title={t("common.run")}
+            >
+              <RunIcon />
+            </button>
+            <button
+              type="button"
+              className="btn btn--view btn--icon"
+              onClick={handleViewClick}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={t("library.view")}
+              title={t("library.view")}
+            >
+              <ViewIcon />
+            </button>
+            <button
+              type="button"
+              className={`favorite-toggle${isFavorite ? " is-on" : ""}`}
+              onClick={handleFavoriteClick}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={favoriteLabel}
+              title={favoriteLabel}
+            >
+              {isFavorite ? "♥" : "♡"}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className={`favorite-toggle${isFavorite ? " is-on" : ""}`}
+            onClick={handleFavoriteClick}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={favoriteLabel}
+            title={favoriteLabel}
+          >
+            {isFavorite ? "♥" : "♡"}
+          </button>
+        )}
       </div>
       <div className="list-tile__meta">
         {cmd.shell ? <span className="shell-badge">{cmd.shell}</span> : null}
@@ -234,28 +272,30 @@ function CommandCard({
           </span>
         ))}
       </div>
-      <div className="list-tile__actions">
-        <button
-          type="button"
-          className="btn btn--run"
-          onClick={handleRunClick}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <RunIcon />
-          {t("common.run")}
-        </button>
-        <button
-          type="button"
-          className="btn btn--view"
-          onClick={handleViewClick}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <span className="btn--view-icon">
-            <ViewIcon />
-          </span>
-          {t("library.view")}
-        </button>
-      </div>
+      {!compact ? (
+        <div className="list-tile__actions">
+          <button
+            type="button"
+            className="btn btn--run"
+            onClick={handleRunClick}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <RunIcon />
+            {t("common.run")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--view"
+            onClick={handleViewClick}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <span className="btn--view-icon">
+              <ViewIcon />
+            </span>
+            {t("library.view")}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -267,6 +307,8 @@ interface WorkflowCardProps {
   onEdit: (workflow: Workflow) => void;
   /** Double-click opens the read-only view modal (vs. explicit Edit). */
   onView: (workflow: Workflow) => void;
+  /** Render the dense layout: no description, icon-only Run/View buttons. */
+  compact?: boolean;
 }
 
 function buildWorkflowCardMenuItems(
@@ -320,6 +362,7 @@ function WorkflowCard({
   onDelete,
   onEdit,
   onView,
+  compact = false,
 }: WorkflowCardProps): ReactElement {
   const { t } = useTranslation();
   const { show } = useContextMenu();
@@ -365,27 +408,62 @@ function WorkflowCard({
 
   return (
     <div
-      className="list-tile list-tile--workflow"
+      className={`list-tile list-tile--workflow${compact ? " list-tile--compact" : ""}`}
       onContextMenu={handleContextMenu}
       onDoubleClick={handleDoubleClick}
     >
       <div className="list-tile__head">
-        <div>
+        <div className="list-tile__heading">
           <h3 className="list-tile__title">{workflow.name}</h3>
-          {workflow.description ? (
+          {!compact && workflow.description ? (
             <p className="list-tile__desc">{workflow.description}</p>
           ) : null}
         </div>
-        <button
-          type="button"
-          className={`favorite-toggle${workflow.favorite ? " is-on" : ""}`}
-          onClick={handleFavoriteClick}
-          onDoubleClick={(e) => e.stopPropagation()}
-          aria-label={favoriteLabel}
-          title={favoriteLabel}
-        >
-          {workflow.favorite ? "♥" : "♡"}
-        </button>
+        {compact ? (
+          <div className="list-tile__head-actions">
+            <button
+              type="button"
+              className="btn btn--run btn--icon"
+              onClick={handleRunClick}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={t("workflow.run")}
+              title={t("workflow.run")}
+            >
+              <RunIcon />
+            </button>
+            <button
+              type="button"
+              className="btn btn--view btn--icon"
+              onClick={handleViewClick}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={t("workflow.view")}
+              title={t("workflow.view")}
+            >
+              <ViewIcon />
+            </button>
+            <button
+              type="button"
+              className={`favorite-toggle${workflow.favorite ? " is-on" : ""}`}
+              onClick={handleFavoriteClick}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={favoriteLabel}
+              title={favoriteLabel}
+            >
+              {workflow.favorite ? "♥" : "♡"}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className={`favorite-toggle${workflow.favorite ? " is-on" : ""}`}
+            onClick={handleFavoriteClick}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={favoriteLabel}
+            title={favoriteLabel}
+          >
+            {workflow.favorite ? "♥" : "♡"}
+          </button>
+        )}
       </div>
       <div className="list-tile__meta">
         {workflow.tags.map((tag) => (
@@ -394,28 +472,30 @@ function WorkflowCard({
           </span>
         ))}
       </div>
-      <div className="list-tile__actions">
-        <button
-          type="button"
-          className="btn btn--run"
-          onClick={handleRunClick}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <RunIcon />
-          {t("workflow.run")}
-        </button>
-        <button
-          type="button"
-          className="btn btn--view"
-          onClick={handleViewClick}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <span className="btn--view-icon">
-            <ViewIcon />
-          </span>
-          {t("workflow.view")}
-        </button>
-      </div>
+      {!compact ? (
+        <div className="list-tile__actions">
+          <button
+            type="button"
+            className="btn btn--run"
+            onClick={handleRunClick}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <RunIcon />
+            {t("workflow.run")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--view"
+            onClick={handleViewClick}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <span className="btn--view-icon">
+              <ViewIcon />
+            </span>
+            {t("workflow.view")}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -565,6 +645,8 @@ interface CommandGroupSectionProps {
   onEdit: (cmd: Command) => void;
   onView: (cmd: Command) => void;
   onDuplicate: (cmd: Command) => void;
+  /** Render member cards in the dense compact layout. */
+  compact: boolean;
 }
 
 /** A collapsible category section in the grouped Commands view. */
@@ -578,6 +660,7 @@ function CommandGroupSection({
   onEdit,
   onView,
   onDuplicate,
+  compact,
 }: CommandGroupSectionProps): ReactElement {
   return (
     <section className="list-group">
@@ -595,7 +678,7 @@ function CommandGroupSection({
       </button>
       {isOpen ? (
         <div className="list-group__body">
-          <div className="command-list">
+          <div className={`command-list${compact ? " command-list--compact" : ""}`}>
             {group.commands.map((cmd) => (
               <CommandCard
                 key={cmd.id}
@@ -606,6 +689,7 @@ function CommandGroupSection({
                 onEdit={onEdit}
                 onView={onView}
                 onDuplicate={onDuplicate}
+                compact={compact}
               />
             ))}
           </div>
@@ -823,6 +907,7 @@ function CommandsTab(): ReactElement {
   };
 
   const showTable = view.mode === "table" && !view.grouped;
+  const compact = view.mode === "compact";
 
   return (
     <>
@@ -855,16 +940,19 @@ function CommandsTab(): ReactElement {
           }}
           mode={view.mode}
           onModeChange={(mode) => {
-            // Choosing a display mode is mutually exclusive with grouping:
-            // grouping always renders as tiles, so selecting tiles/table
-            // turns grouping off.
-            updateView({ mode, grouped: false });
+            // Grouping is supported in both tile layouts (tiles / compact) but
+            // not in the table view. Switching to table therefore turns
+            // grouping off; switching between tile layouts keeps it.
+            updateView(mode === "table" ? { mode, grouped: false } : { mode });
           }}
           grouped={view.grouped}
           onGroupedChange={(grouped) => {
-            // Grouping always renders as tiles — force tiles mode on so the
-            // controls don't show a stale "table" selection while grouped.
-            updateView({ grouped, mode: grouped ? "tiles" : view.mode });
+            // Grouping renders as tiles; if the user enables it while in table
+            // mode, fall back to the expanded tile layout. A compact tile mode
+            // is preserved (grouped compact tiles are valid).
+            const nextMode =
+              grouped && view.mode === "table" ? "tiles" : view.mode;
+            updateView({ grouped, mode: nextMode });
             setPage(1);
           }}
         />
@@ -920,6 +1008,7 @@ function CommandsTab(): ReactElement {
             onEdit={handleEdit}
             onView={handleView}
             onDuplicate={handleDuplicate}
+            compact={compact}
           />
         ))
       ) : showTable ? (
@@ -942,7 +1031,7 @@ function CommandsTab(): ReactElement {
           />
         </>
       ) : (
-        <div className="command-list">
+        <div className={`command-list${compact ? " command-list--compact" : ""}`}>
           {sorted.map((cmd) => (
             <CommandCard
               key={cmd.id}
@@ -953,6 +1042,7 @@ function CommandsTab(): ReactElement {
               onEdit={handleEdit}
               onView={handleView}
               onDuplicate={handleDuplicate}
+              compact={compact}
             />
           ))}
         </div>
@@ -1125,6 +1215,7 @@ function WorkflowsTab(): ReactElement {
   );
 
   const showTable = workflowView.mode === "table";
+  const compact = workflowView.mode === "compact";
 
   const handleSearch = (e: ChangeEvent<HTMLInputElement>): void => {
     setQuery(e.target.value);
@@ -1209,7 +1300,7 @@ function WorkflowsTab(): ReactElement {
           />
         </>
       ) : (
-        <div className="command-list">
+        <div className={`command-list${compact ? " command-list--compact" : ""}`}>
           {sorted.map((workflow) => (
             <WorkflowCard
               key={workflow.id}
@@ -1218,6 +1309,7 @@ function WorkflowsTab(): ReactElement {
               onDelete={requestDelete}
               onEdit={handleEdit}
               onView={handleView}
+              compact={compact}
             />
           ))}
         </div>

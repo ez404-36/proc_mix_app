@@ -248,7 +248,9 @@ async function registerStartedRun(
   useWorkflowStore.getState().markWorkflowRun(workflow.id);
   // The single aggregated terminal process for this run; every node's output
   // folds into it (see triggerWorkflowRun for the full rationale).
-  useExecutionStore.getState().startWorkflowExecution(runId, workflow.name);
+  useExecutionStore
+    .getState()
+    .startWorkflowExecution(runId, workflow.name, workflow.id);
   // AWAIT the history insert so the row exists before the bridge's terminal
   // event tries to finalize it. A history-write failure must not abort the run.
   try {

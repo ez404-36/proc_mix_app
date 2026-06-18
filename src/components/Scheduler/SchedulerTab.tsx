@@ -141,6 +141,8 @@ interface ScheduleCardProps {
   onToggle: (schedule: Schedule) => void;
   onEdit: (schedule: Schedule) => void;
   onDelete: (schedule: Schedule) => void;
+  /** Render the dense layout: no cron/run details, icon-only Run/View buttons. */
+  compact?: boolean;
 }
 
 function buildScheduleCardMenuItems(
@@ -192,6 +194,7 @@ function ScheduleCard({
   onToggle,
   onEdit,
   onDelete,
+  compact = false,
 }: ScheduleCardProps): ReactElement {
   const { t } = useTranslation();
   const { show } = useContextMenu();
@@ -215,34 +218,71 @@ function ScheduleCard({
     });
   };
 
+  const enableToggle = (
+    <label
+      className={`list-schedule-card__toggle${compact ? " list-schedule-card__toggle--compact" : ""}`}
+    >
+      <input
+        type="checkbox"
+        checked={schedule.enabled}
+        onChange={() => onToggle(schedule)}
+        aria-label={
+          schedule.enabled ? t("scheduler.disable") : t("scheduler.enable")
+        }
+        title={
+          schedule.enabled ? t("scheduler.disable") : t("scheduler.enable")
+        }
+      />
+      {!compact ? (
+        <span>
+          {schedule.enabled ? t("scheduler.enabled") : t("scheduler.disabled")}
+        </span>
+      ) : null}
+    </label>
+  );
+
   return (
     <div
-      className="list-tile list-tile--schedule list-schedule-card"
+      className={`list-tile list-tile--schedule list-schedule-card${compact ? " list-tile--compact" : ""}`}
       onContextMenu={handleContextMenu}
       onDoubleClick={() => onView(schedule)}
     >
       <div className="list-tile__head">
-        <div>
+        <div className="list-tile__heading">
           <h3 className="list-tile__title">{schedule.name}</h3>
-          <p className="list-tile__desc">
-            <code className="list-schedule-card__cron">{schedule.cron}</code>
-          </p>
+          {!compact ? (
+            <p className="list-tile__desc">
+              <code className="list-schedule-card__cron">{schedule.cron}</code>
+            </p>
+          ) : null}
         </div>
-        <label className="list-schedule-card__toggle">
-          <input
-            type="checkbox"
-            checked={schedule.enabled}
-            onChange={() => onToggle(schedule)}
-            aria-label={
-              schedule.enabled ? t("scheduler.disable") : t("scheduler.enable")
-            }
-          />
-          <span>
-            {schedule.enabled
-              ? t("scheduler.enabled")
-              : t("scheduler.disabled")}
-          </span>
-        </label>
+        {compact ? (
+          <div className="list-tile__head-actions">
+            <button
+              type="button"
+              className="btn btn--run btn--icon"
+              onClick={() => onRun(schedule)}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={t("scheduler.runNow")}
+              title={t("scheduler.runNow")}
+            >
+              <RunIcon />
+            </button>
+            <button
+              type="button"
+              className="btn btn--view btn--icon"
+              onClick={() => onView(schedule)}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={t("library.view")}
+              title={t("library.view")}
+            >
+              <ViewIcon />
+            </button>
+            {enableToggle}
+          </div>
+        ) : (
+          enableToggle
+        )}
       </div>
 
       <div className="list-tile__meta">
@@ -260,42 +300,46 @@ function ScheduleCard({
         ) : null}
       </div>
 
-      <div className="list-schedule-card__runs">
-        <span>
-          {nextRun !== null
-            ? t("scheduler.nextRun", { time: nextRun })
-            : t("scheduler.nextRunNever")}
-        </span>
-        <span>
-          {lastRun !== null
-            ? t("scheduler.lastRun", { time: lastRun })
-            : t("scheduler.lastRunNever")}
-        </span>
-        <span>{t("scheduler.runCount", { count: schedule.runCount })}</span>
-      </div>
-
-      <div className="list-tile__actions">
-        <button
-          type="button"
-          className="btn btn--run"
-          onClick={() => onRun(schedule)}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <RunIcon />
-          {t("scheduler.runNow")}
-        </button>
-        <button
-          type="button"
-          className="btn btn--view"
-          onClick={() => onView(schedule)}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <span className="btn--view-icon">
-            <ViewIcon />
+      {!compact ? (
+        <div className="list-schedule-card__runs">
+          <span>
+            {nextRun !== null
+              ? t("scheduler.nextRun", { time: nextRun })
+              : t("scheduler.nextRunNever")}
           </span>
-          {t("library.view")}
-        </button>
-      </div>
+          <span>
+            {lastRun !== null
+              ? t("scheduler.lastRun", { time: lastRun })
+              : t("scheduler.lastRunNever")}
+          </span>
+          <span>{t("scheduler.runCount", { count: schedule.runCount })}</span>
+        </div>
+      ) : null}
+
+      {!compact ? (
+        <div className="list-tile__actions">
+          <button
+            type="button"
+            className="btn btn--run"
+            onClick={() => onRun(schedule)}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <RunIcon />
+            {t("scheduler.runNow")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--view"
+            onClick={() => onView(schedule)}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <span className="btn--view-icon">
+              <ViewIcon />
+            </span>
+            {t("library.view")}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -344,6 +388,7 @@ export function SchedulerTab(): ReactElement {
   );
 
   const showTable = view.mode === "table";
+  const compact = view.mode === "compact";
 
   const handleSearch = (e: ChangeEvent<HTMLInputElement>): void => {
     setQuery(e.target.value);
@@ -446,7 +491,7 @@ export function SchedulerTab(): ReactElement {
           />
         </>
       ) : (
-        <div className="command-list">
+        <div className={`command-list${compact ? " command-list--compact" : ""}`}>
           {sorted.map((schedule) => (
             <ScheduleCard
               key={schedule.id}
@@ -456,6 +501,7 @@ export function SchedulerTab(): ReactElement {
               onToggle={handleToggle}
               onEdit={handleEdit}
               onDelete={setPendingDelete}
+              compact={compact}
             />
           ))}
         </div>
