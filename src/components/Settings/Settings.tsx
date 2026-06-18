@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Message } from "@arco-design/web-react";
+import { useAppVersion } from "../../hooks/useAppVersion";
 import { useTheme } from "../../hooks/useTheme";
 import { useCommandStore } from "../../stores/commandStore";
 import { DEFAULT_TOGGLE_SHORTCUT, useUIStore } from "../../stores/uiStore";
@@ -55,6 +56,7 @@ const THEME_OPTIONS: { value: Theme; labelKey: ThemeKey }[] = [
 
 export function Settings(): ReactElement {
   const { t } = useTranslation();
+  const appVersion = useAppVersion();
   const { theme, setTheme } = useTheme();
   const toggleShortcut = useUIStore((s) => s.toggleShortcut);
   const setToggleShortcut = useUIStore((s) => s.setToggleShortcut);
@@ -485,7 +487,8 @@ export function Settings(): ReactElement {
         <h2 className="view-section__title">{t("settings.about.title")}</h2>
         <div className="empty-state settings-info">
           <div className="settings-info__line">
-            <strong>{t("common.appName")}</strong> {t("settings.about.version")}
+            <strong>{t("common.appName")}</strong>{" "}
+            {appVersion ? `v${appVersion}` : "—"}
           </div>
           <div className="settings-info__lead">
             {t("settings.about.description")}
