@@ -79,12 +79,27 @@ pub enum JsParseError {
     ResultNotSerializable,
 }
 
-/// Substring Boa puts in a runtime-limit error message. Used to reclassify a
-/// generic runtime error (loop / recursion limit exceeded) as a [`Timeout`],
-/// so the user sees "exceeded its execution limit" rather than a raw message.
+/// Exact substrings Boa puts in its runtime-limit error messages. Used to
+/// reclassify a `RuntimeLimit` throw (loop-iteration / recursion / call-stack
+/// breach) as a [`Timeout`], so the user sees "exceeded its execution limit"
+/// rather than a raw engine message.
+///
+/// These mirror the three messages Boa emits (see `boa_engine`'s
+/// `vm/mod.rs` and the `RuntimeLimits` enforcement):
+///   - `"Maximum loop iteration limit N exceeded"`
+///   - `"exceeded maximum number of recursive calls"`
+///   - `"exceeded maximum call stack length"`
+///
+/// They are deliberately SPECIFIC — matching the bare word "limit" would
+/// misclassify a legitimate user error such as `throw new Error("rate limit
+/// reached")` as a Timeout.
 ///
 /// [`Timeout`]: JsParseError::Timeout
-const LIMIT_MARKERS: [&str; 3] = ["limit", "Limit", "maximum call stack"];
+const LIMIT_MARKERS: [&str; 3] = [
+    "loop iteration limit",
+    "exceeded maximum number of recursive calls",
+    "exceeded maximum call stack length",
+];
 
 /// Run a user `function parse(data) { … }` against `input` in a fresh,
 /// fully-sandboxed Boa context and return its result as JSON.
@@ -182,5 +197,38 @@ fn classify(message: &str) -> JsParseError {
         JsParseError::Timeout
     } else {
         JsParseError::Runtime(message.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_maps_real_limit_breaches_to_timeout() {
+        // The exact messages Boa emits for its three runtime-limit breaches.
+        for msg in [
+            "RuntimeLimit: Maximum loop iteration limit 1000000 exceeded",
+            "RuntimeLimit: exceeded maximum number of recursive calls",
+            "RuntimeLimit: exceeded maximum call stack length",
+        ] {
+            assert_eq!(classify(msg), JsParseError::Timeout, "msg: {msg}");
+        }
+    }
+
+    #[test]
+    fn classify_does_not_misclassify_user_limit_errors() {
+        // A legitimate user error that merely mentions "limit" must stay a
+        // Runtime error — NOT be reclassified as a Timeout.
+        for msg in [
+            "Error: rate limit reached",
+            "Error: limit exceeded for quota",
+            "TypeError: Cannot read properties of undefined",
+        ] {
+            assert!(
+                matches!(classify(msg), JsParseError::Runtime(_)),
+                "msg should stay Runtime: {msg}"
+            );
+        }
     }
 }

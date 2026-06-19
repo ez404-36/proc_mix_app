@@ -44,13 +44,10 @@ export function inferTsType(value: unknown): string {
 
   if (Array.isArray(value)) {
     if (value.length === 0) return "unknown[]";
-    const element = inferTsType(value[0]);
-    // When the element type is multi-line (an object shape), the `[]` suffix
-    // goes right after the closing brace on its last line.
-    if (element.includes("\n")) {
-      return `${element}[]`;
-    }
-    return `${element}[]`;
+    // The element type drives the array type. When it is multi-line (an object
+    // shape) the `[]` suffix sits right after the closing brace on its last
+    // line, which is exactly where string concatenation places it anyway.
+    return `${inferTsType(value[0])}[]`;
   }
 
   switch (typeof value) {

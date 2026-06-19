@@ -36,7 +36,9 @@
 //     column as an array of its values across all rows.
 
 use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
 
+use regex::Regex;
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -47,6 +49,60 @@ use crate::storage::commands::{OutputFieldRecord, OutputPipelineStepRecord, Outp
 /// guards the compiler against pathological input. The `regex` crate is
 /// already linear-time, so this is belt-and-suspenders.
 const MAX_PATTERN_BYTES: usize = 8 * 1024;
+
+/// Max number of distinct compiled regexes kept in the process-wide cache.
+/// Small on purpose: the only caller that re-compiles the *same* pattern
+/// repeatedly is `preview_extraction` (one schema, edited live), so a handful
+/// of recent patterns covers it. Bounded so a workflow that runs many
+/// commands with distinct patterns can't grow it without limit.
+const REGEX_CACHE_CAPACITY: usize = 32;
+
+/// Process-wide cache of compiled regexes keyed by pattern source.
+///
+/// Compiling a regex dominates `parse_regex` (~90% of its cost: ~470 µs of a
+/// ~525 µs call for a typical pattern), while a `Regex` is cheap to clone
+/// (its program is behind an `Arc`) and is `Send + Sync`. Caching the compiled
+/// program turns the live-preview path (same pattern re-run on every keystroke)
+/// from "recompile every time" into "compile once".
+///
+/// A plain `Mutex<Vec<…>>` with most-recently-used ordering is enough at this
+/// capacity (32) — it matches the `OnceLock<Mutex<…>>` pattern already used
+/// elsewhere in the crate and avoids pulling in an LRU dependency.
+fn regex_cache() -> &'static Mutex<Vec<(String, Regex)>> {
+    static CACHE: OnceLock<Mutex<Vec<(String, Regex)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(Vec::with_capacity(REGEX_CACHE_CAPACITY)))
+}
+
+/// Return a compiled [`Regex`] for `pattern`, reusing a cached one when the
+/// identical pattern was compiled before. On a miss the pattern is compiled
+/// once and inserted (evicting the least-recently-used entry past capacity).
+///
+/// A compile error is NOT cached — it is cheap to re-detect and we never want
+/// a transient bad pattern to wedge the cache. The returned `Regex` is a clone
+/// (cheap: `Arc` internally), so the lock is held only briefly.
+fn compile_regex_cached(pattern: &str) -> Result<Regex, ExtractError> {
+    // Lock poisoning can only happen if a thread panicked mid-update; the
+    // cache holds no invariant that a panic could corrupt, so recover the
+    // guard rather than propagate. (`compile` itself never panics.)
+    let mut cache = regex_cache().lock().unwrap_or_else(|e| e.into_inner());
+
+    if let Some(pos) = cache.iter().position(|(p, _)| p == pattern) {
+        // Hit: move to the end (most-recently-used) and return a clone.
+        let entry = cache.remove(pos);
+        let re = entry.1.clone();
+        cache.push(entry);
+        return Ok(re);
+    }
+
+    // Miss: compile once. A bad pattern surfaces here and is not cached.
+    let re = Regex::new(pattern).map_err(|e| ExtractError::BadRegex(e.to_string()))?;
+
+    if cache.len() >= REGEX_CACHE_CAPACITY {
+        cache.remove(0); // evict least-recently-used
+    }
+    cache.push((pattern.to_string(), re.clone()));
+    Ok(re)
+}
 
 /// Default field name used by the `lines` parser when the schema declares
 /// no fields. Also the implicit key for the `raw` parser's value when it
@@ -114,6 +170,32 @@ enum PipelineValue {
     Json(Value),
     /// Array of values — triggers map semantics for the next step.
     Array(Vec<PipelineValue>),
+}
+
+/// Borrowed view of the parser-configuration fields an
+/// [`OutputPipelineStepRecord`] feeds to a parser. Every per-parser function
+/// reads only these fields, so taking them by reference lets a pipeline step
+/// be parsed without cloning its `fields` / `pattern` / `delimiter` — which
+/// previously happened once *per array element* under map semantics.
+#[derive(Clone, Copy)]
+struct StepConfig<'a> {
+    pattern: Option<&'a str>,
+    delimiter: Option<&'a str>,
+    has_header: Option<bool>,
+    max_columns: Option<usize>,
+    fields: &'a [OutputFieldRecord],
+}
+
+impl<'a> StepConfig<'a> {
+    fn from_step(step: &'a OutputPipelineStepRecord) -> Self {
+        StepConfig {
+            pattern: step.pattern.as_deref(),
+            delimiter: step.delimiter.as_deref(),
+            has_header: step.has_header,
+            max_columns: step.max_columns,
+            fields: &step.fields,
+        }
+    }
 }
 
 impl PipelineValue {
@@ -256,24 +338,13 @@ fn step_to_pipeline_value(
     step: &OutputPipelineStepRecord,
     text: &str,
 ) -> Result<PipelineValue, ExtractError> {
-    // Build a temporary schema-like view of the step so we can reuse the
-    // existing per-parser functions without duplicating their logic.
-    let schema_view = OutputSchemaRecord {
-        parser: step.parser.clone(),
-        source: None,
-        pattern: step.pattern.clone(),
-        delimiter: step.delimiter.clone(),
-        has_header: step.has_header,
-        max_columns: step.max_columns,
-        fields: step.fields.clone(),
-        pipeline: Vec::new(),
-        return_field: None,
-        sample: None,
-    };
+    // Borrow the step's config fields — no per-element clone of `fields` /
+    // `pattern` / `delimiter` even when this runs once per array element.
+    let cfg = StepConfig::from_step(step);
 
     match step.parser.as_str() {
         "lines" => {
-            let fields = parse_lines(&schema_view, text);
+            let fields = parse_lines(cfg, text);
             // Expose the lines array as individual Text values so the next
             // step can map over them.
             let lines = fields
@@ -292,37 +363,32 @@ fn step_to_pipeline_value(
         }
         "raw" => Ok(PipelineValue::Text(text.to_string())),
         "json" => {
-            let fields = parse_json(&schema_view, text)?;
+            let fields = parse_json(cfg, text)?;
             Ok(PipelineValue::Json(fields_to_object(&fields)))
         }
         "regex" => {
-            let fields = parse_regex(&schema_view, text)?;
+            let fields = parse_regex(cfg, text)?;
             Ok(PipelineValue::Json(fields_to_object(&fields)))
         }
         "keyValue" => {
-            let fields = parse_key_value(&schema_view, text);
+            let fields = parse_key_value(cfg, text);
             Ok(PipelineValue::Json(fields_to_object(&fields)))
         }
         "table" => {
-            let parsed = parse_table(&schema_view, text);
-            let rows = parsed
-                .get("rows")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
+            let rows = parse_table(cfg, text);
 
             // If the step declares fields, project each row to only the
             // requested columns (field.name → column value). This lets the
             // user slim down the row objects before passing them to the next
             // step. Without declared fields all columns are kept.
             let header: Vec<String> = Vec::new(); // header already folded into col-keys by parse_table
-            let projected: Vec<Value> = if step.fields.is_empty() {
+            let projected: Vec<Value> = if cfg.fields.is_empty() {
                 rows
             } else {
                 rows.into_iter()
                     .map(|row| {
                         let mut obj = Map::new();
-                        for f in &step.fields {
+                        for f in cfg.fields {
                             let Some(col) = f.column.as_deref().filter(|c| !c.is_empty()) else {
                                 continue;
                             };
@@ -415,7 +481,7 @@ fn fields_to_object(fields: &BTreeMap<String, Value>) -> Value {
 /// can name e.g. `${first}` for line 0. A declared field WITHOUT an index
 /// is ignored here (it has no meaning for `lines`); the implicit `lines`
 /// array is always present so the whole list stays selectable.
-fn parse_lines(schema: &OutputSchemaRecord, stdout: &str) -> BTreeMap<String, Value> {
+fn parse_lines(cfg: StepConfig, stdout: &str) -> BTreeMap<String, Value> {
     let raw_lines = split_lines(stdout);
     let lines: Vec<Value> = raw_lines
         .iter()
@@ -425,7 +491,7 @@ fn parse_lines(schema: &OutputSchemaRecord, stdout: &str) -> BTreeMap<String, Va
     let mut map = BTreeMap::new();
     map.insert(LINES_FIELD.to_string(), Value::Array(lines));
 
-    for field in &schema.fields {
+    for field in cfg.fields {
         let Some(idx) = parse_index(field.index.as_deref()) else {
             continue;
         };
@@ -450,19 +516,16 @@ fn parse_index(raw: Option<&str>) -> Option<usize> {
 /// `json` parser: parse stdout as JSON and pull each declared field by
 /// its `path` (e.g. `items[0].name`). A field with no path resolves to
 /// the whole document.
-fn parse_json(
-    schema: &OutputSchemaRecord,
-    stdout: &str,
-) -> Result<BTreeMap<String, Value>, ExtractError> {
+fn parse_json(cfg: StepConfig, stdout: &str) -> Result<BTreeMap<String, Value>, ExtractError> {
     let doc: Value = serde_json::from_str(stdout.trim())
         .map_err(|e| ExtractError::InvalidJson(e.to_string()))?;
     let mut map = BTreeMap::new();
-    if schema.fields.is_empty() {
+    if cfg.fields.is_empty() {
         // No fields declared → expose the whole document under `json`.
         map.insert("json".to_string(), doc);
         return Ok(map);
     }
-    for field in &schema.fields {
+    for field in cfg.fields {
         let value = match field.path.as_deref() {
             Some(p) if !p.is_empty() => json_path(&doc, p).unwrap_or(Value::Null),
             _ => doc.clone(),
@@ -476,23 +539,19 @@ fn parse_json(
 /// whole stdout, and map each declared field's `group` (named capture)
 /// to the captured substring. A field whose group did not participate in
 /// the match resolves to `Null`.
-fn parse_regex(
-    schema: &OutputSchemaRecord,
-    stdout: &str,
-) -> Result<BTreeMap<String, Value>, ExtractError> {
-    let pattern = schema
+fn parse_regex(cfg: StepConfig, stdout: &str) -> Result<BTreeMap<String, Value>, ExtractError> {
+    let pattern = cfg
         .pattern
-        .as_deref()
         .filter(|p| !p.is_empty())
         .ok_or(ExtractError::MissingPattern)?;
     if pattern.len() > MAX_PATTERN_BYTES {
         return Err(ExtractError::PatternTooLarge(pattern.len()));
     }
-    let re = regex::Regex::new(pattern).map_err(|e| ExtractError::BadRegex(e.to_string()))?;
+    let re = compile_regex_cached(pattern)?;
     let caps = re.captures(stdout).ok_or(ExtractError::NoMatch)?;
 
     let mut map = BTreeMap::new();
-    if schema.fields.is_empty() {
+    if cfg.fields.is_empty() {
         // No fields declared → expose every named group automatically.
         for name in re.capture_names().flatten() {
             let value = caps
@@ -503,11 +562,14 @@ fn parse_regex(
         }
         return Ok(map);
     }
-    for field in &schema.fields {
+    // Collect the pattern's named groups once, instead of rescanning
+    // `re.capture_names()` for every declared field (was O(fields × groups)).
+    let group_names: std::collections::HashSet<&str> = re.capture_names().flatten().collect();
+    for field in cfg.fields {
         let group = group_name(field);
         // Reject a field that names a group the pattern does not declare,
         // so a typo surfaces as an error instead of a silent `Null`.
-        if !re.capture_names().flatten().any(|n| n == group) {
+        if !group_names.contains(group) {
             return Err(ExtractError::UnknownGroup {
                 field: field.name.clone(),
                 group: group.to_string(),
@@ -538,17 +600,17 @@ fn group_name(field: &OutputFieldRecord) -> &str {
 /// key/value pair. Keys and values are trimmed. When fields are declared,
 /// only those keys are surfaced (missing ones → `Null`); otherwise every
 /// parsed pair becomes a field.
-fn parse_key_value(schema: &OutputSchemaRecord, stdout: &str) -> BTreeMap<String, Value> {
-    let parsed = key_value_pairs(stdout, schema.delimiter.as_deref());
+fn parse_key_value(cfg: StepConfig, stdout: &str) -> BTreeMap<String, Value> {
+    let parsed = key_value_pairs(stdout, cfg.delimiter);
 
     let mut map = BTreeMap::new();
-    if schema.fields.is_empty() {
+    if cfg.fields.is_empty() {
         for (k, v) in parsed {
             map.insert(k, Value::String(v));
         }
         return map;
     }
-    for field in &schema.fields {
+    for field in cfg.fields {
         let value = parsed
             .iter()
             .find(|(k, _)| *k == field.name)
@@ -595,24 +657,26 @@ fn key_value_pairs(stdout: &str, delimiter: Option<&str>) -> Vec<(String, String
 }
 
 /// `table` parser: split each row by `delimiter` (default: runs of
-/// whitespace) into columns. With `has_header`, the first row supplies
-/// column names; otherwise columns are `col0`, `col1`, …. The full table
-/// is always exposed as an array of row objects under the `rows` field.
+/// whitespace) into columns and return the table as a vector of row objects.
+/// With `has_header`, the first row supplies column names; otherwise columns
+/// are keyed `col0`, `col1`, …. The header is folded into each row object's
+/// keys, so a downstream column projection looks a value up by key directly.
 ///
-/// Each declared field with a `column` locator additionally projects
-/// that single column as an array of its values across every row. The
-/// locator is matched against the header name first, then as a 0-based
-/// numeric column index (so `column = "1"` works with or without a
-/// header). A column that matches nothing yields an empty array.
-fn parse_table(schema: &OutputSchemaRecord, stdout: &str) -> BTreeMap<String, Value> {
+/// Returns just the rows — NOT a field map. The previous version returned a
+/// `BTreeMap` that mixed the `rows` array with per-field column projections in
+/// one namespace, so a declared field literally named `rows` overwrote the row
+/// array and corrupted every downstream lookup. Column projection is the
+/// caller's concern (`step_to_pipeline_value`), keeping the two kinds of data
+/// in separate namespaces by construction.
+fn parse_table(cfg: StepConfig, stdout: &str) -> Vec<Value> {
     let rows: Vec<Vec<String>> = split_lines(stdout)
         .into_iter()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| split_columns(l, schema.delimiter.as_deref(), schema.max_columns))
+        .map(|l| split_columns(l, cfg.delimiter, cfg.max_columns))
         .collect();
 
     let mut iter = rows.iter();
-    let header: Vec<String> = if schema.has_header.unwrap_or(false) {
+    let header: Vec<String> = if cfg.has_header.unwrap_or(false) {
         iter.next()
             .map(|r| r.iter().map(|c| c.trim().to_string()).collect())
             .unwrap_or_default()
@@ -634,23 +698,7 @@ fn parse_table(schema: &OutputSchemaRecord, stdout: &str) -> BTreeMap<String, Va
         records.push(Value::Object(obj));
     }
 
-    let mut map = BTreeMap::new();
-    map.insert("rows".to_string(), Value::Array(records.clone()));
-
-    // Project each declared column field as an array of its values.
-    for field in &schema.fields {
-        let Some(column) = field.column.as_deref().filter(|c| !c.is_empty()) else {
-            continue;
-        };
-        let key = column_key(column, &header);
-        let values: Vec<Value> = records
-            .iter()
-            .filter_map(|r| r.get(&key).cloned())
-            .collect();
-        map.insert(field.name.clone(), Value::Array(values));
-    }
-
-    map
+    records
 }
 
 /// Resolve a table column locator to the object key used in the row
@@ -1005,6 +1053,60 @@ mod tests {
     }
 
     #[test]
+    fn compile_regex_cached_reuses_and_matches() {
+        // A distinctive pattern unlikely to collide with other tests' cache
+        // entries. Compiling it twice must yield a regex that behaves
+        // identically — the second call takes the cache-hit path.
+        let pat = r"(?P<zqx>\d{3})-(?P<wvy>[a-z]+)";
+        let a = compile_regex_cached(pat).unwrap();
+        let b = compile_regex_cached(pat).unwrap();
+        let ca = a.captures("123-abc").unwrap();
+        let cb = b.captures("123-abc").unwrap();
+        assert_eq!(ca.name("zqx").unwrap().as_str(), "123");
+        assert_eq!(cb.name("wvy").unwrap().as_str(), "abc");
+    }
+
+    #[test]
+    fn compile_regex_cached_does_not_cache_errors() {
+        // A bad pattern errors every time (never wedged into the cache), and a
+        // subsequent VALID pattern still compiles fine.
+        let bad = r"(?P<zzz_bad>";
+        assert!(matches!(
+            compile_regex_cached(bad),
+            Err(ExtractError::BadRegex(_))
+        ));
+        assert!(matches!(
+            compile_regex_cached(bad),
+            Err(ExtractError::BadRegex(_))
+        ));
+        assert!(compile_regex_cached(r"(?P<zzz_ok>\w+)").is_ok());
+    }
+
+    #[test]
+    fn compile_regex_cached_is_bounded_and_evicts() {
+        // Insert well past capacity with distinct patterns. The cache must
+        // never exceed REGEX_CACHE_CAPACITY (the LRU eviction fires), yet every
+        // pattern — including ones surely evicted — must still compile and match
+        // correctly (a miss just recompiles).
+        let total = REGEX_CACHE_CAPACITY * 3;
+        for i in 0..total {
+            // `evictNNN` is a valid pattern and a distinct cache key per i.
+            let pat = format!("evict{i}");
+            let re = compile_regex_cached(&pat).unwrap();
+            assert!(re.is_match(&format!("xx evict{i} yy")));
+        }
+        let len = regex_cache().lock().unwrap().len();
+        assert!(
+            len <= REGEX_CACHE_CAPACITY,
+            "cache grew past capacity: {len} > {REGEX_CACHE_CAPACITY}"
+        );
+
+        // An early, surely-evicted pattern recompiles fine on a miss.
+        let early = compile_regex_cached("evict0").unwrap();
+        assert!(early.is_match("evict0"));
+    }
+
+    #[test]
     fn regex_unknown_group_is_error() {
         let mut s = schema("regex");
         s.pattern = Some(r"(?P<a>\d+)".into());
@@ -1106,6 +1208,28 @@ mod tests {
     }
 
     #[test]
+    fn table_field_named_rows_no_longer_collides() {
+        // Regression: a declared field literally named `rows` used to overwrite
+        // the implicit row array inside `parse_table`'s map, corrupting the
+        // projection (every row came back `{}`). Now `parse_table` returns just
+        // the rows and projection is the caller's job, so `rows` is an ordinary
+        // field name and projects its column correctly.
+        let mut s = schema("table");
+        s.has_header = Some(true);
+        s.delimiter = Some(",".into());
+        s.fields = vec![{
+            let mut f = field("rows");
+            f.column = Some("name".into());
+            f
+        }];
+        let out = extract(&s, "name,age\nalice,30\nbob,25\n").unwrap();
+        let projected = out.return_value.as_array().unwrap();
+        assert_eq!(projected.len(), 2);
+        assert_eq!(projected[0]["rows"], Value::String("alice".into()));
+        assert_eq!(projected[1]["rows"], Value::String("bob".into()));
+    }
+
+    #[test]
     fn table_column_projects_by_header_name() {
         // With declared fields, step_to_pipeline_value projects each row.
         let mut s = schema("table");
@@ -1137,6 +1261,34 @@ mod tests {
         let rows = out.return_value.as_array().unwrap();
         assert_eq!(rows[0]["shells"], Value::String("bash".into()));
         assert_eq!(rows[1]["shells"], Value::String("zsh".into()));
+    }
+
+    #[test]
+    fn table_no_fields_preserves_full_rows_after_clone_removal() {
+        // Guards the P2 change (dropping `records.clone()`): with no declared
+        // fields the whole table must still surface as the `rows` array of row
+        // objects, moved — not cloned — into the result. Three rows so the
+        // result is an Array, exercising the moved-vector path.
+        let mut s = schema("table");
+        s.has_header = Some(true);
+        s.delimiter = Some(",".into());
+        let out = extract(&s, "name,age\nalice,30\nbob,25\ncarol,41\n").unwrap();
+        let rows = out.return_value.as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0]["name"], Value::String("alice".into()));
+        assert_eq!(rows[2]["age"], Value::String("41".into()));
+    }
+
+    #[test]
+    fn regex_no_fields_exposes_all_named_groups() {
+        // The `fields.is_empty()` branch (auto-expose every named group) must
+        // surface each capture as a field. Guards the path next to the P3
+        // capture-name HashSet change.
+        let mut s = schema("regex");
+        s.pattern = Some(r"(?P<host>\w+):(?P<port>\d+)".into());
+        let out = extract(&s, "localhost:5432").unwrap();
+        assert_eq!(*out.fields.get("host").unwrap(), Value::String("localhost".into()));
+        assert_eq!(*out.fields.get("port").unwrap(), Value::String("5432".into()));
     }
 
     #[test]
