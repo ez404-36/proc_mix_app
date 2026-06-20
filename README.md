@@ -4,10 +4,6 @@
 
 <h1>ProcMix</h1>
 
-<p>Run scripts and automate tasks — no command line needed</p>
-
-<p>ProcMix gives you a graphical interface for managing commands, workflows, and schedules. No memorising flags — just press a button.</p>
-
 [![License: MIT](https://img.shields.io/badge/license-MIT-black?style=flat-square)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-black?style=flat-square&logo=tauri)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-stable-black?style=flat-square&logo=rust)](https://www.rust-lang.org)
@@ -16,6 +12,17 @@
 </div>
 
 ---
+
+<details open>
+<summary><b>🇬🇧 English</b></summary>
+
+<div align="center">
+
+<p>Run scripts and automate tasks — no command line needed</p>
+
+<p>ProcMix gives you a graphical interface for managing commands, workflows, and schedules. No memorising flags — just press a button.</p>
+
+</div>
 
 ## Features
 
@@ -86,8 +93,6 @@ Extend functionality with JavaScript/TypeScript plugins or native modules writte
 </tr>
 </table>
 
----
-
 ## Installation
 
 ### Download a release
@@ -119,8 +124,6 @@ npm run tauri build
 
 The built installer will appear in `src-tauri/target/release/bundle/`.
 
----
-
 ## Development
 
 ```bash
@@ -137,6 +140,138 @@ npm run tauri dev    # start full app (Rust + React hot-reload)
 | `npm test` | Frontend tests (Vitest) |
 | `cargo test` | Rust tests (from `src-tauri/`) |
 | `cargo clippy --all-targets -- -D warnings` | Rust lint |
+
+</details>
+
+<details>
+<summary><b>🇷🇺 Русский</b></summary>
+
+<div align="center">
+
+<p>Запускайте скрипты и автоматизируйте задачи — без командной строки</p>
+
+<p>ProcMix даёт графический интерфейс для управления командами, сценариями и расписаниями. Не нужно запоминать флаги — просто нажмите кнопку.</p>
+
+</div>
+
+## Возможности
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Палитра команд и горячие клавиши**<br/>
+Мгновенный нечёткий поиск по вашим командам и настраиваемые глобальные горячие клавиши для запуска из любого места.
+
+</td>
+<td width="50%" valign="top">
+
+**Переменные и подстановка**<br/>
+Подставляйте значения через `${name}` и `${name:default}`. Чувствительные переменные маскируются как *** в логах и событиях.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Запуск от имени администратора**<br/>
+Повышение привилегий через системное хранилище ключей на Linux/macOS и через UAC на Windows — без хранения пароля в открытом виде.
+
+</td>
+<td width="50%" valign="top">
+
+**Схема вывода**<br/>
+Опишите формат вывода вашей команды, и ProcMix преобразует сырой текст в структурированный JSON. Например, строки из `df -h` становятся массивом объектов с полями файловой системы, размера, использованного и доступного места.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Визуальный редактор сценариев**<br/>
+Стройте цепочки команд из узлов с помощью перетаскивания и ветвления по коду возврата. Предпросмотр и прогресс выполнения прямо на холсте.
+
+</td>
+<td width="50%" valign="top">
+
+**Планировщик**<br/>
+Запускайте команды и сценарии автоматически по расписанию.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Кроссплатформенность**<br/>
+Единый интерфейс на Windows и Linux. Поддержка macOS скоро появится.
+
+</td>
+<td width="50%" valign="top">
+
+**Локальное хранение, импорт/экспорт**<br/>
+Все данные хранятся локально — приватность по умолчанию. Переносите команды и сценарии между машинами через импорт и экспорт.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Система плагинов**<br/>
+Расширяйте возможности плагинами на JavaScript/TypeScript или нативными модулями на Rust.
+
+</td>
+</tr>
+</table>
+
+## Установка
+
+### Скачать релиз
+
+Готовые установщики доступны на странице [Releases](../../releases):
+
+| Платформа | Установщик |
+|-----------|------------|
+| macOS | `.dmg` |
+| Windows | `.msi` / `.exe` |
+| Linux | `.AppImage` / `.deb` |
+
+### Сборка из исходников
+
+**Требования**
+
+- [Node.js](https://nodejs.org) 24+
+- [Rust](https://rustup.rs) (стабильный тулчейн)
+- Системные зависимости Tauri для вашей платформы → [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/)
+
+**Настройка**
+
+```bash
+git clone https://github.com/ez404-36/proc_mix_app.git
+cd proc_mix_app
+npm install
+npm run tauri build
+```
+
+Собранный установщик появится в `src-tauri/target/release/bundle/`.
+
+## Разработка
+
+```bash
+npm install          # установить JS-зависимости
+npm run tauri dev    # запустить полное приложение (Rust + React hot-reload)
+```
+
+| Команда | Описание |
+|---------|----------|
+| `npm run dev` | Только dev-сервер фронтенда |
+| `npm run tauri dev` | Полное приложение с hot-reload |
+| `npx tsc --noEmit` | Проверка типов TypeScript |
+| `npm run lint` | ESLint |
+| `npm test` | Тесты фронтенда (Vitest) |
+| `cargo test` | Тесты Rust (из `src-tauri/`) |
+| `cargo clippy --all-targets -- -D warnings` | Линтер Rust |
+
+</details>
 
 ---
 
