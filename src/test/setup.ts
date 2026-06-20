@@ -3,12 +3,13 @@
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
-// jsdom does not implement ResizeObserver, which reactflow's core requires on
-// mount. Any test that renders a real reactflow canvas (e.g. the read-only
-// WorkflowView preview shown when double-clicking a Library card) would throw
-// `ResizeObserver is not defined`. A no-op stub is enough: jsdom never lays
-// out elements, so there is nothing to observe — tests that care about canvas
-// internals mock reactflow outright; this just keeps the mount from crashing.
+// jsdom does not implement ResizeObserver, which @xyflow/react's core requires
+// on mount. Any test that renders a real @xyflow/react canvas (e.g. the
+// read-only WorkflowView preview shown when double-clicking a Library card)
+// would throw `ResizeObserver is not defined`. A no-op stub is enough: jsdom
+// never lays out elements, so there is nothing to observe — tests that care
+// about canvas internals mock @xyflow/react outright; this just keeps the
+// mount from crashing.
 if (typeof globalThis.ResizeObserver === "undefined") {
   class ResizeObserverStub {
     observe(): void {}

@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import { useCommandStore } from "../../../stores/commandStore";
 import { getCommandName } from "../../../utils/commandLabels";
@@ -13,7 +13,7 @@ import { insertNeighborClass, runStatusClass } from "./runStatus";
  * `sourceHandle` directly as the `WorkflowEdge.branch`. The title shows the
  * command name, plus the live retry attempt during a run.
  */
-export function TryNode({ data }: NodeProps<WorkflowNodeData>): ReactElement {
+export function TryNode({ data }: NodeProps<Node<WorkflowNodeData>>): ReactElement {
   const { t } = useTranslation();
   const command = useCommandStore((s) =>
     data.commandId === undefined

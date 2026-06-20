@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import { useCommandStore } from "../../../stores/commandStore";
 import { getCommandName } from "../../../utils/commandLabels";
@@ -14,7 +14,7 @@ import { insertNeighborClass, runStatusClass } from "./runStatus";
  */
 export function CommandNode({
   data,
-}: NodeProps<WorkflowNodeData>): ReactElement {
+}: NodeProps<Node<WorkflowNodeData>>): ReactElement {
   const { t } = useTranslation();
   const command = useCommandStore((s) =>
     data.commandId === undefined

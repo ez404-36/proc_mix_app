@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  ExecutionLogLine,
   ExtractedResult,
   WorkflowEdgeBranch,
   WorkflowStatus,
@@ -77,6 +78,18 @@ export interface WorkflowRun {
    * editor's node modal to show input/result examples after a run.
    */
   nodeOutputs: Record<string, WorkflowNodeOutput>;
+  /**
+   * Per-node BUFFER of console log lines (stdout/stderr) awaiting flush to the
+   * aggregated workflow process, keyed by node id. The execution bridge buffers
+   * each node's lines here as they stream; the workflow bridge flushes a node's
+   * buffer as one contiguous block under that node's step header when the node
+   * finishes (or, for still-open nodes, at run end). This is what keeps a
+   * parallel fork's interleaved branch output grouped per node rather than
+   * smeared together in arrival order. Distinct from `nodeOutputs` (which is the
+   * permanent per-node capture the editor's node modal reads): a buffer entry is
+   * transient and is removed the instant it is flushed.
+   */
+  lineBuffers: Record<string, ExecutionLogLine[]>;
   /** Error message for a failed run (`status: "error"`). */
   error?: string;
 }
@@ -123,6 +136,29 @@ interface WorkflowRunState {
     executionId: string,
     result: ExtractedResult,
   ) => void;
+  /**
+   * Buffer a console log line against the node owning `executionId`, awaiting
+   * flush to the aggregated workflow process. No-op when the execution id is not
+   * (yet) mapped to a node within the run.
+   */
+  bufferNodeLine: (
+    runId: string,
+    executionId: string,
+    line: ExecutionLogLine,
+  ) => void;
+  /**
+   * Remove and return a node's buffered log lines (keyed by node id). Returns an
+   * empty array when there is nothing buffered. Called by the workflow bridge to
+   * flush a node's grouped output under its step header on finish.
+   */
+  takeNodeBuffer: (runId: string, nodeId: string) => ExecutionLogLine[];
+  /**
+   * Remove and return EVERY node's still-buffered lines for a run, as
+   * `[nodeId, lines]` pairs. Used at run end (finish/cancel/error) to flush
+   * output of nodes that never produced an explicit finish so partial output is
+   * not lost. The pairs preserve insertion order of the buffers.
+   */
+  takeAllBuffers: (runId: string) => Array<[string, ExecutionLogLine[]]>;
   finishRun: (
     runId: string,
     status: Extract<WorkflowStatus, "success" | "error" | "cancelled">,
@@ -153,7 +189,7 @@ function nodeIdForExecution(
   return null;
 }
 
-export const useWorkflowRunStore = create<WorkflowRunState>()((set) => ({
+export const useWorkflowRunStore = create<WorkflowRunState>()((set, get) => ({
   runs: {},
   recentRunIds: [],
 
@@ -172,6 +208,7 @@ export const useWorkflowRunStore = create<WorkflowRunState>()((set) => ({
         retryAttempts: {},
         nodeCommandIds: nodeCommandIds ?? {},
         nodeOutputs: {},
+        lineBuffers: {},
       };
       return {
         runs: { ...state.runs, [runId]: run },
@@ -305,6 +342,63 @@ export const useWorkflowRunStore = create<WorkflowRunState>()((set) => ({
         },
       };
     }),
+
+  bufferNodeLine: (runId, executionId, line) =>
+    set((state) => {
+      const run = state.runs[runId];
+      if (!run) return {};
+      const nodeId = nodeIdForExecution(run, executionId);
+      if (nodeId === null) return {};
+      const existing = run.lineBuffers[nodeId] ?? [];
+      return {
+        runs: {
+          ...state.runs,
+          [runId]: {
+            ...run,
+            lineBuffers: {
+              ...run.lineBuffers,
+              [nodeId]: [...existing, line],
+            },
+          },
+        },
+      };
+    }),
+
+  takeNodeBuffer: (runId, nodeId) => {
+    const run = get().runs[runId];
+    const lines = run?.lineBuffers[nodeId] ?? [];
+    if (lines.length === 0) return [];
+    set((state) => {
+      const current = state.runs[runId];
+      if (!current) return {};
+      const nextBuffers = { ...current.lineBuffers };
+      delete nextBuffers[nodeId];
+      return {
+        runs: {
+          ...state.runs,
+          [runId]: { ...current, lineBuffers: nextBuffers },
+        },
+      };
+    });
+    return lines;
+  },
+
+  takeAllBuffers: (runId) => {
+    const run = get().runs[runId];
+    const entries = run ? Object.entries(run.lineBuffers) : [];
+    if (entries.length === 0) return [];
+    set((state) => {
+      const current = state.runs[runId];
+      if (!current) return {};
+      return {
+        runs: {
+          ...state.runs,
+          [runId]: { ...current, lineBuffers: {} },
+        },
+      };
+    });
+    return entries;
+  },
 
   finishRun: (runId, status, patch) =>
     set((state) => {

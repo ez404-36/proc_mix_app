@@ -101,15 +101,23 @@ function lookupCommandInfo(commandId: string | undefined): CommandInfo {
  * NOT call `startExecution`/`finishExecution` for the node's own
  * `executionId`, push it to recents, or steal the active panel: that is what
  * made workflow steps appear as N separate terminal processes.
+ *
+ * stdout/stderr are NOT appended to the aggregate immediately. In a parallel
+ * fork every branch streams concurrently, so appending on arrival interleaves
+ * all branches into one unreadable blob. Instead each line is BUFFERED against
+ * its node (`bufferNodeLine`) and flushed as a contiguous block under the
+ * node's step header when the node finishes — see `useWorkflowBridge`. The
+ * per-node capture (`appendNodeOutputLine`, read by the editor's node modal)
+ * is unaffected and still happens line-by-line.
  */
 function routeWorkflowNodeEvent(
   event: ExecutionEvent,
   workflowRunId: string,
 ): void {
-  const store = useExecutionStore.getState();
   const runStore = useWorkflowRunStore.getState();
   if (event.kind === "stdout") {
-    store.appendLog(workflowRunId, {
+    // Buffer for grouped flush under this node's header (see useWorkflowBridge).
+    runStore.bufferNodeLine(workflowRunId, event.executionId, {
       stream: "stdout",
       line: event.line,
       ts: Date.now(),
@@ -121,7 +129,7 @@ function routeWorkflowNodeEvent(
     return;
   }
   if (event.kind === "stderr") {
-    store.appendLog(workflowRunId, {
+    runStore.bufferNodeLine(workflowRunId, event.executionId, {
       stream: "stderr",
       line: event.line,
       ts: Date.now(),

@@ -1,7 +1,7 @@
-// Smoke test for the visual editor shell. reactflow is mocked narrowly to a
-// lightweight stand-in so the canvas does not need a real layout engine /
+// Smoke test for the visual editor shell. @xyflow/react is mocked narrowly to
+// a lightweight stand-in so the canvas does not need a real layout engine /
 // ResizeObserver in jsdom — the value here is verifying the editor wiring
-// (palette, toolbar, meta-modal gating, target hydration), not reactflow's
+// (palette, toolbar, meta-modal gating, target hydration), not the canvas's
 // own rendering. The pure graph/validation logic is covered separately in
 // workflowGraph.test.ts and workflowValidation.test.ts.
 
@@ -9,15 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 
-vi.mock("reactflow", async () => {
+vi.mock("@xyflow/react", async () => {
   const { useState, useCallback } = await import("react");
   const Passthrough = ({ children }: { children?: ReactNode }): ReactElement => (
     <div data-testid="reactflow">{children}</div>
   );
-  // Faithful-enough stand-ins for reactflow's state hooks: they must keep
+  // Faithful-enough stand-ins for @xyflow/react's state hooks: they must keep
   // STABLE setter identities across renders, otherwise the canvas's
   // hydration effect (which lists setNodes/setEdges in its deps) would
-  // re-fire every render and spin forever. Real reactflow guarantees stable
+  // re-fire every render and spin forever. The real library guarantees stable
   // setters, so the mock must too.
   const useNodesState = (initial: unknown[]) => {
     const [nodes, setNodes] = useState(initial);
@@ -31,7 +31,7 @@ vi.mock("reactflow", async () => {
   };
   return {
     __esModule: true,
-    default: Passthrough,
+    ReactFlow: Passthrough,
     Background: () => <div data-testid="rf-background" />,
     Controls: ({ children }: { children?: ReactNode }) => (
       <div data-testid="rf-controls">{children}</div>
@@ -60,7 +60,7 @@ vi.mock("reactflow", async () => {
   };
 });
 
-vi.mock("reactflow/dist/style.css", () => ({}));
+vi.mock("@xyflow/react/dist/style.css", () => ({}));
 
 vi.mock("../../utils/commandRepository", () => ({
   upsertCommandInDb: vi.fn().mockResolvedValue(undefined),

@@ -18,12 +18,17 @@
 // elevated-spawn handling all live in the executor and are reused verbatim.
 
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{oneshot, Mutex};
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 use crate::core::executor::{
     self, CapturedLine, CapturedStream, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus,
@@ -68,6 +73,11 @@ enum Branch {
     Ok,
     /// A `try`'s failure exit, taken once retries are exhausted. Edge: `catch`.
     Catch,
+    /// A `parallel` fork exit, one per branch in declaration order. Edge
+    /// label: `branch:<n>` (`branch:0`, `branch:1`, …), modeled on `Case`.
+    /// Constructed by [`edges_for_branch_multi`] when the fork traversal
+    /// resolves a `parallel` node's outgoing edges.
+    BranchN(u32),
 }
 
 impl Branch {
@@ -86,6 +96,7 @@ impl Branch {
             Branch::Done => "done".to_string(),
             Branch::Ok => "ok".to_string(),
             Branch::Catch => "catch".to_string(),
+            Branch::BranchN(n) => format!("branch:{n}"),
         }
     }
 }
@@ -104,6 +115,8 @@ enum NodeKind {
     Data,
     Parser,
     Text,
+    Parallel,
+    Join,
     End,
 }
 
@@ -119,6 +132,8 @@ impl NodeKind {
             "data" => Some(NodeKind::Data),
             "parser" => Some(NodeKind::Parser),
             "text" => Some(NodeKind::Text),
+            "parallel" => Some(NodeKind::Parallel),
+            "join" => Some(NodeKind::Join),
             "end" => Some(NodeKind::End),
             _ => None,
         }
@@ -149,6 +164,10 @@ pub enum WorkflowError {
     AmbiguousBranch(String, String),
     #[error("command node {0} has no outgoing edge")]
     NoOutgoingEdge(String),
+    #[error("parallel node {0} has no branch edges")]
+    ParallelNoBranches(String),
+    #[error("fork branch reached an end node before its bound join {0}")]
+    BranchEndedBeforeJoin(String),
     #[error("switch node {0} has no default branch and no case matched")]
     NoMatchingCase(String),
     #[error("node {0} has an invalid condition: {1}")]
@@ -244,8 +263,14 @@ pub enum WorkflowEvent {
 }
 
 /// Per-run cancellation handle stored in [`WorkflowExecutorState`].
+///
+/// A `CancellationToken` (not a `oneshot::Sender`) so the single cancel signal
+/// fans out to EVERY in-flight fork branch: each branch is spawned with a clone
+/// of the run's token, and `cancel_workflow` calls `.cancel()` once to wake all
+/// of them. The token is cancel-safe and idempotent, so a cancel for an
+/// already-finished run is a harmless no-op.
 struct WorkflowRunningEntry {
-    cancel_tx: Option<oneshot::Sender<()>>,
+    cancel: CancellationToken,
 }
 
 /// Managed state holding the in-flight workflow runs keyed by run id.
@@ -408,6 +433,55 @@ fn edge_for_branch(
     Ok(found)
 }
 
+/// Collect every `branch:<n>` exit of a `parallel` (fork) node, ordered by the
+/// branch index `n`. Returns `(branch_index, edge_id, target_node_id)` tuples.
+///
+/// This is the fork-only counterpart to [`edge_for_branch`]: a `parallel` node
+/// legitimately has MANY outgoing edges (one per branch), so the
+/// `AmbiguousBranch` "one edge per branch" rule that protects every other node
+/// kind does not apply here. Each branch index must still be unique (two
+/// `branch:0` edges from the same fork are ambiguous), and every target must
+/// exist. The result is sorted by index so branch declaration order is
+/// deterministic regardless of storage order — fork branches run, capture, and
+/// (for `join_node_id == None`) terminate in a reproducible sequence.
+fn edges_for_branch_multi(
+    edges: &[WorkflowEdgeRecord],
+    node_index: &HashMap<String, usize>,
+    node_id: &str,
+) -> Result<Vec<(u32, String, String)>, WorkflowError> {
+    let mut found: Vec<(u32, String, String)> = Vec::new();
+    let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for e in edges {
+        if e.source != node_id {
+            continue;
+        }
+        // Only `branch:<n>` exits participate in the fork; any other label on a
+        // parallel node is ignored here (the editor never wires one).
+        let Some(rest) = e.branch.strip_prefix("branch:") else {
+            continue;
+        };
+        let Ok(n) = rest.parse::<u32>() else {
+            continue;
+        };
+        if !node_index.contains_key(&e.target) {
+            return Err(WorkflowError::DanglingEdge(e.id.clone(), e.target.clone()));
+        }
+        if !seen.insert(n) {
+            // A duplicate branch index is the same fault `edge_for_branch`
+            // rejects for single-exit branches: two edges with no defined order.
+            // Render the label via `Branch::BranchN` so the wire string has a
+            // single source of truth (mirrors `case:<id>` / `then` / …).
+            return Err(WorkflowError::AmbiguousBranch(
+                node_id.to_string(),
+                Branch::BranchN(n).to_branch_string(),
+            ));
+        }
+        found.push((n, e.id.clone(), e.target.clone()));
+    }
+    found.sort_by_key(|(n, _, _)| *n);
+    Ok(found)
+}
+
 /// The two run-scoped identifiers a node execution is tagged with: the
 /// workflow run id (groups every node's output into one process / progress
 /// run) and the workflow id (echoed back on each event). Bundled so
@@ -431,7 +505,7 @@ struct RunContext<'a> {
 
 /// Run a single command node: build the request, spawn it through the
 /// executor with a completion channel, and await the terminal outcome
-/// while concurrently watching `cancel_rx`.
+/// while concurrently watching the run's `cancel` token.
 ///
 /// Cancellation is handled HERE, not by the caller, so the in-flight
 /// child is actually killed rather than orphaned: on a cancel signal we
@@ -442,9 +516,11 @@ struct RunContext<'a> {
 /// carry `TerminalStatus::Cancelled` in that case, which the caller maps
 /// to `WorkflowError::Cancelled`.
 ///
-/// The runner never holds a shared lock across an await — it owns only
-/// the `oneshot` receiver and calls `cancel_execution` (which takes the
-/// executor lock briefly and releases it) as a normal async call.
+/// The `cancel` token is shared (cloned into every fork branch), so a
+/// cancel from any source — the user, or a sibling branch failing
+/// fast — kills this node's child too. The runner never holds a shared
+/// lock across an await; it observes the token and calls `cancel_execution`
+/// (which takes the executor lock briefly and releases it) as a normal call.
 async fn run_command_node<R: Runtime>(
     app: &AppHandle<R>,
     executor_state: Arc<ExecutorState>,
@@ -452,7 +528,7 @@ async fn run_command_node<R: Runtime>(
     node_id: &str,
     ctx: RunContext<'_>,
     variable_values: BTreeMap<String, String>,
-    cancel_rx: &mut oneshot::Receiver<()>,
+    cancel: &CancellationToken,
 ) -> Result<NodeOutcome, WorkflowError> {
     let execution_id = uuid::Uuid::new_v4().to_string();
     let (tx, mut rx) = oneshot::channel::<NodeOutcome>();
@@ -486,7 +562,7 @@ async fn run_command_node<R: Runtime>(
     // — without this the command would keep running orphaned.
     tokio::select! {
         biased;
-        _ = &mut *cancel_rx => {
+        _ = cancel.cancelled() => {
             // Best-effort kill; `cancel_execution` is idempotent and a
             // no-op if the run already finished in this same tick.
             let _ = executor::cancel_execution(executor_state, execution_id).await;
@@ -987,20 +1063,21 @@ fn loop_should_continue(
 async fn cancellable_backoff(
     backoff_ms: Option<u64>,
     node_id: &str,
-    cancel_rx: &mut oneshot::Receiver<()>,
+    cancel: &CancellationToken,
 ) -> Result<(), WorkflowError> {
     let ms = backoff_ms.unwrap_or(0);
     if ms == 0 {
         // Still observe an already-delivered cancel so a 0-backoff retry loop
         // can't ignore a cancel that arrived between attempts.
-        return match cancel_rx.try_recv() {
-            Ok(()) => Err(WorkflowError::Cancelled),
-            Err(_) => Ok(()),
+        return if cancel.is_cancelled() {
+            Err(WorkflowError::Cancelled)
+        } else {
+            Ok(())
         };
     }
     tokio::select! {
         biased;
-        _ = &mut *cancel_rx => Err(WorkflowError::Cancelled),
+        _ = cancel.cancelled() => Err(WorkflowError::Cancelled),
         _ = tokio::time::sleep(std::time::Duration::from_millis(ms)) => {
             let _ = node_id; // node_id reserved for future per-node trace spans
             Ok(())
@@ -1041,7 +1118,7 @@ async fn run_command_bearing_node<R: Runtime>(
     prev: Option<&PrevOutcome>,
     ctx: RunContext<'_>,
     retry: Option<&RetryConfigRecord>,
-    cancel_rx: &mut oneshot::Receiver<()>,
+    cancel: &CancellationToken,
     capture: &mut Option<Vec<CapturedLine>>,
 ) -> Result<(NodeOutcome, u32), WorkflowError> {
     let command_id = node
@@ -1073,7 +1150,7 @@ async fn run_command_bearing_node<R: Runtime>(
             &node.id,
             ctx,
             values,
-            cancel_rx,
+            cancel,
         )
         .await?;
 
@@ -1116,7 +1193,7 @@ async fn run_command_bearing_node<R: Runtime>(
                 attempt,
             },
         );
-        cancellable_backoff(backoff_ms, &node.id, cancel_rx).await?;
+        cancellable_backoff(backoff_ms, &node.id, cancel).await?;
     }
 }
 
@@ -1145,6 +1222,84 @@ enum TraverseStart {
     },
 }
 
+/// Shared, read-only-after-setup state threaded through the recursive
+/// [`traverse_path`] and cloned (cheaply — every field is an `Arc` or `Copy`)
+/// into each concurrent fork branch spawned onto a [`JoinSet`].
+///
+/// Wrapping the graph / command tables in `Arc` is what makes a branch task
+/// `'static`: it owns a clone of the context instead of borrowing the parent's
+/// stack, so it can be spawned and outlive the `parallel` arm's frame.
+struct TraverseCtx<R: Runtime> {
+    app: AppHandle<R>,
+    executor_state: Arc<ExecutorState>,
+    workflow: Arc<WorkflowRecord>,
+    commands: Arc<HashMap<String, CommandRecord>>,
+    node_variable_values: Arc<HashMap<String, BTreeMap<String, String>>>,
+    /// node id → index into `workflow.nodes`, precomputed once.
+    node_index: Arc<HashMap<String, usize>>,
+    run_id: String,
+    silent: bool,
+    /// `true` exactly when an aggregate console log is being assembled (a
+    /// scheduled fire); threaded into each node's `RunContext`.
+    capture_output: bool,
+    /// Total steps across the WHOLE run (every branch shares it), so the cycle
+    /// cap counts the sum of all paths rather than resetting per branch.
+    steps: Arc<AtomicUsize>,
+}
+
+impl<R: Runtime> Clone for TraverseCtx<R> {
+    fn clone(&self) -> Self {
+        Self {
+            app: self.app.clone(),
+            executor_state: self.executor_state.clone(),
+            workflow: self.workflow.clone(),
+            commands: self.commands.clone(),
+            node_variable_values: self.node_variable_values.clone(),
+            node_index: self.node_index.clone(),
+            run_id: self.run_id.clone(),
+            silent: self.silent,
+            capture_output: self.capture_output,
+            steps: self.steps.clone(),
+        }
+    }
+}
+
+impl<R: Runtime> TraverseCtx<R> {
+    fn run_context(&self) -> RunContext<'_> {
+        RunContext {
+            run_id: &self.run_id,
+            workflow_id: &self.workflow.id,
+            silent: self.silent,
+            capture_output: self.capture_output,
+        }
+    }
+}
+
+/// What one spawned fork-branch task returns: its declaration index (for
+/// ordered capture / log assembly), the branch sub-path's result, and its own
+/// captured-log buffer (`None` on the streaming path).
+type BranchResult = (u32, Result<(), WorkflowError>, Option<Vec<CapturedLine>>);
+
+/// Per-path mutable state owned by one [`traverse_path`] frame. Each fork
+/// branch gets its OWN `PathState` (a clone of the parent's `data_flow` /
+/// `prev`, a SNAPSHOT of `vars`, and a fresh `loop_iterations`), so a branch's
+/// data-flow, variable writes, and loop counters never race a sibling's.
+struct PathState {
+    /// Data-flow carry: the most recent command/condition node's extracted
+    /// fields, surfaced as `${name}` values for the next node.
+    data_flow: BTreeMap<String, String>,
+    /// Persistent named `data`-node variables. The top-level sequential path
+    /// mutates this for the whole run; a fork branch receives a SNAPSHOT clone
+    /// whose writes are isolated and discarded at the join (MVP rule R1).
+    vars: BTreeMap<String, String>,
+    /// Per-`loop`-node completed-iteration counts on THIS path. A loop nested
+    /// inside a fork branch keeps its own counter (R3).
+    loop_iterations: HashMap<String, u32>,
+    /// The immediately-preceding node's outcome, or `None` before the first
+    /// node / after a pure node that produces no outcome.
+    prev: Option<PrevOutcome>,
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn traverse<R: Runtime>(
     app: &AppHandle<R>,
@@ -1155,7 +1310,7 @@ async fn traverse<R: Runtime>(
     run_id: &str,
     silent: bool,
     start: TraverseStart,
-    mut cancel_rx: oneshot::Receiver<()>,
+    cancel: CancellationToken,
     capture: &mut Option<Vec<CapturedLine>>,
 ) -> Result<(), WorkflowError> {
     let node_index: HashMap<String, usize> = workflow
@@ -1169,7 +1324,7 @@ async fn traverse<R: Runtime>(
     // A node-scoped run seeds `prev.stdout_tail` with the node's input example
     // so its `rawOutput` / parser sources (and a downstream node's data-flow)
     // see the same bytes the editor showed.
-    let (mut current, seeded_prev) = match &start {
+    let (current, seeded_prev) = match &start {
         TraverseStart::Start => {
             let start_idx = find_start(&workflow.nodes)?;
             (workflow.nodes[start_idx].id.clone(), None)
@@ -1191,312 +1346,516 @@ async fn traverse<R: Runtime>(
             (node_id.clone(), prev)
         }
     };
-    let mut steps = 0usize;
-    let ctx = RunContext {
-        run_id,
-        workflow_id: &workflow.id,
+
+    // Build the shared context. The graph / command tables are cloned ONCE into
+    // `Arc`s here so concurrent branches can own a `'static` clone — sequential
+    // runs pay a single clone of immutable data and nothing more.
+    let ctx = TraverseCtx {
+        app: app.clone(),
+        executor_state,
+        workflow: Arc::new(workflow.clone()),
+        commands: Arc::new(commands.clone()),
+        node_variable_values: Arc::new(node_variable_values.clone()),
+        node_index: Arc::new(node_index),
+        run_id: run_id.to_string(),
         silent,
         // Per-node buffering is on exactly when the caller wants an aggregate
         // log (a scheduled fire passes `Some(vec)`); the streaming UI passes
         // `None` and pays no buffering cost.
         capture_output: capture.is_some(),
+        steps: Arc::new(AtomicUsize::new(0)),
     };
 
-    // Data-flow carry: the extracted output fields of the most recently
-    // executed command/condition node, as `${name}` variable values for
-    // the NEXT node. Empty at the start. Each command node merges this
-    // UNDER its own per-node values (so prompt / user-supplied values win
-    // — see `merge_variable_values`), then overwrites the carry with its
-    // own extracted fields.
-    let mut data_flow: BTreeMap<String, String> = BTreeMap::new();
+    let state = PathState {
+        data_flow: BTreeMap::new(),
+        vars: BTreeMap::new(),
+        loop_iterations: HashMap::new(),
+        prev: seeded_prev,
+    };
 
-    // Persistent named variables set by `data` nodes. UNLIKE `data_flow` (which
-    // a command node replaces with its own extracted fields), this survives the
-    // whole run, so a `data`-node variable is usable by name (via a `dataVar`
-    // source) in ANY later node — not just the immediate successor.
-    let mut vars: BTreeMap<String, String> = BTreeMap::new();
+    // The top-level path stops only at `end` (no bound join above it).
+    traverse_path(&ctx, current, state, None, &cancel, capture).await
+}
 
-    // Per-`loop`-node count of COMPLETED iterations within this run. A loop
-    // node is re-entered each time its body sub-graph flows back to it; this
-    // map is how the otherwise-stateless traversal remembers how many times
-    // each loop has gone round. Keyed by node id (loops never share state).
-    let mut loop_iterations: HashMap<String, u32> = HashMap::new();
+/// Walk ONE chain of the graph from `current` until it reaches an `end` node,
+/// its bound join (`stop_at`), or an error — driving each node, picking the
+/// next edge, and recursing into a [`JoinSet`] at every `parallel` fork.
+///
+/// `state` is OWNED so each fork branch has its own data-flow / vars / loop
+/// counters. `stop_at` is the id of the `join` node this path must HALT BEFORE
+/// (set for a fork branch bound to an explicit join); reaching it returns `Ok`
+/// without executing the join — the parent fork frame continues past it.
+///
+/// Returns a boxed future because the function is recursive (a fork branch is
+/// another `traverse_path`); an `async fn` calling itself would be an
+/// infinitely-sized type.
+fn traverse_path<'a, R: Runtime>(
+    ctx: &'a TraverseCtx<R>,
+    mut current: String,
+    mut state: PathState,
+    stop_at: Option<&'a str>,
+    cancel: &'a CancellationToken,
+    capture: &'a mut Option<Vec<CapturedLine>>,
+) -> Pin<Box<dyn Future<Output = Result<(), WorkflowError>> + Send + 'a>> {
+    Box::pin(async move {
+        let workflow = &ctx.workflow;
+        let run_ctx = ctx.run_context();
 
-    // The outcome of the node executed immediately before the current one, so
-    // a `data` node can pull a value from its predecessor (raw output, exit
-    // code, retry count, …). `None` for a whole-graph run; for a node-scoped
-    // run it is seeded with the entry node's input example (see TraverseStart).
-    // Reset to `None` after a pure node (`data`/`start`) that produces no
-    // outcome of its own.
-    let mut prev: Option<PrevOutcome> = seeded_prev;
+        loop {
+            // Shared step cap across ALL branches of the run (R3).
+            let n = ctx.steps.fetch_add(1, Ordering::Relaxed) + 1;
+            if n > MAX_STEPS {
+                return Err(WorkflowError::Cycle);
+            }
 
-    loop {
-        steps += 1;
-        if steps > MAX_STEPS {
-            return Err(WorkflowError::Cycle);
-        }
-
-        let idx = *node_index
-            .get(&current)
-            .ok_or_else(|| WorkflowError::DanglingEdge("<internal>".into(), current.clone()))?;
-        let node = &workflow.nodes[idx];
-        let kind = NodeKind::parse(&node.kind)
-            .ok_or_else(|| WorkflowError::UnknownNodeKind(node.id.clone(), node.kind.clone()))?;
-
-        let next_branch: Branch = match kind {
-            NodeKind::End => {
+            // A branch bound to a join stops the instant it reaches it, WITHOUT
+            // executing the join — the parent frame resumes past it.
+            if Some(current.as_str()) == stop_at {
                 return Ok(());
             }
-            NodeKind::Start => {
-                prev = None;
-                Branch::Out
-            }
-            NodeKind::Data => {
-                // A `data` node runs NO command: it derives data-flow variables
-                // from each assignment's source — reading the PREVIOUS node's
-                // outcome for non-manual sources — then continues on its single
-                // `out` edge. Pure and instant; emits no per-node events. After
-                // it, there is no command outcome to carry, so `prev` is reset.
-                apply_data_assignments(&node.data, prev.as_ref(), &data_flow, &mut vars);
-                // A `data` node produces no result of its own — it only records
-                // persistent vars. `prev` stays as the PREVIOUS node's outcome
-                // so the next node still sees that predecessor's fields/output
-                // (the data node is "transparent" to the data-flow carry).
-                Branch::Out
-            }
-            NodeKind::Parser => {
-                // A `parser` node runs NO command: it re-parses the PREVIOUS
-                // node's raw output through its own output-schema pipeline
-                // (the same `core::extractor` a command uses), overwrites the
-                // data-flow with the extracted fields, and continues on its
-                // single `out` edge. The parser's extraction becomes the new
-                // `prev`, so a downstream node sees the parsed fields exactly
-                // as if a command had produced them.
-                prev = Some(apply_parser_node(
-                    node.parser.as_ref(),
-                    prev.as_ref(),
-                    &mut data_flow,
-                ));
-                Branch::Out
-            }
-            NodeKind::Text => {
-                // A `text` node runs NO command: it expands the `${var}`
-                // references in its template against the run's variables (the
-                // persistent `data`-node vars overlaid with the predecessor's
-                // transient data_flow) and makes the result this node's output,
-                // so a downstream node can consume it via `rawOutput`.
-                prev = Some(apply_text_node(
-                    node.text.as_deref(),
-                    prev.as_ref(),
-                    &data_flow,
-                    &vars,
-                ));
-                Branch::Out
-            }
-            NodeKind::Command => {
-                let (outcome, _attempts) = run_command_bearing_node(
-                    app,
-                    &executor_state,
-                    commands,
-                    node,
-                    node_variable_values,
-                    &mut data_flow,
-                    &vars,
-                    prev.as_ref(),
-                    ctx,
-                    None,
-                    &mut cancel_rx,
-                    capture,
-                )
-                .await?;
-                prev = Some(PrevOutcome::from_outcome(&outcome));
-                Branch::Out
-            }
-            NodeKind::Condition => {
-                // A `condition` node runs its OWN referenced command (the
-                // "test"), then branches: when a `condition` predicate is set
-                // it is evaluated against the outcome (`then`/`else`), otherwise
-                // it falls back to the exit code (exit 0 → `then`, non-zero →
-                // `else`) — preserving exact MVP behaviour for predicate-less
-                // nodes.
-                let (outcome, _attempts) = run_command_bearing_node(
-                    app,
-                    &executor_state,
-                    commands,
-                    node,
-                    node_variable_values,
-                    &mut data_flow,
-                    &vars,
-                    prev.as_ref(),
-                    ctx,
-                    None,
-                    &mut cancel_rx,
-                    capture,
-                )
-                .await?;
-                let eval_ctx = build_eval_context(&outcome);
-                let branch = select_condition_branch(&node.id, node.condition.as_ref(), &eval_ctx)?;
-                let mut p = PrevOutcome::from_outcome(&outcome);
-                p.condition_result = Some(branch == Branch::Then);
-                prev = Some(p);
-                branch
-            }
-            NodeKind::Switch => {
-                // A `switch` node runs its referenced command as a test, then
-                // takes the first `case` whose predicate matches (in
-                // declaration order), or `default` when none match.
-                let (outcome, _attempts) = run_command_bearing_node(
-                    app,
-                    &executor_state,
-                    commands,
-                    node,
-                    node_variable_values,
-                    &mut data_flow,
-                    &vars,
-                    prev.as_ref(),
-                    ctx,
-                    None,
-                    &mut cancel_rx,
-                    capture,
-                )
-                .await?;
-                let eval_ctx = build_eval_context(&outcome);
-                let branch = select_switch_branch(&node.id, &node.cases, &eval_ctx)?;
-                let mut p = PrevOutcome::from_outcome(&outcome);
-                p.matched_case = Some(match &branch {
-                    Branch::Case(id) => id.clone(),
-                    _ => "default".to_string(),
-                });
-                prev = Some(p);
-                branch
-            }
-            NodeKind::Loop => {
-                // A `loop` node runs NO command of its own: it is a control
-                // point re-entered each time its body sub-graph flows back to
-                // it. It decides — from its config, the iterations already
-                // completed, and the current data-flow — whether to enter the
-                // body again (`body`) or finish (`done`). The `while` predicate
-                // inspects the data-flow the body produced (exit code / stdout
-                // belong to body commands, not the loop node), so the context
-                // carries only `variables`.
-                let cfg = node
-                    .loop_config
-                    .as_ref()
-                    .ok_or_else(|| WorkflowError::LoopMissingConfig(node.id.clone()))?;
-                let completed = *loop_iterations.get(&node.id).unwrap_or(&0);
-                let eval_ctx = EvalContext {
-                    exit_code: None,
-                    variables: data_flow.clone(),
-                    stdout: None,
-                };
-                let branch = loop_should_continue(&node.id, cfg, completed, &eval_ctx)?;
-                if branch == Branch::Body {
-                    // Entering the body: record the new (1-based) iteration and
-                    // announce it so the editor can show progress. The loop node
-                    // itself produces no outcome — the body's nodes will — so
-                    // `prev` is cleared.
-                    let iteration = completed + 1;
-                    loop_iterations.insert(node.id.clone(), iteration);
-                    emit_unless_silent(
-                        app,
-                        silent,
-                        &WorkflowEvent::LoopIteration {
-                            run_id: run_id.to_string(),
-                            workflow_id: workflow.id.clone(),
-                            node_id: node.id.clone(),
-                            iteration,
-                        },
-                    );
-                    prev = None;
-                } else {
-                    // Leaving the loop: expose the completed-iteration count to a
-                    // downstream `data` node, then clear the counter so a re-entry
-                    // later in the SAME run (e.g. an outer loop wrapping this one)
-                    // starts a fresh count rather than resuming the old one.
-                    prev = Some(PrevOutcome {
-                        loop_iterations: Some(completed),
-                        ..Default::default()
-                    });
-                    loop_iterations.remove(&node.id);
+
+            let idx = *ctx
+                .node_index
+                .get(&current)
+                .ok_or_else(|| WorkflowError::DanglingEdge("<internal>".into(), current.clone()))?;
+            let node = &workflow.nodes[idx];
+            let kind = NodeKind::parse(&node.kind).ok_or_else(|| {
+                WorkflowError::UnknownNodeKind(node.id.clone(), node.kind.clone())
+            })?;
+
+            let next_branch: Branch = match kind {
+                NodeKind::End => {
+                    // A bound fork branch (`stop_at.is_some()`) MUST converge at
+                    // its join — the only legitimate Ok finish is the
+                    // `stop_at == current` early-return above. Reaching an `End`
+                    // here means the branch dead-ended before the barrier; the
+                    // join (and everything after it) would otherwise run despite
+                    // the branch never arriving. That is a graph fault, not a
+                    // silent success. An UNBOUND branch (`stop_at == None`) still
+                    // legitimately ends at `End`.
+                    if let Some(join_id) = stop_at {
+                        return Err(WorkflowError::BranchEndedBeforeJoin(join_id.to_string()));
+                    }
+                    return Ok(());
                 }
-                branch
-            }
-            NodeKind::Try => {
-                // A `try` node runs its referenced command with retries (its
-                // `retry` config). The final attempt's exit code decides the
-                // exit: success (exit 0) → `ok`, failure after retries → `catch`.
-                let (outcome, attempts) = run_command_bearing_node(
-                    app,
-                    &executor_state,
-                    commands,
-                    node,
-                    node_variable_values,
-                    &mut data_flow,
-                    &vars,
-                    prev.as_ref(),
-                    ctx,
-                    node.retry.as_ref(),
-                    &mut cancel_rx,
-                    capture,
-                )
-                .await?;
-                let branch = if outcome.exit_code == Some(0) {
-                    Branch::Ok
-                } else {
-                    Branch::Catch
-                };
-                let mut p = PrevOutcome::from_outcome(&outcome);
-                p.retry_count = Some(attempts);
-                prev = Some(p);
-                branch
-            }
-        };
+                NodeKind::Start => {
+                    state.prev = None;
+                    Branch::Out
+                }
+                NodeKind::Data => {
+                    // A `data` node runs NO command: it derives data-flow
+                    // variables from each assignment's source — reading the
+                    // PREVIOUS node's outcome for non-manual sources — then
+                    // continues on its single `out` edge. Pure and instant.
+                    apply_data_assignments(
+                        &node.data,
+                        state.prev.as_ref(),
+                        &state.data_flow,
+                        &mut state.vars,
+                    );
+                    // A `data` node produces no result of its own — `prev` stays
+                    // as the PREVIOUS node's outcome (it is transparent to the
+                    // data-flow carry).
+                    Branch::Out
+                }
+                NodeKind::Parser => {
+                    // A `parser` node runs NO command: it re-parses the PREVIOUS
+                    // node's raw output through its own output-schema pipeline,
+                    // overwrites the data-flow with the extracted fields, and
+                    // continues on its single `out` edge.
+                    state.prev = Some(apply_parser_node(
+                        node.parser.as_ref(),
+                        state.prev.as_ref(),
+                        &mut state.data_flow,
+                    ));
+                    Branch::Out
+                }
+                NodeKind::Text => {
+                    // A `text` node runs NO command: it expands the `${var}`
+                    // references in its template against the run's variables and
+                    // makes the result this node's output.
+                    state.prev = Some(apply_text_node(
+                        node.text.as_deref(),
+                        state.prev.as_ref(),
+                        &state.data_flow,
+                        &state.vars,
+                    ));
+                    Branch::Out
+                }
+                NodeKind::Command => {
+                    let (outcome, _attempts) = run_command_bearing_node(
+                        &ctx.app,
+                        &ctx.executor_state,
+                        &ctx.commands,
+                        node,
+                        &ctx.node_variable_values,
+                        &mut state.data_flow,
+                        &state.vars,
+                        state.prev.as_ref(),
+                        run_ctx,
+                        None,
+                        cancel,
+                        capture,
+                    )
+                    .await?;
+                    state.prev = Some(PrevOutcome::from_outcome(&outcome));
+                    Branch::Out
+                }
+                NodeKind::Condition => {
+                    // A `condition` node runs its OWN referenced command (the
+                    // "test"), then branches: a `condition` predicate (if set)
+                    // is evaluated against the outcome (`then`/`else`), else it
+                    // falls back to the exit code (exit 0 → `then`).
+                    let (outcome, _attempts) = run_command_bearing_node(
+                        &ctx.app,
+                        &ctx.executor_state,
+                        &ctx.commands,
+                        node,
+                        &ctx.node_variable_values,
+                        &mut state.data_flow,
+                        &state.vars,
+                        state.prev.as_ref(),
+                        run_ctx,
+                        None,
+                        cancel,
+                        capture,
+                    )
+                    .await?;
+                    let eval_ctx = build_eval_context(&outcome);
+                    let branch =
+                        select_condition_branch(&node.id, node.condition.as_ref(), &eval_ctx)?;
+                    let mut p = PrevOutcome::from_outcome(&outcome);
+                    p.condition_result = Some(branch == Branch::Then);
+                    state.prev = Some(p);
+                    branch
+                }
+                NodeKind::Switch => {
+                    // A `switch` node runs its referenced command as a test,
+                    // then takes the first `case` whose predicate matches (in
+                    // declaration order), or `default` when none match.
+                    let (outcome, _attempts) = run_command_bearing_node(
+                        &ctx.app,
+                        &ctx.executor_state,
+                        &ctx.commands,
+                        node,
+                        &ctx.node_variable_values,
+                        &mut state.data_flow,
+                        &state.vars,
+                        state.prev.as_ref(),
+                        run_ctx,
+                        None,
+                        cancel,
+                        capture,
+                    )
+                    .await?;
+                    let eval_ctx = build_eval_context(&outcome);
+                    let branch = select_switch_branch(&node.id, &node.cases, &eval_ctx)?;
+                    let mut p = PrevOutcome::from_outcome(&outcome);
+                    p.matched_case = Some(match &branch {
+                        Branch::Case(id) => id.clone(),
+                        _ => "default".to_string(),
+                    });
+                    state.prev = Some(p);
+                    branch
+                }
+                NodeKind::Loop => {
+                    // A `loop` node runs NO command of its own: it is a control
+                    // point re-entered each time its body sub-graph flows back
+                    // to it. It decides — from its config, the iterations
+                    // already completed, and the current data-flow — whether to
+                    // enter the body again (`body`) or finish (`done`).
+                    let cfg = node
+                        .loop_config
+                        .as_ref()
+                        .ok_or_else(|| WorkflowError::LoopMissingConfig(node.id.clone()))?;
+                    let completed = *state.loop_iterations.get(&node.id).unwrap_or(&0);
+                    let eval_ctx = EvalContext {
+                        exit_code: None,
+                        variables: state.data_flow.clone(),
+                        stdout: None,
+                    };
+                    let branch = loop_should_continue(&node.id, cfg, completed, &eval_ctx)?;
+                    if branch == Branch::Body {
+                        // Entering the body: record the new (1-based) iteration
+                        // and announce it. The loop node produces no outcome.
+                        let iteration = completed + 1;
+                        state.loop_iterations.insert(node.id.clone(), iteration);
+                        emit_unless_silent(
+                            &ctx.app,
+                            ctx.silent,
+                            &WorkflowEvent::LoopIteration {
+                                run_id: ctx.run_id.clone(),
+                                workflow_id: workflow.id.clone(),
+                                node_id: node.id.clone(),
+                                iteration,
+                            },
+                        );
+                        state.prev = None;
+                    } else {
+                        // Leaving the loop: expose the completed-iteration count
+                        // to a downstream `data` node, then clear the counter so
+                        // a later re-entry (an outer loop) starts fresh.
+                        state.prev = Some(PrevOutcome {
+                            loop_iterations: Some(completed),
+                            ..Default::default()
+                        });
+                        state.loop_iterations.remove(&node.id);
+                    }
+                    branch
+                }
+                NodeKind::Try => {
+                    // A `try` node runs its referenced command with retries. The
+                    // final attempt's exit code decides the exit: success → `ok`,
+                    // failure after retries → `catch`.
+                    let (outcome, attempts) = run_command_bearing_node(
+                        &ctx.app,
+                        &ctx.executor_state,
+                        &ctx.commands,
+                        node,
+                        &ctx.node_variable_values,
+                        &mut state.data_flow,
+                        &state.vars,
+                        state.prev.as_ref(),
+                        run_ctx,
+                        node.retry.as_ref(),
+                        cancel,
+                        capture,
+                    )
+                    .await?;
+                    let branch = if outcome.exit_code == Some(0) {
+                        Branch::Ok
+                    } else {
+                        Branch::Catch
+                    };
+                    let mut p = PrevOutcome::from_outcome(&outcome);
+                    p.retry_count = Some(attempts);
+                    state.prev = Some(p);
+                    branch
+                }
+                NodeKind::Parallel => {
+                    // Fork. Run each `branch:<n>` exit concurrently, then (if a
+                    // join is bound) continue the PARENT path past the join.
+                    return run_parallel(ctx, node, state, cancel, capture).await;
+                }
+                NodeKind::Join => {
+                    // A `join` reached by the PARENT/sequential continuation (a
+                    // branch bound to it stops BEFORE it via `stop_at`). It is a
+                    // pass-through: continue on its single `out` edge. A join
+                    // reached without a matching fork (e.g. top-level) behaves
+                    // the same — there is nothing to synchronise, so it just
+                    // forwards. (Data-flow was already reset by the fork frame
+                    // when it resumed here.)
+                    Branch::Out
+                }
+            };
 
-        // Whether this node makes an explicit branch choice (condition /
-        // switch / loop / try). Used both to pick the right "no edge" error and
-        // to decide whether to emit a `BranchTaken` event for the editor.
-        let is_branching = matches!(
-            kind,
-            NodeKind::Condition | NodeKind::Switch | NodeKind::Loop | NodeKind::Try
-        );
-        let branch_label = next_branch.to_branch_string();
-
-        let edge = edge_for_branch(&workflow.edges, &node_index, &node.id, &next_branch)?;
-        let (edge_id, target) = match edge {
-            Some(found) => found,
-            None if matches!(kind, NodeKind::Switch) => {
-                // A switch with no matching case AND no `default` edge has
-                // nowhere to go — a more specific error than a bare missing
-                // edge so the author knows to add a default.
-                return Err(WorkflowError::NoMatchingCase(node.id.clone()));
-            }
-            None if is_branching => {
-                return Err(WorkflowError::MissingBranch(node.id.clone(), branch_label));
-            }
-            None => {
-                return Err(WorkflowError::NoOutgoingEdge(node.id.clone()));
-            }
-        };
-
-        // For a branching node (condition / switch), record which branch was
-        // taken so the editor can highlight the path. Start / command nodes
-        // have a single `out` edge and don't need the annotation.
-        if is_branching {
-            emit_unless_silent(
-                app,
-                silent,
-                &WorkflowEvent::BranchTaken {
-                    run_id: run_id.to_string(),
-                    workflow_id: workflow.id.clone(),
-                    node_id: node.id.clone(),
-                    branch: branch_label,
-                    edge_id,
-                },
+            // Whether this node makes an explicit branch choice (condition /
+            // switch / loop / try). Used to pick the right "no edge" error and
+            // to decide whether to emit a `BranchTaken` event for the editor.
+            let is_branching = matches!(
+                kind,
+                NodeKind::Condition | NodeKind::Switch | NodeKind::Loop | NodeKind::Try
             );
-        }
+            let branch_label = next_branch.to_branch_string();
 
-        current = target;
+            let edge = edge_for_branch(&workflow.edges, &ctx.node_index, &node.id, &next_branch)?;
+            let (edge_id, target) = match edge {
+                Some(found) => found,
+                None if matches!(kind, NodeKind::Switch) => {
+                    return Err(WorkflowError::NoMatchingCase(node.id.clone()));
+                }
+                None if is_branching => {
+                    return Err(WorkflowError::MissingBranch(node.id.clone(), branch_label));
+                }
+                None => {
+                    return Err(WorkflowError::NoOutgoingEdge(node.id.clone()));
+                }
+            };
+
+            if is_branching {
+                emit_unless_silent(
+                    &ctx.app,
+                    ctx.silent,
+                    &WorkflowEvent::BranchTaken {
+                        run_id: ctx.run_id.clone(),
+                        workflow_id: workflow.id.clone(),
+                        node_id: node.id.clone(),
+                        branch: branch_label,
+                        edge_id,
+                    },
+                );
+            }
+
+            current = target;
+        }
+    })
+}
+
+/// Execute a `parallel` (fork) node: fan out to its `branch:<n>` exits and run
+/// each concurrently, then continue the parent path.
+///
+/// MVP semantics (Phase 0):
+///   - 0 branches → [`WorkflowError::ParallelNoBranches`] (a misconfigured fork
+///     can't silently dead-end).
+///   - 1 branch → FAST PATH: traverse it inline on the SAME frame with the
+///     current data-flow/prev/vars — the fork is transparent (no `JoinSet`).
+///   - ≥2 branches → spawn one `traverse_path` per branch into a [`JoinSet`],
+///     each with its OWN clone of `data_flow`/`prev`, a SNAPSHOT of `vars`, and
+///     a CHILD cancellation token. Branch writes to `vars` are isolated and
+///     discarded (R1).
+///
+/// Each branch's stop node is the bound `join_node_id` (if any): the branch
+/// returns `Ok` the moment it reaches that join, WITHOUT executing it. If no
+/// join is bound, each branch runs to its own `end`.
+///
+/// Fail-fast: the first branch error cancels the child token (aborting the
+/// siblings' in-flight commands), drains the `JoinSet`, and returns that error.
+/// A `JoinError` from an aborted task is mapped to `Cancelled`, not a fault.
+///
+/// After all branches succeed: if a join is bound, the PARENT path resumes from
+/// the join node's single `out` edge with EMPTY data-flow and `prev = None`
+/// (the approved "no merge" rule). If none is bound, this path is done.
+async fn run_parallel<R: Runtime>(
+    ctx: &TraverseCtx<R>,
+    node: &WorkflowNodeRecord,
+    state: PathState,
+    cancel: &CancellationToken,
+    capture: &mut Option<Vec<CapturedLine>>,
+) -> Result<(), WorkflowError> {
+    let branches = edges_for_branch_multi(&ctx.workflow.edges, &ctx.node_index, &node.id)?;
+    if branches.is_empty() {
+        return Err(WorkflowError::ParallelNoBranches(node.id.clone()));
     }
+
+    let join_id = node.join_node_id.clone();
+
+    // FAST PATH: a single branch is just a sequential edge — keep the current
+    // frame, data-flow, prev, and vars (fork is transparent). No JoinSet.
+    if branches.len() == 1 {
+        let (_, _, target) = &branches[0];
+        let stop = join_id.as_deref();
+        traverse_path(ctx, target.clone(), state, stop, cancel, capture).await?;
+        return continue_after_join(ctx, join_id.as_deref(), cancel, capture).await;
+    }
+
+    // ≥2 branches → true concurrency. Snapshot `vars` once; every branch reads
+    // the SAME pre-fork values and its writes never escape (R1).
+    let vars_snapshot = state.vars.clone();
+    // A child token so a fail-fast `.cancel()` aborts ONLY this fork's branches
+    // (and is also tripped by the parent token being cancelled).
+    let child_cancel = cancel.child_token();
+
+    // Capture (R5): give each branch its own buffer, collected in branch index
+    // order after the JoinSet drains, so the aggregate log is reproducible. The
+    // streaming path (capture == None) allocates nothing.
+    let capturing = capture.is_some();
+
+    let mut set: JoinSet<BranchResult> = JoinSet::new();
+    for (n, _edge_id, target) in &branches {
+        let branch_ctx = ctx.clone();
+        let branch_state = PathState {
+            data_flow: state.data_flow.clone(),
+            vars: vars_snapshot.clone(),
+            loop_iterations: HashMap::new(),
+            prev: state.prev.clone(),
+        };
+        let branch_cancel = child_cancel.clone();
+        let target = target.clone();
+        let join_id = join_id.clone();
+        let n = *n;
+        set.spawn(async move {
+            let mut branch_capture: Option<Vec<CapturedLine>> =
+                if capturing { Some(Vec::new()) } else { None };
+            let result = traverse_path(
+                &branch_ctx,
+                target,
+                branch_state,
+                join_id.as_deref(),
+                &branch_cancel,
+                &mut branch_capture,
+            )
+            .await;
+            (n, result, branch_capture)
+        });
+    }
+
+    // Collect outcomes; on the FIRST error, fail fast: cancel the child token to
+    // abort siblings, drain the set, and return that error.
+    let mut first_error: Option<WorkflowError> = None;
+    let mut branch_logs: Vec<(u32, Vec<CapturedLine>)> = Vec::new();
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok((n, Ok(()), branch_capture)) => {
+                if let Some(lines) = branch_capture {
+                    branch_logs.push((n, lines));
+                }
+            }
+            Ok((_n, Err(err), _)) => {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                    child_cancel.cancel();
+                }
+            }
+            Err(_join_err) => {
+                // A task panicked or was aborted by the fail-fast cancel. An
+                // aborted sibling is expected once we've cancelled, so treat it
+                // as a cancellation rather than a separate fault.
+                if first_error.is_none() {
+                    first_error = Some(WorkflowError::Cancelled);
+                    child_cancel.cancel();
+                }
+            }
+        }
+    }
+
+    if let Some(err) = first_error {
+        return Err(err);
+    }
+
+    // All branches succeeded. Append their buffered logs to the parent capture
+    // in branch INDEX order (R5) so the aggregate is reproducible regardless of
+    // real-time interleaving.
+    if let Some(parent) = capture.as_mut() {
+        branch_logs.sort_by_key(|(n, _)| *n);
+        for (_, lines) in branch_logs {
+            parent.extend(lines);
+        }
+    }
+
+    continue_after_join(ctx, join_id.as_deref(), cancel, capture).await
+}
+
+/// Resume the parent path AFTER a fork's branches have all completed. With a
+/// bound join, traversal continues from the join node's single `out` edge with
+/// EMPTY data-flow and `prev = None` (the approved no-merge MVP rule). Without a
+/// join (`join_id == None`), each branch already ran to its own `end`, so this
+/// path is finished.
+async fn continue_after_join<R: Runtime>(
+    ctx: &TraverseCtx<R>,
+    join_id: Option<&str>,
+    cancel: &CancellationToken,
+    capture: &mut Option<Vec<CapturedLine>>,
+) -> Result<(), WorkflowError> {
+    let Some(join_id) = join_id else {
+        return Ok(());
+    };
+    // Validate the bound join exists before continuing.
+    if !ctx.node_index.contains_key(join_id) {
+        return Err(WorkflowError::DanglingEdge(
+            "<join>".into(),
+            join_id.to_string(),
+        ));
+    }
+    // Continue from the join with a fresh frame: empty data-flow, no prev, and a
+    // fresh `vars` (branch vars were isolated and discarded). The `Join` arm of
+    // `traverse_path` forwards it on its `out` edge.
+    let state = PathState {
+        data_flow: BTreeMap::new(),
+        vars: BTreeMap::new(),
+        loop_iterations: HashMap::new(),
+        prev: None,
+    };
+    traverse_path(ctx, join_id.to_string(), state, None, cancel, capture).await
 }
 
 /// Terminal outcome of a workflow run driven to completion in-process by
@@ -1533,14 +1892,14 @@ pub async fn execute_workflow_blocking<R: Runtime>(
     node_variable_values: HashMap<String, BTreeMap<String, String>>,
 ) -> WorkflowRunCapture {
     let run_id = uuid::Uuid::new_v4().to_string();
-    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    let cancel = CancellationToken::new();
 
     {
         let mut running = state.running.lock().await;
         running.insert(
             run_id.clone(),
             WorkflowRunningEntry {
-                cancel_tx: Some(cancel_tx),
+                cancel: cancel.clone(),
             },
         );
     }
@@ -1557,7 +1916,7 @@ pub async fn execute_workflow_blocking<R: Runtime>(
         // Always silent: a scheduled fire never streams to the live console.
         true,
         TraverseStart::Start,
-        cancel_rx,
+        cancel,
         &mut capture,
     )
     .await;
@@ -1682,14 +2041,14 @@ async fn spawn_traversal<R: Runtime>(
     start: TraverseStart,
 ) -> Result<String, String> {
     let run_id = uuid::Uuid::new_v4().to_string();
-    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    let cancel = CancellationToken::new();
 
     {
         let mut running = state.running.lock().await;
         running.insert(
             run_id.clone(),
             WorkflowRunningEntry {
-                cancel_tx: Some(cancel_tx),
+                cancel: cancel.clone(),
             },
         );
     }
@@ -1711,7 +2070,7 @@ async fn spawn_traversal<R: Runtime>(
             &run_id_task,
             silent,
             start,
-            cancel_rx,
+            cancel,
             &mut capture,
         )
         .await;
@@ -1763,11 +2122,11 @@ pub async fn cancel_workflow(
     state: Arc<WorkflowExecutorState>,
     run_id: String,
 ) -> Result<(), String> {
-    let mut map = state.running.lock().await;
-    if let Some(entry) = map.get_mut(&run_id) {
-        if let Some(tx) = entry.cancel_tx.take() {
-            let _ = tx.send(());
-        }
+    let map = state.running.lock().await;
+    if let Some(entry) = map.get(&run_id) {
+        // Idempotent: cancelling an already-cancelled token is a no-op, and the
+        // single signal fans out to every in-flight fork branch holding a clone.
+        entry.cancel.cancel();
     }
     Ok(())
 }
@@ -1922,6 +2281,7 @@ mod graph_tests {
             variable_sources: std::collections::BTreeMap::new(),
             parser: None,
             text: None,
+            join_node_id: None,
             position: NodePosition { x: 0.0, y: 0.0 },
         }
     }
@@ -2020,6 +2380,100 @@ mod graph_tests {
         );
     }
 
+    // ---- parallel fork: edges_for_branch_multi --------------------------
+
+    #[test]
+    fn edges_for_branch_multi_returns_branches_sorted_by_index() {
+        // Edges stored OUT of index order must come back sorted branch:0,1,2 so
+        // declaration order (and thus capture / termination order) is stable.
+        let edges = vec![
+            edge("e2", "fork", "t2", "branch:2"),
+            edge("e0", "fork", "t0", "branch:0"),
+            edge("e1", "fork", "t1", "branch:1"),
+        ];
+        let index: HashMap<String, usize> = [
+            ("fork".to_string(), 0),
+            ("t0".to_string(), 1),
+            ("t1".to_string(), 2),
+            ("t2".to_string(), 3),
+        ]
+        .into_iter()
+        .collect();
+        let got = edges_for_branch_multi(&edges, &index, "fork").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                (0, "e0".to_string(), "t0".to_string()),
+                (1, "e1".to_string(), "t1".to_string()),
+                (2, "e2".to_string(), "t2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn edges_for_branch_multi_ignores_non_branch_labels() {
+        // A stray non-`branch:<n>` label on a parallel node is not a fork exit.
+        let edges = vec![
+            edge("e0", "fork", "t0", "branch:0"),
+            edge("eout", "fork", "other", "out"),
+        ];
+        let index: HashMap<String, usize> = [
+            ("fork".to_string(), 0),
+            ("t0".to_string(), 1),
+            ("other".to_string(), 2),
+        ]
+        .into_iter()
+        .collect();
+        let got = edges_for_branch_multi(&edges, &index, "fork").unwrap();
+        assert_eq!(got, vec![(0, "e0".to_string(), "t0".to_string())]);
+    }
+
+    #[test]
+    fn edges_for_branch_multi_empty_when_no_branches() {
+        let edges = vec![edge("eout", "fork", "t", "out")];
+        let index: HashMap<String, usize> = [("fork".to_string(), 0), ("t".to_string(), 1)]
+            .into_iter()
+            .collect();
+        let got = edges_for_branch_multi(&edges, &index, "fork").unwrap();
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn edges_for_branch_multi_rejects_duplicate_index() {
+        // Two `branch:0` edges from the same fork is ambiguous, like two `out`
+        // edges from a sequential node.
+        let edges = vec![
+            edge("e0", "fork", "t0", "branch:0"),
+            edge("e0b", "fork", "t1", "branch:0"),
+        ];
+        let index: HashMap<String, usize> = [
+            ("fork".to_string(), 0),
+            ("t0".to_string(), 1),
+            ("t1".to_string(), 2),
+        ]
+        .into_iter()
+        .collect();
+        let res = edges_for_branch_multi(&edges, &index, "fork");
+        assert_eq!(
+            res,
+            Err(WorkflowError::AmbiguousBranch(
+                "fork".into(),
+                "branch:0".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn edges_for_branch_multi_rejects_dangling_target() {
+        let edges = vec![edge("e0", "fork", "ghost", "branch:0")];
+        let index: HashMap<String, usize> = [("fork".to_string(), 0)].into_iter().collect();
+        let res = edges_for_branch_multi(&edges, &index, "fork");
+        assert_eq!(
+            res,
+            Err(WorkflowError::DanglingEdge("e0".into(), "ghost".into()))
+        );
+    }
+
     #[test]
     fn edge_for_branch_dangling_target_beats_ambiguity_check() {
         // A dangling target on the FIRST matching edge is reported as a
@@ -2063,6 +2517,19 @@ mod graph_tests {
         assert_eq!(Branch::Else.to_branch_string(), "else");
         assert_eq!(Branch::Default.to_branch_string(), "default");
         assert_eq!(Branch::Case("ok".into()).to_branch_string(), "case:ok");
+    }
+
+    #[test]
+    fn branch_renders_parallel_fork_exits() {
+        assert_eq!(Branch::BranchN(0).to_branch_string(), "branch:0");
+        assert_eq!(Branch::BranchN(1).to_branch_string(), "branch:1");
+        assert_eq!(Branch::BranchN(42).to_branch_string(), "branch:42");
+    }
+
+    #[test]
+    fn node_kind_parses_parallel_and_join() {
+        assert_eq!(NodeKind::parse("parallel"), Some(NodeKind::Parallel));
+        assert_eq!(NodeKind::parse("join"), Some(NodeKind::Join));
     }
 
     #[test]

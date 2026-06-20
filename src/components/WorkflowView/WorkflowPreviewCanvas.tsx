@@ -1,13 +1,15 @@
 import { useMemo } from "react";
 import type { ReactElement } from "react";
-import ReactFlow, {
+import {
+  ReactFlow,
   Background,
   Controls,
   ReactFlowProvider,
-} from "reactflow";
-import "reactflow/dist/style.css";
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import { workflowToFlow } from "../../utils/workflowGraph";
 import { workflowNodeTypes } from "../Editor/nodes";
+import { CanvasZoomControls } from "../Editor/CanvasZoomControls";
 import type { Workflow } from "../../types";
 
 interface WorkflowPreviewCanvasProps {
@@ -45,7 +47,15 @@ function PreviewCanvas({ workflow }: WorkflowPreviewCanvasProps): ReactElement {
       proOptions={{ hideAttribution: true }}
     >
       <Background />
-      <Controls showInteractive={false} />
+      {/* Read-only preview: localized zoom / fit buttons (shared with the
+          editor) — no lock / fullscreen toggles, default bottom-left position. */}
+      <Controls
+        showZoom={false}
+        showFitView={false}
+        showInteractive={false}
+      >
+        <CanvasZoomControls />
+      </Controls>
     </ReactFlow>
   );
 }

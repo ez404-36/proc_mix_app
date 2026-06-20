@@ -198,6 +198,12 @@ pub struct WorkflowNodeRecord {
     /// output. `None` for every other kind. Mirrors the TS `WorkflowNode.text`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Optional explicit join barrier for a `parallel` (fork) node: the id of
+    /// the `join` node where all of this fork's branches synchronise. `None`
+    /// for every other kind, and also for a `parallel` whose branches each end
+    /// at their own `end` (no barrier). Mirrors the TS `WorkflowNode.joinNodeId`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join_node_id: Option<String>,
     pub position: NodePosition,
 }
 
@@ -404,6 +410,7 @@ mod wire_format_tests {
                     variable_sources: std::collections::BTreeMap::new(),
                     parser: None,
                     text: None,
+                    join_node_id: None,
                     position: NodePosition { x: 0.0, y: 0.0 },
                 },
                 WorkflowNodeRecord {
@@ -419,6 +426,7 @@ mod wire_format_tests {
                     variable_sources: std::collections::BTreeMap::new(),
                     parser: None,
                     text: None,
+                    join_node_id: None,
                     position: NodePosition { x: 120.0, y: 40.0 },
                 },
             ],
@@ -485,6 +493,7 @@ mod wire_format_tests {
             variable_sources: std::collections::BTreeMap::new(),
             parser: None,
             text: None,
+            join_node_id: None,
             position: NodePosition { x: 1.0, y: 2.0 },
         };
         let json = serde_json::to_value(&node).unwrap();
@@ -511,6 +520,7 @@ mod wire_format_tests {
             variable_sources: std::collections::BTreeMap::new(),
             parser: None,
             text: None,
+            join_node_id: None,
             position: NodePosition { x: 0.0, y: 0.0 },
         };
         let json = serde_json::to_value(&node).unwrap();
@@ -521,6 +531,42 @@ mod wire_format_tests {
         assert!(json.get("cases").is_none());
         assert!(json.get("loop").is_none());
         assert!(json.get("variableSources").is_none());
+        assert!(json.get("joinNodeId").is_none());
+    }
+
+    /// A `parallel` node's optional `joinNodeId` serialises as camelCase and is
+    /// omitted when `None` (every non-`parallel` kind), present when `Some`.
+    #[test]
+    fn node_record_join_node_id_wire_format_and_round_trip() {
+        let mut node = WorkflowNodeRecord {
+            id: "n-fork".into(),
+            kind: "parallel".into(),
+            command_id: None,
+            label: None,
+            condition: None,
+            cases: Vec::new(),
+            loop_config: None,
+            retry: None,
+            data: Vec::new(),
+            variable_sources: std::collections::BTreeMap::new(),
+            parser: None,
+            text: None,
+            join_node_id: None,
+            position: NodePosition { x: 0.0, y: 0.0 },
+        };
+
+        // None → the field is omitted entirely.
+        let json = serde_json::to_value(&node).unwrap();
+        assert!(json.get("joinNodeId").is_none());
+        assert!(json.get("join_node_id").is_none());
+
+        // Some → camelCase `joinNodeId`, and the record round-trips unchanged.
+        node.join_node_id = Some("n-join".into());
+        let json = serde_json::to_value(&node).unwrap();
+        assert_eq!(json["joinNodeId"], "n-join");
+        assert!(json.get("join_node_id").is_none());
+        let back: WorkflowNodeRecord = serde_json::from_value(json).unwrap();
+        assert_eq!(back, node);
     }
 
     /// A `loop` config serialises with the field renamed to the wire/TS name
@@ -662,6 +708,7 @@ mod sqlite_integration_tests {
                     variable_sources: std::collections::BTreeMap::new(),
                     parser: None,
                     text: None,
+                    join_node_id: None,
                     position: NodePosition { x: 0.0, y: 0.0 },
                 },
                 WorkflowNodeRecord {
@@ -677,6 +724,7 @@ mod sqlite_integration_tests {
                     variable_sources: std::collections::BTreeMap::new(),
                     parser: None,
                     text: None,
+                    join_node_id: None,
                     position: NodePosition { x: 100.0, y: 0.0 },
                 },
             ],

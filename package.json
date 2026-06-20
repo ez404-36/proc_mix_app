@@ -1,7 +1,7 @@
 {
   "name": "procmix",
   "private": true,
-  "version": "0.7.4",
+  "version": "0.8.0",
   "description": "ProcMix - cross-platform automation tool",
   "productName": "ProcMix",
   "author": "Zenkin Egor Andreevich",
@@ -29,13 +29,13 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
+    "@xyflow/react": "^12.11.0",
     "i18next": "^26.3.0",
     "i18next-browser-languagedetector": "^8.2.1",
     "react": "^19.1.0",
     "react-datepicker": "^9.1.0",
     "react-dom": "^19.1.0",
     "react-i18next": "^17.0.8",
-    "reactflow": "^11.11.4",
     "zustand": "^5.0.13"
   },
   "devDependencies": {

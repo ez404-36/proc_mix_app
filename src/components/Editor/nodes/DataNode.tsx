@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import type { DataAssignment } from "../../../types";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
@@ -34,7 +34,7 @@ function assignmentDisplayValue(
  * process. Target handle on the left, single `out` source handle on the
  * right. The card lists each assignment as `$name = <source>`.
  */
-export function DataNode({ data }: NodeProps<WorkflowNodeData>): ReactElement {
+export function DataNode({ data }: NodeProps<Node<WorkflowNodeData>>): ReactElement {
   const { t } = useTranslation();
   const rows = (data.data ?? []).filter((a) => a.name.trim() !== "");
 

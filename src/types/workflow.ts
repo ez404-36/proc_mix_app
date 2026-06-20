@@ -33,6 +33,11 @@ import type { OutputSchema } from "./outputSchema";
  *   - "text"      → pure transformation node: composes a template string,
  *     expanding `${var}` references to earlier variables, and makes the result
  *     its output. Runs no command.
+ *   - "parallel"  → fan-out fork: splits traversal into one concurrent branch
+ *     per outgoing `branch:<n>` edge. Runs no command. (v0.8.0)
+ *   - "join"      → barrier that waits for every branch of its `parallel`
+ *     fork to finish before traversal continues on its single `out` edge.
+ *     Runs no command. (v0.8.0)
  *   - "end"       → terminal node; stops traversal. A workflow may have
  *     several end nodes (e.g. one per branch).
  *
@@ -50,6 +55,8 @@ export type WorkflowNodeKind =
   | "data"
   | "parser"
   | "text"
+  | "parallel"
+  | "join"
   | "end";
 
 /**
@@ -61,6 +68,8 @@ export type WorkflowNodeKind =
  *   - `default`          → a `switch`'s fallback when no case matches.
  *   - `body` / `done`    → a `loop`'s iteration entry / completion exit.
  *   - `ok` / `catch`     → a `try`'s success / retries-exhausted exits.
+ *   - `branch:${n}`      → a `parallel` fork exit (`branch:0`, `branch:1`, …),
+ *     one per concurrent branch in declaration order (like `case:${id}`).
  */
 export type WorkflowEdgeBranch =
   | "out"
@@ -71,7 +80,8 @@ export type WorkflowEdgeBranch =
   | "body"
   | "done"
   | "ok"
-  | "catch";
+  | "catch"
+  | `branch:${number}`;
 
 /**
  * What a {@link WorkflowCondition} compares against. Mirrors the Rust
@@ -231,6 +241,14 @@ export interface WorkflowNode {
    * for `text` kind; absent elsewhere.
    */
   text?: string;
+  /**
+   * Optional explicit join barrier for a `parallel` (fork) node: the id of the
+   * `join` node where all of this fork's branches synchronise. Present only for
+   * `parallel` kind; absent for every other kind, and also for a `parallel`
+   * whose branches each terminate at their own `end` (no barrier). Mirrors the
+   * Rust `WorkflowNodeRecord.join_node_id`.
+   */
+  joinNodeId?: string;
   /** Canvas coordinates for the visual editor. */
   position: { x: number; y: number };
 }

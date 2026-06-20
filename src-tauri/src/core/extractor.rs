@@ -1287,8 +1287,14 @@ mod tests {
         let mut s = schema("regex");
         s.pattern = Some(r"(?P<host>\w+):(?P<port>\d+)".into());
         let out = extract(&s, "localhost:5432").unwrap();
-        assert_eq!(*out.fields.get("host").unwrap(), Value::String("localhost".into()));
-        assert_eq!(*out.fields.get("port").unwrap(), Value::String("5432".into()));
+        assert_eq!(
+            *out.fields.get("host").unwrap(),
+            Value::String("localhost".into())
+        );
+        assert_eq!(
+            *out.fields.get("port").unwrap(),
+            Value::String("5432".into())
+        );
     }
 
     #[test]

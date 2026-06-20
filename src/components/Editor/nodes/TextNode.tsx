@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
 import { insertNeighborClass, runStatusClass } from "./runStatus";
@@ -10,7 +10,7 @@ import { insertNeighborClass, runStatusClass } from "./runStatus";
  * handle on the left, single `out` source handle on the right. The title shows
  * a short preview of the template, or an empty-state hint.
  */
-export function TextNode({ data }: NodeProps<WorkflowNodeData>): ReactElement {
+export function TextNode({ data }: NodeProps<Node<WorkflowNodeData>>): ReactElement {
   const { t } = useTranslation();
   const text = (data.text ?? "").trim();
   // One-line preview, truncated, so a multi-line template stays compact.

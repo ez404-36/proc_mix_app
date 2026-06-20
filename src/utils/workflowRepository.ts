@@ -45,6 +45,8 @@ const KNOWN_NODE_KINDS: ReadonlySet<WorkflowNodeKind> =
     "data",
     "parser",
     "text",
+    "parallel",
+    "join",
     "end",
   ]);
 
@@ -52,10 +54,11 @@ function isNodeKind(value: string): value is WorkflowNodeKind {
   return KNOWN_NODE_KINDS.has(value as WorkflowNodeKind);
 }
 
-/** Whether a decoded edge branch is one the runner understands. A `case:<id>`
- * branch is dynamic (the id is user-authored), so it is matched by prefix
- * rather than membership. An unrecognised value falls back to "out". Must
- * stay in lock-step with the Rust `Branch` mapping. */
+/** Whether a decoded edge branch is one the runner understands. The `case:<id>`
+ * (switch case) and `branch:<n>` (parallel fork exit) branches are dynamic —
+ * the suffix is author/index derived — so they are matched by prefix rather
+ * than membership. An unrecognised value falls back to "out". Must stay in
+ * lock-step with the Rust `Branch` mapping. */
 const KNOWN_BRANCHES: ReadonlySet<WorkflowEdgeBranch> =
   new Set<WorkflowEdgeBranch>([
     "out",
@@ -70,6 +73,7 @@ const KNOWN_BRANCHES: ReadonlySet<WorkflowEdgeBranch> =
 
 function isBranch(value: string): value is WorkflowEdgeBranch {
   if (value.startsWith("case:")) return true;
+  if (value.startsWith("branch:")) return true;
   return KNOWN_BRANCHES.has(value as WorkflowEdgeBranch);
 }
 
@@ -95,6 +99,9 @@ export interface WorkflowNodeRecord {
   parser?: OutputSchema | null;
   /** Template text for a `text` node; absent for other kinds (Rust `Option`). */
   text?: string | null;
+  /** Bound join node id for a `parallel` (fork) node; absent for other kinds
+   * and for a fork whose branches each end at their own `end` (Rust `Option`). */
+  joinNodeId?: string | null;
   position: { x: number; y: number };
 }
 
@@ -146,6 +153,7 @@ function nodeToRecord(n: WorkflowNode): WorkflowNodeRecord {
     variableSources: n.variableSources ?? {},
     parser: n.parser ?? null,
     text: n.text ?? null,
+    joinNodeId: n.joinNodeId ?? null,
     position: { x: n.position.x, y: n.position.y },
   };
 }
@@ -170,6 +178,7 @@ function recordToNode(r: WorkflowNodeRecord): WorkflowNode {
         : undefined,
     parser: r.parser ?? undefined,
     text: r.text ?? undefined,
+    joinNodeId: r.joinNodeId ?? undefined,
     position: { x: r.position.x, y: r.position.y },
   };
 }

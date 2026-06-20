@@ -25,9 +25,14 @@ vi.mock("../utils/historyRepository", async (importOriginal) => {
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
-import { useWorkflowBridge } from "./useWorkflowBridge";
+import {
+  __resetBranchSlotCacheForTests,
+  useWorkflowBridge,
+} from "./useWorkflowBridge";
 import { useExecutionStore } from "../stores/executionStore";
 import { useWorkflowRunStore } from "../stores/workflowRunStore";
+import { useWorkflowStore } from "../stores/workflowStore";
+import type { Workflow } from "../types";
 
 type Handler = (e: WorkflowEvent) => void;
 
@@ -41,6 +46,18 @@ function resetRuns(): void {
     activeExecutionId: null,
     panelOpen: false,
   });
+  // Branch-slot labelling reads the persisted graph from the workflow store.
+  useWorkflowStore.setState({ workflows: [] });
+  // The branch-slot map is memoised per run id at module scope; clear it so a
+  // reused run id never carries a stale (empty) map between cases.
+  __resetBranchSlotCacheForTests();
+}
+
+/** Only the log lines the bridge actually wrote to the aggregate, as
+ *  `[stream, line]` pairs, so assertions ignore timestamps. */
+function aggregateLog(runId: string): Array<[string, string]> {
+  const exec = useExecutionStore.getState().executions[runId];
+  return (exec?.log ?? []).map((l) => [l.stream, l.line]);
 }
 
 beforeEach(() => {
@@ -187,5 +204,204 @@ describe("useWorkflowBridge - terminal events", () => {
       undefined,
       undefined,
     );
+  });
+});
+
+describe("useWorkflowBridge - per-node grouped console output", () => {
+  /** Drive the bridge through a node lifecycle: start (maps execId→node),
+   *  buffer N stdout lines, then finish. Mirrors the real event order. */
+  function runNode(
+    handler: Handler,
+    runId: string,
+    workflowId: string,
+    nodeId: string,
+    executionId: string,
+    lines: string[],
+    exitCode: number | null = 0,
+  ): void {
+    handler({ kind: "nodeStarted", runId, workflowId, nodeId, executionId });
+    for (const line of lines) {
+      useWorkflowRunStore
+        .getState()
+        .bufferNodeLine(runId, executionId, {
+          stream: "stdout",
+          line,
+          ts: Date.now(),
+        });
+    }
+    handler({ kind: "nodeFinished", runId, workflowId, nodeId, exitCode });
+  }
+
+  it("groups two nodes' interleaved stdout contiguously per node on finish", () => {
+    const { handler } = mountBridge();
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+
+    // Both nodes start; their stdout arrives ALTERNATELY (interleaved).
+    handler({
+      kind: "nodeStarted",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      executionId: "ea",
+    });
+    handler({
+      kind: "nodeStarted",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "B",
+      executionId: "eb",
+    });
+    const buf = useWorkflowRunStore.getState();
+    buf.bufferNodeLine("run-1", "ea", { stream: "stdout", line: "a1", ts: 1 });
+    buf.bufferNodeLine("run-1", "eb", { stream: "stdout", line: "b1", ts: 2 });
+    buf.bufferNodeLine("run-1", "ea", { stream: "stdout", line: "a2", ts: 3 });
+    buf.bufferNodeLine("run-1", "eb", { stream: "stdout", line: "b2", ts: 4 });
+
+    // No output is on the aggregate yet — it is buffered, not interleaved.
+    expect(aggregateLog("run-1")).toEqual([]);
+
+    // A finishes first: its header + both A lines + exit land contiguously.
+    handler({
+      kind: "nodeFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      exitCode: 0,
+    });
+    // Then B finishes.
+    handler({
+      kind: "nodeFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "B",
+      exitCode: 0,
+    });
+
+    expect(aggregateLog("run-1")).toEqual([
+      ["meta", "▸ A"],
+      ["stdout", "a1"],
+      ["stdout", "a2"],
+      ["meta", "  exit 0"],
+      ["meta", "▸ B"],
+      ["stdout", "b1"],
+      ["stdout", "b2"],
+      ["meta", "  exit 0"],
+    ]);
+  });
+
+  it("prefixes a parallel branch node's header with (branch N)", () => {
+    const { handler } = mountBridge();
+    // Persist a fork → two branch commands graph so branch slots resolve.
+    const workflow: Workflow = {
+      id: "wf-1",
+      name: "Fork",
+      tags: [],
+      favorite: false,
+      createdAt: "",
+      updatedAt: "",
+      runCount: 0,
+      nodes: [
+        { id: "fork", kind: "parallel", position: { x: 0, y: 0 } },
+        { id: "A", kind: "command", position: { x: 1, y: 0 } },
+        { id: "B", kind: "command", position: { x: 1, y: 1 } },
+      ],
+      edges: [
+        { id: "e0", source: "fork", target: "A", branch: "branch:0" },
+        { id: "e1", source: "fork", target: "B", branch: "branch:1" },
+      ],
+    };
+    useWorkflowStore.setState({ workflows: [workflow] });
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Fork");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+
+    runNode(handler, "run-1", "wf-1", "A", "ea", ["a-out"]);
+    runNode(handler, "run-1", "wf-1", "B", "eb", ["b-out"]);
+
+    expect(aggregateLog("run-1")).toEqual([
+      ["meta", "▸ (branch 1) A"],
+      ["stdout", "a-out"],
+      ["meta", "  exit 0"],
+      ["meta", "▸ (branch 2) B"],
+      ["stdout", "b-out"],
+      ["meta", "  exit 0"],
+    ]);
+  });
+
+  it("flushes buffered output of a node that never finished, at run end", () => {
+    const { handler } = mountBridge();
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+
+    // Node A starts and streams, but the run errors before A finishes.
+    handler({
+      kind: "nodeStarted",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      executionId: "ea",
+    });
+    useWorkflowRunStore
+      .getState()
+      .bufferNodeLine("run-1", "ea", { stream: "stdout", line: "partial", ts: 1 });
+
+    handler({
+      kind: "workflowError",
+      runId: "run-1",
+      workflowId: "wf-1",
+      message: "boom",
+    });
+
+    // A's partial output is flushed (header + line) rather than dropped; no
+    // exit trailer since A never produced an exit code.
+    expect(aggregateLog("run-1")).toEqual([
+      ["meta", "▸ A"],
+      ["stdout", "partial"],
+    ]);
+    // The buffer is cleared after the run-end sweep.
+    expect(
+      useWorkflowRunStore.getState().runs["run-1"].lineBuffers["A"],
+    ).toBeUndefined();
+  });
+
+  it("a sequential single-node run still produces header → output → exit in order", () => {
+    const { handler } = mountBridge();
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+
+    runNode(handler, "run-1", "wf-1", "only", "e-only", ["hello", "world"]);
+
+    expect(aggregateLog("run-1")).toEqual([
+      ["meta", "▸ only"],
+      ["stdout", "hello"],
+      ["stdout", "world"],
+      ["meta", "  exit 0"],
+    ]);
+  });
+
+  it("emits a header even for a silent node (no output) so the step still appears", () => {
+    const { handler } = mountBridge();
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+
+    handler({
+      kind: "nodeStarted",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "quiet",
+      executionId: "eq",
+    });
+    handler({
+      kind: "nodeFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "quiet",
+      exitCode: 0,
+    });
+
+    expect(aggregateLog("run-1")).toEqual([
+      ["meta", "▸ quiet"],
+      ["meta", "  exit 0"],
+    ]);
   });
 });

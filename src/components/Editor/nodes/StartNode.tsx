@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
 import { insertNeighborClass, runStatusClass } from "./runStatus";
@@ -8,7 +8,7 @@ import { insertNeighborClass, runStatusClass } from "./runStatus";
  * Entry node of the graph. Has a single `out` source handle and no target
  * handle — nothing connects INTO start.
  */
-export function StartNode({ data }: NodeProps<WorkflowNodeData>): ReactElement {
+export function StartNode({ data }: NodeProps<Node<WorkflowNodeData>>): ReactElement {
   const { t } = useTranslation();
   return (
     <div

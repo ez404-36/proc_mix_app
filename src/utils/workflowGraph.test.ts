@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { Workflow, WorkflowNode } from "../types";
+import type { Workflow, WorkflowEdge, WorkflowNode } from "../types";
 import {
   applyRunStateToNodes,
+  branchSlotsByNode,
   collectDownstream,
   connectTailToNode,
   findAttachTail,
@@ -17,9 +18,12 @@ import {
   markDropTargetEdge,
   markInsertNeighbors,
   markTakenEdges,
+  parallelBranchCount,
+  parallelBranchIndices,
   primaryOutHandle,
   removeNodeReconnecting,
   spliceExistingNodeOnEdge,
+  syncParallelBranchCounts,
   workflowToFlow,
   type WorkflowFlowEdge,
   type WorkflowFlowNode,
@@ -98,6 +102,64 @@ describe("workflowToFlow", () => {
     expect(edges.find((e) => e.id === "e1")?.sourceHandle).toBe("out");
     expect(edges.find((e) => e.id === "e3")?.sourceHandle).toBe("then");
     expect(edges.find((e) => e.id === "e4")?.sourceHandle).toBe("else");
+  });
+
+  it("seeds each parallel fork's wired-branch count from the edges", () => {
+    // A saved fork with three branch edges: workflowToFlow must stamp
+    // data.parallelBranchCount = 3 so ParallelNode renders branch:0..2 handles
+    // at first paint and the saved edges render (the migration-regression fix).
+    const wf: Workflow = {
+      ...sampleWorkflow(),
+      nodes: [
+        { id: "fork", kind: "parallel", position: { x: 0, y: 0 } },
+        { id: "a", kind: "command", position: { x: 1, y: 0 } },
+        { id: "b", kind: "command", position: { x: 1, y: 1 } },
+        { id: "c", kind: "command", position: { x: 1, y: 2 } },
+      ],
+      edges: [
+        { id: "e0", source: "fork", target: "a", branch: "branch:0" },
+        { id: "e1", source: "fork", target: "b", branch: "branch:1" },
+        { id: "e2", source: "fork", target: "c", branch: "branch:2" },
+      ],
+    };
+    const { nodes } = workflowToFlow(wf);
+    const fork = nodes.find((n) => n.id === "fork");
+    expect(fork?.data.parallelBranchCount).toBe(3);
+    // A non-parallel node carries no count.
+    expect(nodes.find((n) => n.id === "a")?.data.parallelBranchCount).toBeUndefined();
+  });
+
+  it("defaults a freshly-converted, unwired fork to a branch count of 0", () => {
+    const wf: Workflow = {
+      ...sampleWorkflow(),
+      nodes: [{ id: "fork", kind: "parallel", position: { x: 0, y: 0 } }],
+      edges: [],
+    };
+    const { nodes } = workflowToFlow(wf);
+    expect(nodes.find((n) => n.id === "fork")?.data.parallelBranchCount).toBe(0);
+  });
+
+  it("does NOT persist parallelBranchCount back through flowToWorkflow (it is derived)", () => {
+    const wf: Workflow = {
+      ...sampleWorkflow(),
+      nodes: [
+        { id: "fork", kind: "parallel", position: { x: 0, y: 0 } },
+        { id: "a", kind: "command", position: { x: 1, y: 0 } },
+      ],
+      edges: [{ id: "e0", source: "fork", target: "a", branch: "branch:0" }],
+    };
+    const { nodes, edges } = workflowToFlow(wf);
+    // The flow fork carries the editor-only count…
+    expect(nodes.find((n) => n.id === "fork")?.data.parallelBranchCount).toBe(1);
+    const back = flowToWorkflow({ name: wf.name, tags: wf.tags }, nodes, edges);
+    // …but the persisted node never gains the derived field.
+    const persistedFork = back.nodes.find((n) => n.id === "fork");
+    expect(persistedFork).toBeDefined();
+    expect(
+      (persistedFork as Record<string, unknown> | undefined)?.[
+        "parallelBranchCount"
+      ],
+    ).toBeUndefined();
   });
 });
 
@@ -208,7 +270,14 @@ describe("flowToWorkflow round-trip", () => {
       nodes,
       edges,
     );
-    expect(back.nodes).toEqual(wf.nodes);
+    // These nodes are disconnected (no edges), so each leaf gets an implicit
+    // `end` appended on save (see appendImplicitEnds). Assert the AUTHORED
+    // nodes round-trip their config unchanged by comparing them by id, rather
+    // than the whole array (which now also contains the synthesized ends).
+    const byId = new Map(back.nodes.map((n) => [n.id, n]));
+    for (const original of wf.nodes) {
+      expect(byId.get(original.id)).toEqual(original);
+    }
   });
 
   it("round-trips a switch case:<id> branch through the source handle", () => {
@@ -221,6 +290,51 @@ describe("flowToWorkflow round-trip", () => {
     ];
     const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
     expect(back.edges[0]?.branch).toBe("case:prod");
+  });
+
+  // A lone fork branch is always normalized to `branch:0` on save (dense
+  // re-indexing, see the dedicated normalization describe below): an index of
+  // 1 / 12 on a single-branch fork collapses to 0. `branch:0` is already dense
+  // and round-trips unchanged.
+  it.each([
+    ["branch:0", "branch:0"],
+    ["branch:1", "branch:0"],
+    ["branch:12", "branch:0"],
+  ] as const)(
+    "normalizes a lone parallel %s branch to %s on save",
+    (sourceHandle, expected) => {
+      const nodes: WorkflowFlowNode[] = [
+        {
+          id: "fork",
+          type: "parallel",
+          position: { x: 0, y: 0 },
+          data: { kind: "parallel" },
+        },
+        { id: "t", type: "end", position: { x: 1, y: 0 }, data: { kind: "end" } },
+      ];
+      const edges: WorkflowFlowEdge[] = [
+        { id: "e", source: "fork", target: "t", sourceHandle },
+      ];
+      const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
+      expect(back.edges[0]?.branch).toBe(expected);
+    },
+  );
+
+  it("collapses a malformed branch:<n> handle to out", () => {
+    const nodes: WorkflowFlowNode[] = [
+      {
+        id: "fork",
+        type: "parallel",
+        position: { x: 0, y: 0 },
+        data: { kind: "parallel" },
+      },
+      { id: "t", type: "end", position: { x: 1, y: 0 }, data: { kind: "end" } },
+    ];
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e", source: "fork", target: "t", sourceHandle: "branch:x" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
+    expect(back.edges[0]?.branch).toBe("out");
   });
 
   it.each(["default", "body", "done", "ok", "catch"] as const)(
@@ -237,6 +351,341 @@ describe("flowToWorkflow round-trip", () => {
       expect(back.edges[0]?.branch).toBe(branch);
     },
   );
+});
+
+describe("flowToWorkflow parallel branch normalization", () => {
+  const forkNodes: WorkflowFlowNode[] = [
+    {
+      id: "fork",
+      type: "parallel",
+      position: { x: 0, y: 0 },
+      data: { kind: "parallel" },
+    },
+    { id: "a", type: "command", position: { x: 1, y: 0 }, data: { kind: "command" } },
+    { id: "b", type: "command", position: { x: 1, y: 1 }, data: { kind: "command" } },
+  ];
+
+  it("closes a gap left by a deleted middle branch (0,2 → 0,1)", () => {
+    // A fork wired branch:0 and branch:2 (branch:1 was deleted). On save the
+    // surviving edges must re-index densely, preserving target order.
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e0", source: "fork", target: "a", sourceHandle: "branch:0" },
+      { id: "e2", source: "fork", target: "b", sourceHandle: "branch:2" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, forkNodes, edges);
+    const byId = new Map(back.edges.map((e) => [e.id, e.branch]));
+    expect(byId.get("e0")).toBe("branch:0");
+    expect(byId.get("e2")).toBe("branch:1");
+  });
+
+  it("preserves relative order when re-indexing by old index, not stored order", () => {
+    // Stored out of order (branch:2 before branch:0): the dense index follows
+    // the ascending OLD index, so e0→branch:0 and e2→branch:1.
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e2", source: "fork", target: "b", sourceHandle: "branch:2" },
+      { id: "e0", source: "fork", target: "a", sourceHandle: "branch:0" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, forkNodes, edges);
+    const byId = new Map(back.edges.map((e) => [e.id, e.branch]));
+    expect(byId.get("e0")).toBe("branch:0");
+    expect(byId.get("e2")).toBe("branch:1");
+  });
+
+  it("leaves an already-dense fork untouched", () => {
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e0", source: "fork", target: "a", sourceHandle: "branch:0" },
+      { id: "e1", source: "fork", target: "b", sourceHandle: "branch:1" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, forkNodes, edges);
+    const byId = new Map(back.edges.map((e) => [e.id, e.branch]));
+    expect(byId.get("e0")).toBe("branch:0");
+    expect(byId.get("e1")).toBe("branch:1");
+  });
+
+  it("does not re-index a branch:<n> handle on a non-parallel source", () => {
+    // Normalization only re-indexes a `parallel` node's fork exits. A
+    // `branch:<n>` handle from a non-parallel source is left to the regular
+    // `branchFromHandle` round-trip and is NOT re-indexed to branch:0.
+    const nodes: WorkflowFlowNode[] = [
+      { id: "cmd", type: "command", position: { x: 0, y: 0 }, data: { kind: "command" } },
+      { id: "t", type: "end", position: { x: 1, y: 0 }, data: { kind: "end" } },
+    ];
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e", source: "cmd", target: "t", sourceHandle: "branch:2" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
+    // Untouched by normalization (source is not a parallel node).
+    expect(back.edges[0]?.branch).toBe("branch:2");
+  });
+});
+
+describe("flowToWorkflow implicit end appending", () => {
+  it("appends an end + edge to a lone command node with no outgoing edge", () => {
+    const nodes: WorkflowFlowNode[] = [
+      { id: "cmd", type: "command", position: { x: 10, y: 20 }, data: { kind: "command" } },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, []);
+    const ends = back.nodes.filter((n) => n.kind === "end");
+    expect(ends).toHaveLength(1);
+    // An edge runs command -> the new end.
+    const edge = back.edges.find((e) => e.source === "cmd");
+    expect(edge).toBeDefined();
+    expect(edge?.target).toBe(ends[0]?.id);
+    expect(edge?.branch).toBe("out");
+    // The synthesized end sits to the right of its source, same row.
+    expect(ends[0]?.position).toEqual({ x: 210, y: 20 });
+  });
+
+  it("appends one end per branch command of a fork that has no join and no outgoing edges", () => {
+    // A parallel fork with 3 branch commands, none of which continue and with
+    // no join: each command must get its own end so the engine's strict
+    // NoOutgoingEdge no longer fires for the branch leaves.
+    const nodes: WorkflowFlowNode[] = [
+      { id: "fork", type: "parallel", position: { x: 0, y: 0 }, data: { kind: "parallel" } },
+      { id: "a", type: "command", position: { x: 100, y: 0 }, data: { kind: "command" } },
+      { id: "b", type: "command", position: { x: 100, y: 50 }, data: { kind: "command" } },
+      { id: "c", type: "command", position: { x: 100, y: 100 }, data: { kind: "command" } },
+    ];
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e0", source: "fork", target: "a", sourceHandle: "branch:0" },
+      { id: "e1", source: "fork", target: "b", sourceHandle: "branch:1" },
+      { id: "e2", source: "fork", target: "c", sourceHandle: "branch:2" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
+    const ends = back.nodes.filter((n) => n.kind === "end");
+    expect(ends).toHaveLength(3);
+    // Each branch command gained exactly one outgoing edge to a (distinct) end.
+    for (const leaf of ["a", "b", "c"]) {
+      const out = back.edges.filter((e) => e.source === leaf);
+      expect(out).toHaveLength(1);
+      expect(ends.some((end) => end.id === out[0]?.target)).toBe(true);
+    }
+    // The fork -> branch edges are intact (re-indexed densely, still 3 of them).
+    const branchEdges = back.edges.filter((e) => e.source === "fork");
+    expect(branchEdges.map((e) => e.branch).sort()).toEqual([
+      "branch:0",
+      "branch:1",
+      "branch:2",
+    ]);
+  });
+
+  it("does not append an end to a node that already terminates at an end", () => {
+    const nodes: WorkflowFlowNode[] = [
+      { id: "cmd", type: "command", position: { x: 0, y: 0 }, data: { kind: "command" } },
+      { id: "end", type: "end", position: { x: 100, y: 0 }, data: { kind: "end" } },
+    ];
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e", source: "cmd", target: "end", sourceHandle: "out" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
+    // No duplicate end, no extra edges.
+    expect(back.nodes.filter((n) => n.kind === "end")).toHaveLength(1);
+    expect(back.edges).toHaveLength(1);
+  });
+
+  it("does not append an end to a branching node that already has an outgoing edge", () => {
+    // A condition wired on `then` (but with an unfilled `else`) must NOT get an
+    // auto-end on its other port - only ZERO-outgoing nodes are terminated.
+    const nodes: WorkflowFlowNode[] = [
+      { id: "cond", type: "condition", position: { x: 0, y: 0 }, data: { kind: "condition" } },
+      { id: "end", type: "end", position: { x: 100, y: 0 }, data: { kind: "end" } },
+    ];
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e", source: "cond", target: "end", sourceHandle: "then" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
+    // Still exactly one end + one edge: the condition's open `else` is a
+    // validation concern, not auto-terminated.
+    expect(back.nodes.filter((n) => n.kind === "end")).toHaveLength(1);
+    expect(back.edges).toHaveLength(1);
+    expect(back.edges.filter((e) => e.source === "cond")).toHaveLength(1);
+  });
+
+  it("does not append an end to an end node itself (no chained ends)", () => {
+    const nodes: WorkflowFlowNode[] = [
+      { id: "end", type: "end", position: { x: 0, y: 0 }, data: { kind: "end" } },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, []);
+    expect(back.nodes).toHaveLength(1);
+    expect(back.edges).toHaveLength(0);
+  });
+
+  it("wires a bare branching node's primary out handle to its implicit end", () => {
+    // A freshly-dropped fork with nothing wired: zero outgoing -> one end, on
+    // the parallel's primary branch:0 handle.
+    const nodes: WorkflowFlowNode[] = [
+      { id: "fork", type: "parallel", position: { x: 0, y: 0 }, data: { kind: "parallel" } },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, []);
+    const ends = back.nodes.filter((n) => n.kind === "end");
+    expect(ends).toHaveLength(1);
+    const edge = back.edges.find((e) => e.source === "fork");
+    expect(edge?.branch).toBe("branch:0");
+    expect(edge?.target).toBe(ends[0]?.id);
+  });
+});
+
+describe("branchSlotsByNode", () => {
+  it("returns an empty map when there is no parallel node", () => {
+    const nodes: WorkflowNode[] = [
+      { id: "a", kind: "command", position: { x: 0, y: 0 } },
+      { id: "b", kind: "command", position: { x: 1, y: 0 } },
+    ];
+    const edges: WorkflowEdge[] = [
+      { id: "e", source: "a", target: "b", branch: "out" },
+    ];
+    expect(branchSlotsByNode(nodes, edges)).toEqual({});
+  });
+
+  it("maps each branch's transitive descendants to a 1-based slot", () => {
+    // fork -> A1 -> A2 (branch:0, slot 1); fork -> B1 (branch:1, slot 2).
+    const nodes: WorkflowNode[] = [
+      { id: "fork", kind: "parallel", position: { x: 0, y: 0 } },
+      { id: "A1", kind: "command", position: { x: 1, y: 0 } },
+      { id: "A2", kind: "command", position: { x: 2, y: 0 } },
+      { id: "B1", kind: "command", position: { x: 1, y: 1 } },
+    ];
+    const edges: WorkflowEdge[] = [
+      { id: "e0", source: "fork", target: "A1", branch: "branch:0" },
+      { id: "eA", source: "A1", target: "A2", branch: "out" },
+      { id: "e1", source: "fork", target: "B1", branch: "branch:1" },
+    ];
+    expect(branchSlotsByNode(nodes, edges)).toEqual({
+      A1: 1,
+      A2: 1,
+      B1: 2,
+    });
+  });
+
+  it("stops a branch walk at the fork's bound join (the join is not in any branch)", () => {
+    const nodes: WorkflowNode[] = [
+      { id: "fork", kind: "parallel", position: { x: 0, y: 0 }, joinNodeId: "join" },
+      { id: "A", kind: "command", position: { x: 1, y: 0 } },
+      { id: "B", kind: "command", position: { x: 1, y: 1 } },
+      { id: "join", kind: "join", position: { x: 2, y: 0 } },
+      { id: "after", kind: "command", position: { x: 3, y: 0 } },
+    ];
+    const edges: WorkflowEdge[] = [
+      { id: "e0", source: "fork", target: "A", branch: "branch:0" },
+      { id: "e1", source: "fork", target: "B", branch: "branch:1" },
+      { id: "ja", source: "A", target: "join", branch: "out" },
+      { id: "jb", source: "B", target: "join", branch: "out" },
+      { id: "ea", source: "join", target: "after", branch: "out" },
+    ];
+    const slots = branchSlotsByNode(nodes, edges);
+    expect(slots["A"]).toBe(1);
+    expect(slots["B"]).toBe(2);
+    // The join and everything past it belong to no branch.
+    expect(slots["join"]).toBeUndefined();
+    expect(slots["after"]).toBeUndefined();
+  });
+});
+
+describe("parallelBranchCount", () => {
+  it("is 0 for a fresh, unwired fork", () => {
+    expect(parallelBranchCount("fork", [])).toBe(0);
+  });
+
+  it("is the slot count covering the highest wired branch (dense)", () => {
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e0", source: "fork", target: "a", sourceHandle: "branch:0" },
+      { id: "e1", source: "fork", target: "b", sourceHandle: "branch:1" },
+    ];
+    expect(parallelBranchCount("fork", edges)).toBe(2);
+  });
+
+  it("counts up to the highest wired index across a temporary gap", () => {
+    // branch:0 + branch:2 (a deleted middle, before save densifies): the count
+    // is 3 so the handle for the wired branch:2 is preserved (slots 0..2).
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e0", source: "fork", target: "a", sourceHandle: "branch:0" },
+      { id: "e2", source: "fork", target: "b", sourceHandle: "branch:2" },
+    ];
+    expect(parallelBranchCount("fork", edges)).toBe(3);
+  });
+
+  it("ignores edges from other sources and malformed handles", () => {
+    const edges: WorkflowFlowEdge[] = [
+      { id: "x", source: "other", target: "a", sourceHandle: "branch:5" },
+      { id: "y", source: "fork", target: "b", sourceHandle: "branch:nan" },
+    ];
+    expect(parallelBranchCount("fork", edges)).toBe(0);
+  });
+});
+
+describe("parallelBranchIndices", () => {
+  it("shows a single free handle for a fresh fork (count 0)", () => {
+    // count 0 → just the one trailing free slot at index 0.
+    expect(parallelBranchIndices(0)).toEqual([0]);
+  });
+
+  it("renders one handle per wired branch plus one trailing free slot", () => {
+    // count 2 → handles 0, 1 (the wired branches) plus the next free slot 2.
+    expect(parallelBranchIndices(2)).toEqual([0, 1, 2]);
+  });
+
+  it("renders a contiguous slot run covering a gap count (count 3 → 0..3)", () => {
+    // A fork wired branch:0 + branch:2 has count 3 (see parallelBranchCount):
+    // slots 0..2 (the wired branch:2 keeps its handle, index 1 is an empty slot
+    // pending the on-save densify) plus the free slot 3.
+    expect(parallelBranchIndices(3)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("treats a negative or fractional count as zero/truncated", () => {
+    expect(parallelBranchIndices(-5)).toEqual([0]);
+    expect(parallelBranchIndices(1.9)).toEqual([0, 1]);
+  });
+});
+
+describe("syncParallelBranchCounts", () => {
+  const forkNode: WorkflowFlowNode = {
+    id: "fork",
+    type: "parallel",
+    position: { x: 0, y: 0 },
+    data: { kind: "parallel" },
+  };
+  const cmdNode: WorkflowFlowNode = {
+    id: "a",
+    type: "command",
+    position: { x: 1, y: 0 },
+    data: { kind: "command" },
+  };
+
+  it("stamps each parallel fork's wired-branch count from the edges", () => {
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e0", source: "fork", target: "a", sourceHandle: "branch:0" },
+      { id: "e1", source: "fork", target: "a", sourceHandle: "branch:1" },
+    ];
+    const next = syncParallelBranchCounts([forkNode, cmdNode], edges);
+    const fork = next.find((n) => n.id === "fork");
+    expect(fork?.data.parallelBranchCount).toBe(2);
+    // Non-parallel nodes are left untouched (no count stamped).
+    expect(next.find((n) => n.id === "a")?.data.parallelBranchCount).toBeUndefined();
+  });
+
+  it("returns the SAME array reference when no count changed (loop-safe)", () => {
+    const nodes = [
+      { ...forkNode, data: { ...forkNode.data, parallelBranchCount: 0 } },
+      cmdNode,
+    ];
+    // No branch edges → count stays 0 → nothing changes → same ref returned,
+    // so the canvas effect's setNodes is a genuine no-op (no render loop).
+    const next = syncParallelBranchCounts(nodes, []);
+    expect(next).toBe(nodes);
+  });
+
+  it("shrinks the count immediately when a branch edge is removed", () => {
+    const seeded = [
+      { ...forkNode, data: { ...forkNode.data, parallelBranchCount: 2 } },
+    ];
+    // Only branch:0 remains (branch:1 was deleted) → count drops to 1.
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e0", source: "fork", target: "a", sourceHandle: "branch:0" },
+    ];
+    const next = syncParallelBranchCounts(seeded, edges);
+    expect(next).not.toBe(seeded);
+    expect(next[0]?.data.parallelBranchCount).toBe(1);
+  });
 });
 
 describe("makeGraphId", () => {
@@ -594,6 +1043,8 @@ describe("primaryOutHandle", () => {
     expect(primaryOutHandle("switch")).toBe("default");
     expect(primaryOutHandle("loop")).toBe("done");
     expect(primaryOutHandle("try")).toBe("ok");
+    expect(primaryOutHandle("parallel")).toBe("branch:0");
+    expect(primaryOutHandle("join")).toBe("out");
   });
 });
 

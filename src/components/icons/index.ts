@@ -14,6 +14,7 @@ export { FullscreenIcon } from "./FullscreenIcon";
 export { GroupIcon } from "./GroupIcon";
 export { ImportIcon } from "./ImportIcon";
 export { InfoIcon } from "./InfoIcon";
+export { LockIcon } from "./LockIcon";
 export { PinIcon } from "./PinIcon";
 export { PlusIcon } from "./PlusIcon";
 export { RedoIcon } from "./RedoIcon";

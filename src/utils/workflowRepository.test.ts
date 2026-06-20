@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
-import type { Workflow } from "../types";
+import type { Workflow, WorkflowEdgeBranch, WorkflowNodeKind } from "../types";
 import {
   type WorkflowRecord,
   deleteWorkflowInDb,
@@ -153,6 +153,111 @@ describe("workflowRepository conversions", () => {
     const wf = recordToWorkflow(rec);
     expect(wf.nodes[0]?.kind).toBe("command");
     expect(wf.edges[0]?.branch).toBe("out");
+  });
+
+  // Guards against the decoder's `KNOWN_NODE_KINDS` allow-list drifting out of
+  // sync with the `WorkflowNodeKind` union — the bug that silently rewrote a
+  // saved `parallel` node to `command` on reload. EVERY kind must survive the
+  // record round-trip unchanged.
+  it("preserves every WorkflowNodeKind across the record round-trip", () => {
+    const allKinds: WorkflowNodeKind[] = [
+      "start",
+      "command",
+      "condition",
+      "switch",
+      "loop",
+      "try",
+      "data",
+      "parser",
+      "text",
+      "parallel",
+      "join",
+      "end",
+    ];
+    const wf: Workflow = {
+      id: "wf-kinds",
+      name: "AllKinds",
+      nodes: allKinds.map((kind, i) => ({
+        id: `n-${kind}`,
+        kind,
+        position: { x: i * 100, y: 0 },
+      })),
+      edges: [],
+      tags: [],
+      favorite: false,
+      createdAt: "2026-05-28T00:00:00Z",
+      updatedAt: "2026-05-28T00:00:00Z",
+      runCount: 0,
+    };
+    const back = recordToWorkflow(workflowToRecord(wf));
+    expect(back.nodes.map((n) => n.kind)).toEqual(allKinds);
+  });
+
+  it("round-trips a parallel node's bound joinNodeId", () => {
+    const wf: Workflow = {
+      id: "wf-fork",
+      name: "Fork",
+      nodes: [
+        {
+          id: "fork",
+          kind: "parallel",
+          joinNodeId: "join-1",
+          position: { x: 0, y: 0 },
+        },
+        { id: "join-1", kind: "join", position: { x: 200, y: 0 } },
+      ],
+      edges: [],
+      tags: [],
+      favorite: false,
+      createdAt: "2026-05-28T00:00:00Z",
+      updatedAt: "2026-05-28T00:00:00Z",
+      runCount: 0,
+    };
+    const back = recordToWorkflow(workflowToRecord(wf));
+    expect(back.nodes[0]?.kind).toBe("parallel");
+    expect(back.nodes[0]?.joinNodeId).toBe("join-1");
+  });
+
+  // Guards against the decoder's `isBranch` allow-list drifting out of sync
+  // with the `WorkflowEdgeBranch` union — the bug that silently rewrote a
+  // saved `parallel` fork's `branch:<n>` edges to `out` on reload (so the
+  // read-only preview rendered them with a non-existent "out" source handle,
+  // triggering @xyflow/react v12's "Couldn't create edge for source handle id"
+  // warning). EVERY branch label, including the dynamic `case:<id>` and
+  // `branch:<n>` prefixes, must survive the record round-trip unchanged.
+  it("preserves every WorkflowEdgeBranch across the record round-trip", () => {
+    const allBranches: WorkflowEdgeBranch[] = [
+      "out",
+      "then",
+      "else",
+      "case:deploy",
+      "default",
+      "body",
+      "done",
+      "ok",
+      "catch",
+      "branch:0",
+      "branch:1",
+      "branch:2",
+    ];
+    const wf: Workflow = {
+      id: "wf-branches",
+      name: "AllBranches",
+      nodes: [{ id: "n", kind: "command", position: { x: 0, y: 0 } }],
+      edges: allBranches.map((branch, i) => ({
+        id: `e-${i}`,
+        source: "n",
+        target: "n",
+        branch,
+      })),
+      tags: [],
+      favorite: false,
+      createdAt: "2026-05-28T00:00:00Z",
+      updatedAt: "2026-05-28T00:00:00Z",
+      runCount: 0,
+    };
+    const back = recordToWorkflow(workflowToRecord(wf));
+    expect(back.edges.map((e) => e.branch)).toEqual(allBranches);
   });
 });
 

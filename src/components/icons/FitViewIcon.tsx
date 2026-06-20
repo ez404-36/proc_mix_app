@@ -1,8 +1,9 @@
 import type { ReactElement } from "react";
 
 /**
- * Four corner brackets framing the center — "fit view" control. Drawn with
- * `currentColor` so the surrounding button controls the hue.
+ * Four corner brackets framing a centre dot — "fit view" control. The centre
+ * dot distinguishes it from {@link FullscreenIcon} (the same corner brackets
+ * WITHOUT a dot). Drawn with `currentColor` so the button controls the hue.
  */
 export function FitViewIcon(): ReactElement {
   return (
@@ -22,6 +23,7 @@ export function FitViewIcon(): ReactElement {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+      <circle cx="8" cy="8" r="1.25" fill="currentColor" />
     </svg>
   );
 }

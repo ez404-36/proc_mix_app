@@ -1092,6 +1092,7 @@ mod wire_format_tests {
                 variable_sources: std::collections::BTreeMap::new(),
                 parser: None,
                 text: None,
+                join_node_id: None,
                 position: NodePosition { x: 0.0, y: 0.0 },
             }],
             edges: vec![WorkflowEdgeRecord {
@@ -1751,6 +1752,7 @@ mod sqlite_integration_tests {
                 variable_sources: std::collections::BTreeMap::new(),
                 parser: None,
                 text: None,
+                join_node_id: None,
                 position: NodePosition { x: 0.0, y: 0.0 },
             }],
             edges: vec![],

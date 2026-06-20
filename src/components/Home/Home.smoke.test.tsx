@@ -12,12 +12,12 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 
 // The WorkflowView modal (opened by double-clicking a workflow card) renders
-// the same reactflow canvas the editor uses. reactflow needs a layout engine
-// jsdom lacks, so stub it to lightweight elements — the value here is the
-// modal wiring, not reactflow's own rendering.
-vi.mock("reactflow", () => ({
+// the same @xyflow/react canvas the editor uses. @xyflow/react needs a layout
+// engine jsdom lacks, so stub it to lightweight elements — the value here is
+// the modal wiring, not the canvas's own rendering.
+vi.mock("@xyflow/react", () => ({
   __esModule: true,
-  default: ({ children }: { children?: ReactNode }): ReactElement => (
+  ReactFlow: ({ children }: { children?: ReactNode }): ReactElement => (
     <div data-testid="reactflow">{children}</div>
   ),
   Background: (): ReactElement => <div data-testid="rf-background" />,
@@ -27,7 +27,7 @@ vi.mock("reactflow", () => ({
   ),
 }));
 
-vi.mock("reactflow/dist/style.css", () => ({}));
+vi.mock("@xyflow/react/dist/style.css", () => ({}));
 
 vi.mock("../../utils/commandRepository", () => ({
   upsertCommandInDb: vi.fn().mockResolvedValue(undefined),

@@ -1,16 +1,16 @@
-// Tests for the read-only WorkflowView modal. Its body is the same reactflow
-// canvas the editor renders, so reactflow is mocked to lightweight stubs (the
-// real canvas needs a layout engine / ResizeObserver jsdom lacks). The value
-// here is the modal wiring — header, metadata, and the Edit / Run / Close
-// callbacks — not reactflow's own rendering.
+// Tests for the read-only WorkflowView modal. Its body is the same
+// @xyflow/react canvas the editor renders, so @xyflow/react is mocked to
+// lightweight stubs (the real canvas needs a layout engine / ResizeObserver
+// jsdom lacks). The value here is the modal wiring — header, metadata, and the
+// Edit / Run / Close callbacks — not the canvas's own rendering.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 
-vi.mock("reactflow", () => ({
+vi.mock("@xyflow/react", () => ({
   __esModule: true,
-  default: ({ children }: { children?: ReactNode }): ReactElement => (
+  ReactFlow: ({ children }: { children?: ReactNode }): ReactElement => (
     <div data-testid="reactflow">{children}</div>
   ),
   Background: (): ReactElement => <div data-testid="rf-background" />,
@@ -20,7 +20,7 @@ vi.mock("reactflow", () => ({
   ),
 }));
 
-vi.mock("reactflow/dist/style.css", () => ({}));
+vi.mock("@xyflow/react/dist/style.css", () => ({}));
 
 import "../../i18n";
 import { useCommandStore } from "../../stores/commandStore";

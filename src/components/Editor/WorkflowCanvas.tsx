@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import ReactFlow, {
+import {
+  ReactFlow,
   Background,
   Controls,
   ControlButton,
@@ -9,15 +10,14 @@ import ReactFlow, {
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
-  useReactFlow,
   type Connection,
   type Edge,
   type EdgeChange,
   type Node,
   type NodeChange,
   type ReactFlowInstance,
-} from "reactflow";
-import "reactflow/dist/style.css";
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import { useCommandStore } from "../../stores/commandStore";
 import {
   deleteCommand as deleteCommandWithHistory,
@@ -56,6 +56,7 @@ import {
   markTakenEdges,
   removeNodeReconnecting,
   spliceExistingNodeOnEdge,
+  syncParallelBranchCounts,
   type WorkflowFlowNode,
   type WorkflowNodeData,
 } from "../../utils/workflowGraph";
@@ -66,20 +67,19 @@ import {
  */
 type PaletteNodeKind = Exclude<WorkflowNodeKind, "start">;
 import { workflowNodeTypes } from "./nodes";
+import { CanvasZoomControls } from "./CanvasZoomControls";
 import { NodeInspector } from "./NodeInspector";
 import { WorkflowMetaModal } from "./WorkflowMetaModal";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { CommandView } from "../CommandView";
 import {
   CancelIcon,
-  FitViewIcon,
   FullscreenIcon,
+  LockIcon,
   RedoIcon,
   RunIcon,
   SaveIcon,
   UndoIcon,
-  ZoomInIcon,
-  ZoomOutIcon,
 } from "../icons";
 import { useWorkflowCanvasPersistence } from "./useWorkflowCanvasPersistence";
 import { useWorkflowCanvasDnD } from "./useWorkflowCanvasDnD";
@@ -111,34 +111,15 @@ function WorkflowControls({
   onToggleFullscreen,
 }: WorkflowControlsProps): ReactElement {
   const { t } = useTranslation();
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
   return (
     <Controls
+      position="top-left"
+      orientation="horizontal"
       showZoom={false}
       showFitView={false}
       showInteractive={false}
     >
-      <ControlButton
-        onClick={() => zoomIn()}
-        title={t("editor.controls.zoomIn")}
-        aria-label={t("editor.controls.zoomIn")}
-      >
-        <ZoomInIcon />
-      </ControlButton>
-      <ControlButton
-        onClick={() => zoomOut()}
-        title={t("editor.controls.zoomOut")}
-        aria-label={t("editor.controls.zoomOut")}
-      >
-        <ZoomOutIcon />
-      </ControlButton>
-      <ControlButton
-        onClick={() => fitView()}
-        title={t("editor.controls.fitView")}
-        aria-label={t("editor.controls.fitView")}
-      >
-        <FitViewIcon />
-      </ControlButton>
+      <CanvasZoomControls />
       <ControlButton
         onClick={onToggleInteractive}
         title={
@@ -153,9 +134,7 @@ function WorkflowControls({
         }
         aria-pressed={!interactive}
       >
-        {/* Lock state reuses the eye-style affordance via text glyph kept by
-            reactflow's own button styling; the title conveys the action. */}
-        {interactive ? "🔓" : "🔒"}
+        <LockIcon locked={!interactive} />
       </ControlButton>
       <ControlButton
         onClick={onToggleFullscreen}
@@ -302,10 +281,9 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   );
 
   const flowWrapperRef = useRef<HTMLDivElement | null>(null);
-  const rfInstanceRef = useRef<ReactFlowInstance<
-    WorkflowNodeData,
-    unknown
-  > | null>(null);
+  const rfInstanceRef = useRef<ReactFlowInstance<WorkflowFlowNode> | null>(
+    null,
+  );
 
   // Node-modal edit session for undo grouping: the draft snapshot taken when a
   // node modal opens, and its fingerprint, so the many incremental config
@@ -322,7 +300,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   // changes onto the previous draft. Stable identities (store actions +
   // useCallback) keep these out of any effect re-fire loop.
   const onNodesChange = useCallback(
-    (changes: NodeChange[]) => {
+    (changes: NodeChange<WorkflowFlowNode>[]) => {
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
     [setNodes],
@@ -335,11 +313,12 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   );
 
   // The flow-coordinate centre of a dragged reactflow node. `position` is its
-  // top-left; reactflow measures `width`/`height` after layout, so once known
-  // we offset to the centre (falls back to the top-left before measurement).
+  // top-left; @xyflow/react measures the rendered size after layout into
+  // `node.measured`, so once known we offset to the centre (falls back to the
+  // top-left before measurement).
   const nodeCenter = (node: Node<WorkflowNodeData>): { x: number; y: number } => ({
-    x: node.position.x + (node.width ?? 0) / 2,
-    y: node.position.y + (node.height ?? 0) / 2,
+    x: node.position.x + (node.measured?.width ?? 0) / 2,
+    y: node.position.y + (node.measured?.height ?? 0) / 2,
   });
 
   // While dragging an EXISTING free-floating node (one with no edges), show the
@@ -669,6 +648,21 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     // reads the latest `workflows` at call time regardless.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflowId, hydrate]);
+
+  // Keep every `parallel` fork's editor-only `data.parallelBranchCount` in
+  // sync with the live edges after ANY edge mutation (connect, click-delete,
+  // key-delete, splice, palette drop). `ParallelNode` renders its handles from
+  // that count, so this is what grows the handle set when a branch is wired and
+  // shrinks it when one is removed (the user-approved "synchronize
+  // immediately"). A single edge-keyed effect covers every mutation path
+  // uniformly instead of patching each handler. Loop-safe:
+  // `syncParallelBranchCounts` returns the SAME array reference when no count
+  // changed, so `setNodes` is only called when something actually changed and
+  // the follow-up run is a no-op (same edges, counts now equal → same ref →
+  // no further update).
+  useEffect(() => {
+    setNodes((nds) => syncParallelBranchCounts(nds, edges));
+  }, [edges, setNodes]);
 
   // Live highlighting: subscribe to the active run and overlay node/edge
   // state. Reading a single run by id keeps the selector stable.
@@ -1021,6 +1015,28 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             title={t("editor.palette.nodeDragHint")}
           >
             + {t("editor.nodes.try")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "parallel")}
+            onClick={() =>
+              paletteAddNode("parallel", undefined, { x: 240, y: 200 })
+            }
+            title={t("editor.palette.nodeDragHint")}
+          >
+            + {t("editor.nodes.parallel")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost wf-palette__btn"
+            draggable
+            onDragStart={(e) => onPaletteNodeDragStart(e, "join")}
+            onClick={() => paletteAppendNode("join", undefined)}
+            title={t("editor.palette.nodeDragHint")}
+          >
+            + {t("editor.nodes.join")}
           </button>
           <button
             type="button"

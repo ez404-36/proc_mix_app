@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Message } from "@arco-design/web-react";
 import type { TFunction } from "i18next";
-import type { Edge } from "reactflow";
+import type { Edge } from "@xyflow/react";
 import { useEditorDraftStore } from "../../stores/editorDraftStore";
 import {
   createWorkflow,

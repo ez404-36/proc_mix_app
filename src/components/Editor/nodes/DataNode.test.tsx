@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-// Stub reactflow's Handle/Position so the node renders without a provider.
+// Stub @xyflow/react's Handle/Position so the node renders without a provider.
 import { vi } from "vitest";
-vi.mock("reactflow", () => ({
+vi.mock("@xyflow/react", () => ({
   Handle: () => <div />,
   Position: { Left: "left", Right: "right" },
 }));

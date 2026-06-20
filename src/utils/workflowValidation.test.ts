@@ -343,3 +343,296 @@ describe("validateWorkflow try branches", () => {
     expect(result.runnable).toBe(true);
   });
 });
+
+describe("validateWorkflow parallel branches", () => {
+  it("errors when a parallel node has no branch edges", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { label: "Fork" }),
+        node("e", "end"),
+      ],
+      // The parallel has only its incoming edge — no `branch:<n>` exit.
+      edges: [edge("e1", "s", "p")],
+    };
+    const result = validateWorkflow(graph);
+    const problem = result.problems.find(
+      (p) => p.key === "editor.validation.parallelNoBranches",
+    );
+    expect(problem?.severity).toBe("error");
+    expect(problem?.params?.label).toBe("Fork");
+    expect(result.runnable).toBe(false);
+  });
+
+  it("accepts a parallel with a single branch edge", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel"),
+        node("c", "command", { commandId: "x" }),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "c", "branch:0"),
+        edge("e3", "c", "e"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).not.toContain(
+      "editor.validation.parallelNoBranches",
+    );
+    expect(result.runnable).toBe(true);
+  });
+});
+
+describe("validateWorkflow parallel join binding", () => {
+  it("errors when joinNodeId points at a missing node", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { label: "Fork", joinNodeId: "ghost" }),
+        node("c", "command", { commandId: "x" }),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "c", "branch:0"),
+        edge("e3", "c", "e"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    const problem = result.problems.find(
+      (p) => p.key === "editor.validation.parallelJoinMissing",
+    );
+    expect(problem?.severity).toBe("error");
+    expect(result.runnable).toBe(false);
+  });
+
+  it("errors when joinNodeId points at a non-join node", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { joinNodeId: "c" }),
+        node("c", "command", { commandId: "x" }),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "c", "branch:0"),
+        edge("e3", "c", "e"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    const problem = result.problems.find(
+      (p) => p.key === "editor.validation.parallelJoinNotJoin",
+    );
+    expect(problem?.severity).toBe("error");
+    expect(result.runnable).toBe(false);
+  });
+
+  it("accepts a parallel bound to a real join reachable from every branch", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { joinNodeId: "j" }),
+        node("c", "command", { commandId: "x" }),
+        node("j", "join"),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "c", "branch:0"),
+        edge("e3", "c", "j"),
+        edge("e4", "j", "e"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).not.toContain(
+      "editor.validation.parallelJoinMissing",
+    );
+    expect(keys(result)).not.toContain(
+      "editor.validation.parallelJoinNotJoin",
+    );
+    expect(keys(result)).not.toContain(
+      "editor.validation.parallelJoinUnreachable",
+    );
+    expect(result.runnable).toBe(true);
+  });
+
+  it("errors when a bound join is unreachable from a branch", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { label: "Fork", joinNodeId: "j" }),
+        node("c", "command", { commandId: "x" }),
+        node("j", "join"),
+        node("e", "end"),
+      ],
+      // The branch dead-ends at `c` and never reaches the bound join `j`. At
+      // runtime the engine now faults (BranchEndedBeforeJoin), so this must
+      // BLOCK Run, not merely warn.
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "c", "branch:0"),
+        edge("e4", "j", "e"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    const problem = result.problems.find(
+      (p) => p.key === "editor.validation.parallelJoinUnreachable",
+    );
+    expect(problem?.severity).toBe("error");
+    expect(problem?.params?.label).toBe("Fork");
+    // An error blocks Run.
+    expect(result.runnable).toBe(false);
+  });
+
+  it("errors when a bound join has no outgoing edge", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { joinNodeId: "j" }),
+        node("c", "command", { commandId: "x" }),
+        node("j", "join", { label: "Sync" }),
+        node("e", "end"),
+      ],
+      // Every branch reaches the join, but the join has no `out` edge — the
+      // engine would die with NoOutgoingEdge resuming the parent path.
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "c", "branch:0"),
+        edge("e3", "c", "j"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    const problem = result.problems.find(
+      (p) => p.key === "editor.validation.joinNoOutgoing",
+    );
+    expect(problem?.severity).toBe("error");
+    expect(problem?.params?.label).toBe("Sync");
+    expect(result.runnable).toBe(false);
+  });
+
+  it("does not flag a bound join that has an out edge and is reachable from all branches", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { joinNodeId: "j" }),
+        node("a", "command", { commandId: "x" }),
+        node("b", "command", { commandId: "y" }),
+        node("j", "join"),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "a", "branch:0"),
+        edge("e3", "p", "b", "branch:1"),
+        edge("e4", "a", "j"),
+        edge("e5", "b", "j"),
+        edge("e6", "j", "e"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).not.toContain(
+      "editor.validation.parallelJoinUnreachable",
+    );
+    expect(keys(result)).not.toContain("editor.validation.joinNoOutgoing");
+    expect(result.runnable).toBe(true);
+  });
+});
+
+describe("validateWorkflow end reachability through a fork", () => {
+  it("treats the end as reachable when the only path runs through fork branches", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { joinNodeId: "j" }),
+        node("a", "command", { commandId: "x" }),
+        node("b", "command", { commandId: "y" }),
+        node("j", "join"),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "a", "branch:0"),
+        edge("e3", "p", "b", "branch:1"),
+        edge("e4", "a", "j"),
+        edge("e5", "b", "j"),
+        edge("e6", "j", "e"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).not.toContain("editor.validation.endUnreachable");
+    expect(result.runnable).toBe(true);
+  });
+});
+
+describe("validateWorkflow vars discarded inside a branch", () => {
+  it("warns for a data node with assignments inside a parallel branch", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { joinNodeId: "j" }),
+        node("d", "data", {
+          label: "Set",
+          data: [{ name: "v", value: "1" }],
+        }),
+        node("j", "join"),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "d", "branch:0"),
+        edge("e3", "d", "j"),
+        edge("e4", "j", "e"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    const problem = result.problems.find(
+      (p) => p.key === "editor.validation.parallelVarsDiscarded",
+    );
+    expect(problem?.severity).toBe("warning");
+    expect(problem?.params?.label).toBe("Set");
+    expect(result.runnable).toBe(true);
+  });
+
+  it("does not warn for a data node after the join (back on the main path)", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("p", "parallel", { joinNodeId: "j" }),
+        node("c", "command", { commandId: "x" }),
+        node("j", "join"),
+        node("d", "data", { data: [{ name: "v", value: "1" }] }),
+        node("e", "end"),
+      ],
+      edges: [
+        edge("e1", "s", "p"),
+        edge("e2", "p", "c", "branch:0"),
+        edge("e3", "c", "j"),
+        edge("e4", "j", "d"),
+        edge("e5", "d", "e"),
+      ],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).not.toContain(
+      "editor.validation.parallelVarsDiscarded",
+    );
+  });
+
+  it("does not warn for a data node on a purely sequential path", () => {
+    const graph = {
+      nodes: [
+        node("s", "start"),
+        node("d", "data", { data: [{ name: "v", value: "1" }] }),
+        node("e", "end"),
+      ],
+      edges: [edge("e1", "s", "d"), edge("e2", "d", "e")],
+    };
+    const result = validateWorkflow(graph);
+    expect(keys(result)).not.toContain(
+      "editor.validation.parallelVarsDiscarded",
+    );
+  });
+});

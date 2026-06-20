@@ -15,7 +15,7 @@
 //     connection left from in `sourceHandle`, so the branch round-trips
 //     through it with no extra bookkeeping.
 
-import type { Edge, Node } from "reactflow";
+import type { Edge, Node } from "@xyflow/react";
 import type {
   DataAssignment,
   DataSource,
@@ -36,8 +36,13 @@ import type {
  * component renders; `commandId` / `label` mirror the persisted node. The
  * live-run fields are layered on at render time by the canvas (see
  * `applyRunStateToNodes`) and are absent on a freshly-converted graph.
+ *
+ * Declared as a `type` (not an `interface`) on purpose: @xyflow/react v12
+ * constrains a node's data to `Record<string, unknown>`, which an object-type
+ * alias satisfies but an `interface` does not (interfaces have no implicit
+ * index signature). See `Node<WorkflowNodeData>` below.
  */
-export interface WorkflowNodeData {
+export type WorkflowNodeData = {
   kind: WorkflowNodeKind;
   commandId?: string;
   label?: string;
@@ -58,6 +63,24 @@ export interface WorkflowNodeData {
   parser?: OutputSchema;
   /** Template text a `text` node composes (see WorkflowNode). */
   text?: string;
+  /** Bound join barrier for a `parallel` (fork) node (see WorkflowNode). */
+  joinNodeId?: string;
+  /**
+   * Editor-only WIRED branch count for a `parallel` (fork) node — the number
+   * of slots needed to cover its highest wired `branch:<n>` edge (i.e.
+   * `highestWiredIndex + 1`, or 0 for a fresh fork). Drives how many output
+   * handles `ParallelNode` renders, so a node knows its branches from its own
+   * DATA at first paint rather than reading the global edge store (which is
+   * empty at mount, making `branch:<n>` edges fail to render — see the v12
+   * migration note in failures.md).
+   *
+   * DERIVED, never persisted: `workflowToFlow` computes it from the edges, the
+   * canvas keeps it in sync as branches are wired/unwired, and
+   * `flowNodeToNode` drops it (the persisted source of truth is the edges,
+   * which `flowToWorkflow` re-indexes densely on save). Absent for every
+   * non-parallel kind.
+   */
+  parallelBranchCount?: number;
   /** Per-run lifecycle status, injected for live highlighting. */
   runStatus?: "pending" | "running" | "finished";
   /** Exit code once the node finished, for the node badge. */
@@ -73,7 +96,7 @@ export interface WorkflowNodeData {
    * border. Injected at render time by `markInsertNeighbors`; never persisted.
    */
   insertNeighbor?: boolean;
-}
+};
 
 export type WorkflowFlowNode = Node<WorkflowNodeData>;
 export type WorkflowFlowEdge = Edge;
@@ -101,6 +124,7 @@ function nodeToFlowNode(node: WorkflowNode): WorkflowFlowNode {
       variableSources: node.variableSources,
       parser: node.parser,
       text: node.text,
+      joinNodeId: node.joinNodeId,
     },
   };
 }
@@ -121,10 +145,53 @@ export function workflowToFlow(workflow: Workflow): {
   nodes: WorkflowFlowNode[];
   edges: WorkflowFlowEdge[];
 } {
-  return {
-    nodes: workflow.nodes.map(nodeToFlowNode),
-    edges: workflow.edges.map(edgeToFlowEdge),
-  };
+  const edges = workflow.edges.map(edgeToFlowEdge);
+  // With both nodes and edges in hand, seed every `parallel` fork's editor-only
+  // wired-branch count so `ParallelNode` renders the right handle set at first
+  // paint (its `branch:<n>` handles must exist for the saved branch edges to
+  // render — see `parallelBranchCount` / the v12 migration note).
+  const nodes = workflow.nodes.map((node) => withParallelBranchCount(
+    nodeToFlowNode(node),
+    edges,
+  ));
+  return { nodes, edges };
+}
+
+/**
+ * Stamp a `parallel` node's editor-only `data.parallelBranchCount` from the
+ * current edges; every other kind passes through unchanged. Returns a new node
+ * only when the count actually changes, so callers can use it both to seed the
+ * initial graph and to keep counts in sync without churning identity. Pure.
+ */
+function withParallelBranchCount(
+  node: WorkflowFlowNode,
+  edges: ReadonlyArray<WorkflowFlowEdge>,
+): WorkflowFlowNode {
+  if ((node.type ?? node.data.kind) !== "parallel") return node;
+  const count = parallelBranchCount(node.id, edges);
+  if (node.data.parallelBranchCount === count) return node;
+  return { ...node, data: { ...node.data, parallelBranchCount: count } };
+}
+
+/**
+ * Keep every `parallel` fork's editor-only `data.parallelBranchCount` in sync
+ * with the live edges, returning a NEW array only when at least one fork's
+ * count changed (otherwise the SAME array reference, so a no-op never triggers
+ * a state update / render loop). The canvas calls this after any edge mutation
+ * (connect, delete, change) so a wired/unwired branch grows/shrinks the
+ * rendered handle set immediately.
+ */
+export function syncParallelBranchCounts(
+  nodes: WorkflowFlowNode[],
+  edges: ReadonlyArray<WorkflowFlowEdge>,
+): WorkflowFlowNode[] {
+  let changed = false;
+  const next = nodes.map((node) => {
+    const updated = withParallelBranchCount(node, edges);
+    if (updated !== node) changed = true;
+    return updated;
+  });
+  return changed ? next : nodes;
 }
 
 /**
@@ -148,6 +215,7 @@ function flowNodeToNode(node: WorkflowFlowNode): WorkflowNode {
     variableSources: node.data.variableSources,
     parser: node.data.parser,
     text: node.data.text,
+    joinNodeId: node.data.joinNodeId,
     position: { x: node.position.x, y: node.position.y },
   };
 }
@@ -174,6 +242,15 @@ function branchFromHandle(
   if (sourceHandle.startsWith("case:")) {
     return sourceHandle as WorkflowEdgeBranch;
   }
+  // A `parallel` fork handle carries its branch index (`branch:<n>`). Only a
+  // well-formed numeric suffix round-trips; anything else falls back to `out`.
+  if (sourceHandle.startsWith("branch:")) {
+    const index = sourceHandle.slice("branch:".length);
+    if (/^\d+$/.test(index)) {
+      return sourceHandle as WorkflowEdgeBranch;
+    }
+    return DEFAULT_SOURCE_HANDLE;
+  }
   if (STATIC_BRANCH_HANDLES.has(sourceHandle as WorkflowEdgeBranch)) {
     return sourceHandle as WorkflowEdgeBranch;
   }
@@ -191,6 +268,8 @@ function branchFromHandle(
  *   - `switch`    → `default` (the always-present fallback)
  *   - `loop`      → `done`   (continue AFTER the loop, not into its body)
  *   - `try`       → `ok`     (success)
+ *   - `parallel`  → `branch:0` (the first fork branch, always present)
+ *   - `join`      → `out`    (single exit after the branches synchronise)
  */
 export function primaryOutHandle(kind: WorkflowNodeKind): WorkflowEdgeBranch {
   switch (kind) {
@@ -202,6 +281,8 @@ export function primaryOutHandle(kind: WorkflowNodeKind): WorkflowEdgeBranch {
       return "done";
     case "try":
       return "ok";
+    case "parallel":
+      return "branch:0";
     default:
       return "out";
   }
@@ -213,6 +294,133 @@ function flowEdgeToEdge(edge: WorkflowFlowEdge): WorkflowEdge {
     source: edge.source,
     target: edge.target,
     branch: branchFromHandle(edge.sourceHandle),
+  };
+}
+
+/**
+ * Close gaps in every `parallel` fork's `branch:<n>` indices so the persisted
+ * graph is always densely numbered (`branch:0`, `branch:1`, …) with no holes.
+ *
+ * Holes appear when the user deletes a middle branch edge (e.g. leaving
+ * `branch:0` + `branch:2`). The engine tolerates holes — `edges_for_branch_multi`
+ * sorts by index and just runs the present branches — but the editor renders a
+ * handle per slot `0..max`, so a hole shows an empty, unwired handle. Rather
+ * than paper over it in the node component (which cannot rewrite edges), we fix
+ * the source of truth: on save, each fork's surviving branch edges are
+ * re-indexed in ascending order of their old index, preserving their relative
+ * order and target. Only `branch:<n>` source handles of `parallel` nodes are
+ * touched; every other edge passes through unchanged.
+ */
+function normalizeParallelBranchEdges(
+  nodes: WorkflowFlowNode[],
+  edges: WorkflowFlowEdge[],
+): WorkflowFlowEdge[] {
+  const parallelIds = new Set(
+    nodes
+      .filter((n) => (n.type ?? n.data.kind) === "parallel")
+      .map((n) => n.id),
+  );
+  if (parallelIds.size === 0) return edges;
+
+  // Per fork: its branch edges with the parsed old index, in stored order.
+  const branchOrder = new Map<
+    string,
+    { edgeId: string; oldIndex: number }[]
+  >();
+  for (const edge of edges) {
+    if (!parallelIds.has(edge.source)) continue;
+    const handle = edge.sourceHandle;
+    if (handle == null || !handle.startsWith("branch:")) continue;
+    const oldIndex = Number.parseInt(handle.slice("branch:".length), 10);
+    if (!Number.isInteger(oldIndex)) continue;
+    const list = branchOrder.get(edge.source) ?? [];
+    list.push({ edgeId: edge.id, oldIndex });
+    branchOrder.set(edge.source, list);
+  }
+
+  // Map each branch edge id → its new dense index (ascending by old index).
+  const newHandleByEdgeId = new Map<string, string>();
+  for (const list of branchOrder.values()) {
+    list
+      .slice()
+      .sort((a, b) => a.oldIndex - b.oldIndex)
+      .forEach((entry, denseIndex) => {
+        newHandleByEdgeId.set(entry.edgeId, `branch:${denseIndex}`);
+      });
+  }
+  if (newHandleByEdgeId.size === 0) return edges;
+
+  return edges.map((edge) => {
+    const next = newHandleByEdgeId.get(edge.id);
+    return next === undefined ? edge : { ...edge, sourceHandle: next };
+  });
+}
+
+/**
+ * Horizontal offset placed between a leaf node and the implicit `end` node
+ * auto-appended to it on save, so the synthesized end sits to the node's right
+ * rather than stacked on its origin.
+ */
+const IMPLICIT_END_OFFSET_X = 200;
+
+/**
+ * Auto-append an `end` node + edge to every node that has NO outgoing edge
+ * (and is not itself an `end`). The engine is deliberately strict — a node
+ * with no outgoing edge fails at run time with `NoOutgoingEdge`, because an
+ * unwired node is ambiguous (deliberate end vs forgotten link). Rather than
+ * relax the engine, the editor resolves the ambiguity on save by drawing the
+ * `end` the user would otherwise have to add by hand.
+ *
+ * The rule is purely "zero outgoing edges → exactly one end": this uniformly
+ * covers a lone command/data/parser/text node, a fork's branch commands that
+ * dead-end, and even a freshly-dropped branching node with nothing wired yet.
+ * A branching node that ALREADY has ≥1 outgoing edge is left untouched — its
+ * other unfilled ports remain a validation concern, not something to silently
+ * terminate. `end` nodes (zero outgoing by nature) are excluded so this never
+ * chains ends onto ends.
+ *
+ * The synthesized edge leaves the node's PRIMARY out handle (see
+ * {@link primaryOutHandle}) so a bare branching node gets its happy-path branch
+ * wired to the end. Pure: returns fresh arrays.
+ */
+function appendImplicitEnds(
+  nodes: WorkflowFlowNode[],
+  edges: WorkflowFlowEdge[],
+): { nodes: WorkflowFlowNode[]; edges: WorkflowFlowEdge[] } {
+  const hasOutgoing = new Set<string>();
+  for (const edge of edges) {
+    hasOutgoing.add(edge.source);
+  }
+
+  const newNodes: WorkflowFlowNode[] = [];
+  const newEdges: WorkflowFlowEdge[] = [];
+  for (const node of nodes) {
+    const kind = (node.type ?? node.data.kind) as WorkflowNodeKind;
+    if (kind === "end") continue;
+    if (hasOutgoing.has(node.id)) continue;
+
+    const endNode: WorkflowFlowNode = {
+      id: makeGraphId("node"),
+      type: "end",
+      position: {
+        x: node.position.x + IMPLICIT_END_OFFSET_X,
+        y: node.position.y,
+      },
+      data: { kind: "end" },
+    };
+    newNodes.push(endNode);
+    newEdges.push({
+      id: makeGraphId("edge"),
+      source: node.id,
+      target: endNode.id,
+      sourceHandle: primaryOutHandle(kind),
+    });
+  }
+
+  if (newNodes.length === 0) return { nodes, edges };
+  return {
+    nodes: [...nodes, ...newNodes],
+    edges: [...edges, ...newEdges],
   };
 }
 
@@ -233,15 +441,107 @@ export function flowToWorkflow(
   Workflow,
   "name" | "description" | "icon" | "tags" | "categoryId" | "nodes" | "edges"
 > {
+  // Re-index every parallel fork's branch edges to a dense 0..k before
+  // persisting, so a fork left with index gaps (a deleted middle branch) never
+  // saves a hole that the editor would render as an empty handle.
+  const normalizedEdges = normalizeParallelBranchEdges(nodes, edges);
+  // Auto-terminate every leaf node (zero outgoing edges) with an implicit
+  // `end`, so a saved graph never trips the engine's strict `NoOutgoingEdge`
+  // for an unwired node the user simply meant to finish.
+  const withEnds = appendImplicitEnds(nodes, normalizedEdges);
   return {
     name: base.name,
     description: base.description,
     icon: base.icon,
     tags: base.tags,
     categoryId: base.categoryId,
-    nodes: nodes.map(flowNodeToNode),
-    edges: edges.map(flowEdgeToEdge),
+    nodes: withEnds.nodes.map(flowNodeToNode),
+    edges: withEnds.edges.map(flowEdgeToEdge),
   };
+}
+
+/**
+ * For a workflow graph, map every node that lies inside a `parallel` fork's
+ * branch to that branch's 1-based slot number, so the console can prefix a
+ * node's step header with `(ветка N)`. Operates on the PERSISTED graph shape
+ * (`WorkflowNode` / `WorkflowEdge`), which is what the run bridge has.
+ *
+ * For each parallel fork, its `branch:<n>` edges are walked in ascending index
+ * order; from each branch target we BFS forward marking every reachable node
+ * with that branch's slot (`n + 1`), stopping at the fork's bound join
+ * (`joinNodeId`, which belongs to no branch) and never crossing into another
+ * fork's already-claimed nodes (first match wins, so an outer fork's slot is
+ * not overwritten by an inner one). `end` nodes are marked too (harmless — they
+ * emit no header) but are not traversed past.
+ *
+ * The result is a plain `Record<nodeId, slot>`; a node absent from the map is
+ * not inside any branch and gets a plain header. This is intentionally
+ * conservative: when in doubt (e.g. a malformed graph) a node simply gets no
+ * slot rather than a wrong one.
+ */
+export function branchSlotsByNode(
+  nodes: ReadonlyArray<WorkflowNode>,
+  edges: ReadonlyArray<WorkflowEdge>,
+): Record<string, number> {
+  const parallelIds = new Set(
+    nodes.filter((n) => n.kind === "parallel").map((n) => n.id),
+  );
+  if (parallelIds.size === 0) return {};
+
+  const joinByFork = new Map<string, string | undefined>();
+  for (const node of nodes) {
+    if (node.kind === "parallel") joinByFork.set(node.id, node.joinNodeId);
+  }
+
+  // Adjacency: source → list of target node ids (for forward BFS).
+  const outgoing = new Map<string, string[]>();
+  for (const edge of edges) {
+    const list = outgoing.get(edge.source);
+    if (list === undefined) outgoing.set(edge.source, [edge.target]);
+    else list.push(edge.target);
+  }
+
+  const slotByNode: Record<string, number> = {};
+
+  for (const forkId of parallelIds) {
+    const join = joinByFork.get(forkId);
+    // The fork's branch edges, sorted by ascending branch index so slot
+    // numbers are stable (branch:0 → slot 1, branch:1 → slot 2, …).
+    const branchEdges = edges
+      .filter(
+        (e) => e.source === forkId && e.branch.startsWith("branch:"),
+      )
+      .map((e) => ({
+        target: e.target,
+        index: Number.parseInt(e.branch.slice("branch:".length), 10),
+      }))
+      .filter((b) => Number.isInteger(b.index))
+      .sort((a, b) => a.index - b.index);
+
+    branchEdges.forEach((branch, slotZeroBased) => {
+      const slot = slotZeroBased + 1;
+      // BFS forward from the branch's entry node, claiming unclaimed nodes for
+      // this slot. Stop at the bound join (a barrier shared by all branches)
+      // and never re-enter the fork itself or a node already claimed.
+      const stack = [branch.target];
+      const visited = new Set<string>();
+      while (stack.length > 0) {
+        const current = stack.pop() as string;
+        if (visited.has(current)) continue;
+        visited.add(current);
+        if (current === join) continue; // the join is not part of any branch
+        if (current === forkId) continue; // never claim the fork node itself
+        if (slotByNode[current] === undefined) {
+          slotByNode[current] = slot;
+        }
+        for (const next of outgoing.get(current) ?? []) {
+          if (!visited.has(next)) stack.push(next);
+        }
+      }
+    });
+  }
+
+  return slotByNode;
 }
 
 /**
@@ -464,13 +764,61 @@ export function insertPreviewPoint(
 }
 
 /**
+ * The WIRED branch count of a `parallel` (fork) node: the number of slots
+ * needed to cover its highest wired `branch:<n>` edge — i.e.
+ * `highestWiredIndex + 1`, or 0 when nothing is wired. A temporary gap (e.g.
+ * `branch:0` + `branch:2`, before save densifies it) still counts the high
+ * index, so its wired handle is preserved (returns 3 here, covering 0..2).
+ *
+ * This is what `workflowToFlow` stores in `data.parallelBranchCount` and what
+ * the canvas recomputes whenever a fork's branch edge is added or removed, so
+ * {@link ParallelNode} can derive its handles from node DATA (available at
+ * first paint) rather than the global edge store (empty at mount).
+ */
+export function parallelBranchCount(
+  nodeId: string,
+  edges: ReadonlyArray<WorkflowFlowEdge>,
+): number {
+  let highest = -1;
+  for (const edge of edges) {
+    if (edge.source !== nodeId) continue;
+    const handle = edge.sourceHandle;
+    if (handle == null || !handle.startsWith("branch:")) continue;
+    const index = Number.parseInt(handle.slice("branch:".length), 10);
+    if (Number.isInteger(index) && index >= 0 && index > highest) {
+      highest = index;
+    }
+  }
+  return highest + 1;
+}
+
+/**
+ * The `branch:<n>` source-handle indices a `parallel` (fork) node renders,
+ * sorted ascending, derived from its WIRED branch `count` (see
+ * {@link parallelBranchCount}). Renders one handle per slot `0..count-1` (so
+ * every wired branch, including one past a temporary gap, keeps its handle)
+ * PLUS exactly ONE trailing free index (`count`) — the next unused slot the
+ * user drags a new branch from.
+ *
+ * A fresh, unwired fork (`count === 0`) therefore shows a single empty handle
+ * (`branch:0`); wiring it grows the count to 1 and reveals `branch:1` as the
+ * next free slot; and so on. On save, {@link flowToWorkflow} re-indexes the
+ * wired branches densely, so any gap collapses and persisted forks never
+ * carry a hole.
+ */
+export function parallelBranchIndices(count: number): number[] {
+  const slots = Math.max(0, Math.trunc(count)) + 1;
+  return Array.from({ length: slots }, (_unused, index) => index);
+}
+
+/**
  * Whether a node exposes a free single `out` source port — i.e. it is a
  * single-exit kind (`start` / `command` / `data`) with no edge already
  * leaving its `out` handle. Multi-exit / branching kinds (`condition`,
- * `switch`, `loop`, `try`) are deliberately EXCLUDED: their branch ports
- * (`then`/`else`, `case:*`/`default`, `body`/`done`, `ok`/`catch`) are too
- * ambiguous to auto-pick, so they are only wired manually or via
- * edge-insertion. `end` nodes have no source port.
+ * `switch`, `loop`, `try`, `parallel`, `join`) are deliberately EXCLUDED:
+ * their branch ports (`then`/`else`, `case:*`/`default`, `body`/`done`,
+ * `ok`/`catch`, `branch:<n>`) are too ambiguous to auto-pick, so they are
+ * only wired manually or via edge-insertion. `end` nodes have no source port.
  */
 function hasFreeOutPort(
   node: WorkflowFlowNode,

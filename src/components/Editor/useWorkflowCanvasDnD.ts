@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import type { DragEvent as ReactDragEvent, RefObject } from "react";
-import type { ReactFlowInstance } from "reactflow";
+import type { ReactFlowInstance } from "@xyflow/react";
 import type { WorkflowNodeKind } from "../../types";
 import { useEditorDraftStore } from "../../stores/editorDraftStore";
 import {
@@ -10,7 +10,6 @@ import {
   insertNodeOnEdge,
   insertPreviewPoint,
   type WorkflowFlowNode,
-  type WorkflowNodeData,
 } from "../../utils/workflowGraph";
 
 /** MIME type used for the palette drag payload. */
@@ -58,10 +57,7 @@ interface InsertPreviewPos {
 
 interface UseWorkflowCanvasDnDArgs {
   flowWrapperRef: RefObject<HTMLDivElement | null>;
-  rfInstanceRef: RefObject<ReactFlowInstance<
-    WorkflowNodeData,
-    unknown
-  > | null>;
+  rfInstanceRef: RefObject<ReactFlowInstance<WorkflowFlowNode> | null>;
   makeNode: (
     kind: Exclude<WorkflowNodeKind, "start">,
     commandId: string | undefined,

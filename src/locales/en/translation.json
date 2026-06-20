@@ -168,6 +168,13 @@
       "data": "Data",
       "parser": "Parser",
       "text": "Text",
+      "parallel": "Parallel",
+      "join": "Join",
+      "parallelBranches_one": "{{count}} branch",
+      "parallelBranches_other": "{{count}} branches",
+      "branchLabel": "branch {{n}}",
+      "branchSlot": "Branch {{n}}",
+      "newBranch": "New branch",
       "textEmpty": "No text yet",
       "then": "then",
       "else": "else",
@@ -275,7 +282,9 @@
         "loop": "Configure the loop's iterations below.",
         "data": "Add variable assignments below.",
         "parser": "Transforms the previous node's output using a schema.",
-        "text": "Compose text; the result becomes the node's output."
+        "text": "Compose text; the result becomes the node's output.",
+        "parallel": "Forks execution into concurrent branches.",
+        "join": "Waits for every fork branch, then continues."
       },
       "text": {
         "label": "Text",
@@ -285,6 +294,13 @@
         "incomingData": "Incoming data",
         "rawInput": "Raw output",
         "schemaInput": "Schema"
+      },
+      "parallel": {
+        "branches": "Branches",
+        "branchesHint": "Each branch runs concurrently from this fork.",
+        "join": "Join node",
+        "joinHint": "Optional barrier where the branches synchronise.",
+        "noJoin": "None"
       },
       "preview": {
         "inputTitle": "Example input",
@@ -335,7 +351,13 @@
       "switchBranches": "Switch node \"{{label}}\" has unwired case or default branches.",
       "loopBranches": "Loop node \"{{label}}\" is missing its body or done branch.",
       "loopConfig": "Loop node \"{{label}}\" must set exactly one of count or while.",
-      "tryBranches": "Try node \"{{label}}\" is missing its ok or catch branch."
+      "tryBranches": "Try node \"{{label}}\" is missing its ok or catch branch.",
+      "parallelNoBranches": "Parallel node \"{{label}}\" needs at least one branch.",
+      "parallelJoinMissing": "Parallel node \"{{label}}\" points at a join node that no longer exists.",
+      "parallelJoinNotJoin": "Parallel node \"{{label}}\" must point at a Join node.",
+      "parallelJoinUnreachable": "Not every branch of parallel node \"{{label}}\" can reach its join.",
+      "joinNoOutgoing": "Join node \"{{label}}\" needs an outgoing edge so the workflow can continue past it.",
+      "parallelVarsDiscarded": "Data node \"{{label}}\" runs inside a parallel branch — its variable writes are discarded at the join."
     }
   },
   "workflow": {
@@ -871,6 +893,7 @@
     "exitCode": "exit {{code}}",
     "timedOutLine": "⏱ Process cancelled: the timeout elapsed before the command finished.",
     "workflowStep": "▸ {{step}}",
+    "workflowStepBranch": "▸ (branch {{n}}) {{step}}",
     "workflowStepScript": "  $ {{script}}",
     "workflowStepExit": "  exit {{code}}",
     "timedOut": "Timed out",

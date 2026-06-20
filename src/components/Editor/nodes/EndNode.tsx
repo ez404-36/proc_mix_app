@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
 import { insertNeighborClass, runStatusClass } from "./runStatus";
@@ -8,7 +8,7 @@ import { insertNeighborClass, runStatusClass } from "./runStatus";
  * Terminal node. Target handle only — traversal stops here. A workflow may
  * have several end nodes (one per branch).
  */
-export function EndNode({ data }: NodeProps<WorkflowNodeData>): ReactElement {
+export function EndNode({ data }: NodeProps<Node<WorkflowNodeData>>): ReactElement {
   const { t } = useTranslation();
   return (
     <div

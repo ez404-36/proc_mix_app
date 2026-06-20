@@ -151,6 +151,7 @@ fn node(id: &str, kind: &str, command_id: Option<&str>) -> WorkflowNodeRecord {
         variable_sources: std::collections::BTreeMap::new(),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     }
 }
@@ -860,6 +861,7 @@ fn switch_workflow(test_command_id: &str) -> WorkflowRecord {
         variable_sources: std::collections::BTreeMap::new(),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     WorkflowRecord {
@@ -981,6 +983,7 @@ fn counted_loop_workflow(body_command_id: &str, count: u32, max: u32) -> Workflo
         variable_sources: std::collections::BTreeMap::new(),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     WorkflowRecord {
@@ -1132,6 +1135,7 @@ fn try_workflow(test_command_id: &str, retries: u32) -> WorkflowRecord {
         variable_sources: std::collections::BTreeMap::new(),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     WorkflowRecord {
@@ -1316,6 +1320,7 @@ async fn data_node_pulls_exit_code_from_previous_command() {
         variable_sources: std::collections::BTreeMap::new(),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     let workflow = WorkflowRecord {
@@ -1410,6 +1415,7 @@ fn predicated_condition_workflow(test_command_id: &str, predicate: Condition) ->
         variable_sources: std::collections::BTreeMap::new(),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     WorkflowRecord {
@@ -1506,6 +1512,7 @@ async fn data_node_assignment_flows_into_downstream_command() {
         variable_sources: std::collections::BTreeMap::new(),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     let workflow = WorkflowRecord {
@@ -1596,6 +1603,7 @@ async fn data_node_variable_survives_an_intermediate_command_node() {
         variable_sources: std::collections::BTreeMap::new(),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     // The final command binds its `who` variable to the data-node variable.
@@ -1615,6 +1623,7 @@ async fn data_node_variable_survives_an_intermediate_command_node() {
         )]),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     let workflow = WorkflowRecord {
@@ -1924,6 +1933,7 @@ async fn run_from_data_node_consumes_the_seed_as_raw_output() {
         variable_sources: std::collections::BTreeMap::new(),
         parser: None,
         text: None,
+        join_node_id: None,
         position: NodePosition { x: 0.0, y: 0.0 },
     };
     let workflow = WorkflowRecord {
@@ -1975,5 +1985,434 @@ async fn run_from_data_node_consumes_the_seed_as_raw_output() {
         check_exit,
         Some(Some(0)),
         "the seed must reach the data node's rawOutput → ${{who}}, events: {collected:?}"
+    );
+}
+
+// ---- fork/join (parallel) end-to-end ---------------------------------------
+
+/// A `parallel` fork node with `n` command branches, optionally bound to a
+/// `join` barrier:
+///
+/// start → fork ── branch:0 → b0 → (join | end0)
+///              ├─ branch:1 → b1 → (join | end1)
+///              └─ …
+/// join → end                                      (only when `with_join`)
+///
+/// With `with_join == true` every branch's `out` edge targets the single
+/// `join` node, and `join`'s `out` edge targets a single `end`. With
+/// `with_join == false` each branch flows to its OWN `end` and the fork carries
+/// no `joinNodeId`.
+fn fork_workflow(branch_command_ids: &[&str], with_join: bool) -> WorkflowRecord {
+    let mut nodes: Vec<WorkflowNodeRecord> = vec![node("start", "start", None)];
+
+    let fork = WorkflowNodeRecord {
+        join_node_id: if with_join {
+            Some("join".to_string())
+        } else {
+            None
+        },
+        ..node("fork", "parallel", None)
+    };
+    nodes.push(fork);
+
+    let mut edges = vec![edge("e_start", "start", "fork", "out")];
+
+    for (i, cmd_id) in branch_command_ids.iter().enumerate() {
+        let bnode = format!("b{i}");
+        nodes.push(node(&bnode, "command", Some(cmd_id)));
+        edges.push(edge(
+            &format!("e_fork_{i}"),
+            "fork",
+            &bnode,
+            &format!("branch:{i}"),
+        ));
+        if with_join {
+            edges.push(edge(&format!("e_b{i}_join"), &bnode, "join", "out"));
+        } else {
+            let endn = format!("end{i}");
+            nodes.push(node(&endn, "end", None));
+            edges.push(edge(&format!("e_b{i}_end"), &bnode, &endn, "out"));
+        }
+    }
+
+    if with_join {
+        nodes.push(node("join", "join", None));
+        nodes.push(node("end", "end", None));
+        edges.push(edge("e_join_end", "join", "end", "out"));
+    }
+
+    WorkflowRecord {
+        id: "wf-fork".into(),
+        name: "fork".into(),
+        description: None,
+        icon: None,
+        nodes,
+        edges,
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+    }
+}
+
+#[tokio::test]
+async fn fork_three_branches_join_then_end_finishes_once() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("b0".to_string(), command("b0", "true"));
+    commands.insert("b1".to_string(), command("b1", "true"));
+    commands.insert("b2".to_string(), command("b2", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        fork_workflow(&["b0", "b1", "b2"], true),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    // All three branch commands ran exactly once.
+    for nid in ["b0", "b1", "b2"] {
+        let runs = collected
+            .iter()
+            .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == nid))
+            .count();
+        assert_eq!(
+            runs, 1,
+            "branch {nid} should run once, events: {collected:?}"
+        );
+    }
+
+    // The run finishes EXACTLY once (the post-join continuation must not fire
+    // per branch).
+    let finishes = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. }))
+        .count();
+    assert_eq!(finishes, 1, "exactly one finish, events: {collected:?}");
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "no error expected"
+    );
+}
+
+#[tokio::test]
+async fn fork_without_join_each_branch_runs_to_its_own_end() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("b0".to_string(), command("b0", "true"));
+    commands.insert("b1".to_string(), command("b1", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        fork_workflow(&["b0", "b1"], false),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    for nid in ["b0", "b1"] {
+        assert!(
+            collected.iter().any(
+                |e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == nid)
+            ),
+            "branch {nid} should run, events: {collected:?}"
+        );
+    }
+    // The whole run finishes once all branches reach their own `end`.
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "run should finish once all branches end, events: {collected:?}"
+    );
+}
+
+#[tokio::test]
+async fn fork_single_branch_fast_path_behaves_sequentially() {
+    // One branch ⇒ fast path (no JoinSet). The branch runs and, with a bound
+    // join, the post-join continuation fires once.
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("b0".to_string(), command("b0", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        fork_workflow(&["b0"], true),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    let runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "b0"))
+        .count();
+    assert_eq!(runs, 1, "single branch runs once, events: {collected:?}");
+    let finishes = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. }))
+        .count();
+    assert_eq!(finishes, 1, "exactly one finish, events: {collected:?}");
+}
+
+#[tokio::test]
+async fn fork_error_in_one_branch_aborts_others_and_errors() {
+    // One branch fails immediately while a sibling sleeps; the failure must
+    // abort the sibling and surface a workflow error (not hang).
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    // A non-zero exit alone is NOT an engine error (it would just route `out`),
+    // so make the failing branch a MISSING command, which is a real graph fault
+    // the engine raises as a WorkflowError mid-branch.
+    commands.insert("slow".to_string(), command("slow", "sleep 30"));
+    // "boom" is intentionally absent from the map → UnknownCommand on branch 1.
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        fork_workflow(&["slow", "boom"], true),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "a failing branch must surface a workflow error, events: {collected:?}"
+    );
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "a faulted fork must not also finish, events: {collected:?}"
+    );
+}
+
+#[tokio::test]
+async fn fork_cancel_mid_flight_cancels_all_branches() {
+    // Two long-sleeping branches; cancelling mid-flight must reap both children
+    // and report cancelled, not finished.
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("s0".to_string(), command("s0", "sleep 30"));
+    commands.insert("s1".to_string(), command("s1", "sleep 30"));
+
+    let run_id = execute_workflow(
+        app,
+        exec_state,
+        wf_state.clone(),
+        fork_workflow(&["s0", "s1"], true),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    // Wait until both branch nodes have started so the children exist.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let started = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, WorkflowEvent::NodeStarted { .. }))
+            .count();
+        if started >= 2 || std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    cancel_workflow(wf_state, run_id)
+        .await
+        .expect("cancel succeeds");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowCancelled { .. })),
+        "fork cancel should report cancelled, events: {collected:?}"
+    );
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "a cancelled fork must not also finish"
+    );
+}
+
+#[tokio::test]
+async fn fork_post_join_continuation_runs_a_following_command_once() {
+    // start → fork(2) → join → after(command) → end.
+    // Proves the parent path resumes from join's `out` edge exactly once.
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("b0".to_string(), command("b0", "true"));
+    commands.insert("b1".to_string(), command("b1", "true"));
+    commands.insert("after".to_string(), command("after", "true"));
+
+    // Build the join fixture, then re-point join → after → end.
+    let mut wf = fork_workflow(&["b0", "b1"], true);
+    wf.nodes.push(node("after", "command", Some("after")));
+    // Replace the join→end edge with join→after, and add after→end.
+    wf.edges.retain(|e| e.id != "e_join_end");
+    wf.edges.push(edge("e_join_after", "join", "after", "out"));
+    wf.edges.push(edge("e_after_end", "after", "end", "out"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        wf,
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    let after_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "after"))
+        .count();
+    assert_eq!(
+        after_runs, 1,
+        "the post-join command runs exactly once, events: {collected:?}"
+    );
+    assert!(collected
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
+}
+
+#[tokio::test]
+async fn bound_join_branch_ending_before_join_errors_and_skips_post_join() {
+    // A bound-join fork where ONE branch dead-ends at its OWN `end` instead of
+    // converging at the join. The engine must FAULT (BranchEndedBeforeJoin)
+    // rather than silently running the join + everything after it.
+    //
+    // start → fork ── branch:0 → b0 → join
+    //              └─ branch:1 → b1 → stray_end   (never reaches join)
+    // join → after(command) → end
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("b0".to_string(), command("b0", "true"));
+    commands.insert("b1".to_string(), command("b1", "true"));
+    commands.insert("after".to_string(), command("after", "true"));
+
+    let mut wf = fork_workflow(&["b0", "b1"], true);
+    // Re-point branch 1's `out` edge from `join` to a fresh `stray_end`.
+    wf.nodes.push(node("stray_end", "end", None));
+    wf.edges.retain(|e| e.id != "e_b1_join");
+    wf.edges.push(edge("e_b1_stray", "b1", "stray_end", "out"));
+    // Add a post-join tail so we can prove it does NOT run.
+    wf.nodes.push(node("after", "command", Some("after")));
+    wf.edges.retain(|e| e.id != "e_join_end");
+    wf.edges.push(edge("e_join_after", "join", "after", "out"));
+    wf.edges.push(edge("e_after_end", "after", "end", "out"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        wf,
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "a branch ending before its bound join must surface a workflow error, events: {collected:?}"
+    );
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "a faulted fork must not also finish, events: {collected:?}"
+    );
+    // The post-join tail must NOT have run — the barrier was violated.
+    assert!(
+        !collected.iter().any(
+            |e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "after")
+        ),
+        "the post-join command must not run when the barrier is violated, events: {collected:?}"
+    );
+}
+
+#[tokio::test]
+async fn unbound_fork_branch_ending_at_own_end_still_finishes_ok() {
+    // Regression for Fix 1: with NO bound join (`stop_at == None`) a branch
+    // reaching its own `end` is the LEGITIMATE finish and must NOT error.
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("b0".to_string(), command("b0", "true"));
+    commands.insert("b1".to_string(), command("b1", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        fork_workflow(&["b0", "b1"], false),
+        commands,
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "an unbound fork whose branches end at their own end must finish, events: {collected:?}"
+    );
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "no error expected for an unbound fork, events: {collected:?}"
     );
 }

@@ -459,6 +459,24 @@ function NodeConfigForm({
   const effectiveSource = (a: DataAssignment): DataSource =>
     a.source ?? { kind: "manual", value: a.value };
 
+  // --- parallel ----------------------------------------------------------
+  // A fork's branch count is dynamic — it equals the number of wired
+  // `branch:<n>` edges (the node renders one extra free handle to drag the next
+  // branch from). There is no manual count, so the inspector only configures
+  // the bound join.
+  // Join nodes the user can bind this fork to (the explicit barrier). Empty
+  // value = no bound join (each branch terminates at its own end).
+  const JOIN_NONE = "";
+  const joinOptions: ReadonlyArray<DropdownOption> = [
+    { value: JOIN_NONE, label: t("editor.inspector.parallel.noJoin") },
+    ...allNodes
+      .filter((n) => (n.type ?? n.data.kind) === "join")
+      .map((n) => ({
+        value: n.id,
+        label: n.data.label ?? t("editor.nodes.join"),
+      })),
+  ];
+
   return (
     <>
       {needsCommand ? (
@@ -803,6 +821,30 @@ function NodeConfigForm({
           }
           onChange={(text) => onNodeDataChange(node.id, { text })}
         />
+      ) : null}
+
+      {kind === "parallel" ? (
+        <div className="wf-inspector__field">
+          <p className="wf-inspector__hint">
+            {t("editor.inspector.parallel.branchesHint")}
+          </p>
+          <label className="wf-inspector__label">
+            {t("editor.inspector.parallel.join")}
+          </label>
+          <Dropdown
+            value={node.data.joinNodeId ?? JOIN_NONE}
+            options={joinOptions}
+            ariaLabel={t("editor.inspector.parallel.join")}
+            onChange={(value) =>
+              onNodeDataChange(node.id, {
+                joinNodeId: value === JOIN_NONE ? undefined : value,
+              })
+            }
+          />
+          <p className="wf-inspector__hint">
+            {t("editor.inspector.parallel.joinHint")}
+          </p>
+        </div>
       ) : null}
     </>
   );

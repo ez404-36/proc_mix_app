@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
 import { insertNeighborClass, runStatusClass } from "./runStatus";
@@ -12,7 +12,7 @@ import { insertNeighborClass, runStatusClass } from "./runStatus";
  */
 export function ParserNode({
   data,
-}: NodeProps<WorkflowNodeData>): ReactElement {
+}: NodeProps<Node<WorkflowNodeData>>): ReactElement {
   const { t } = useTranslation();
   const steps = data.parser?.pipeline?.length ?? 0;
 

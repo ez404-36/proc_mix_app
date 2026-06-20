@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
 import { insertNeighborClass, runStatusClass } from "./runStatus";
@@ -11,7 +11,7 @@ import { insertNeighborClass, runStatusClass } from "./runStatus";
  * directly as the `WorkflowEdge.branch`. The title summarises the loop's
  * bound, or the live iteration counter during a run.
  */
-export function LoopNode({ data }: NodeProps<WorkflowNodeData>): ReactElement {
+export function LoopNode({ data }: NodeProps<Node<WorkflowNodeData>>): ReactElement {
   const { t } = useTranslation();
 
   const title =

@@ -3960,7 +3960,7 @@ dependencies = [
 
 [[package]]
 name = "procmix"
-version = "0.7.4"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "boa_engine",
@@ -3990,6 +3990,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "uuid",
  "windows 0.57.0",
 ]
@@ -5907,6 +5908,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

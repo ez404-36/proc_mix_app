@@ -1,4 +1,4 @@
-import type { NodeTypes } from "reactflow";
+import type { NodeTypes } from "@xyflow/react";
 import { StartNode } from "./StartNode";
 import { CommandNode } from "./CommandNode";
 import { ConditionNode } from "./ConditionNode";
@@ -8,6 +8,8 @@ import { TryNode } from "./TryNode";
 import { DataNode } from "./DataNode";
 import { ParserNode } from "./ParserNode";
 import { TextNode } from "./TextNode";
+import { ParallelNode } from "./ParallelNode";
+import { JoinNode } from "./JoinNode";
 import { EndNode } from "./EndNode";
 
 /**
@@ -27,6 +29,8 @@ export const workflowNodeTypes: NodeTypes = {
   data: DataNode,
   parser: ParserNode,
   text: TextNode,
+  parallel: ParallelNode,
+  join: JoinNode,
   end: EndNode,
 };
 
@@ -40,5 +44,7 @@ export {
   DataNode,
   ParserNode,
   TextNode,
+  ParallelNode,
+  JoinNode,
   EndNode,
 };

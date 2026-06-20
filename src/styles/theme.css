@@ -4705,9 +4705,74 @@ body.is-editor-fullscreen .output-panel {
 
 .wf-canvas .react-flow {
   flex: 1;
+  /* @xyflow/react v12 dropped the layout properties v11's `.react-flow` used to
+     ship (`position: relative; width: 100%; height: 100%; overflow: hidden`).
+     The internal `.react-flow__container` is `position: absolute; inset: 0` and
+     sizes itself against the nearest POSITIONED ancestor — without
+     `position: relative` here it resolves against `.wf-canvas` instead (which
+     also contains the toolbar), so the pane/renderer/controls layer is
+     mis-sized and offset, killing all pan / zoom / control-button interaction.
+     Restore the v11 box so the interaction layer matches the visible flow. */
+  position: relative;
+  overflow: hidden;
+}
+
+/* On-canvas zoom / fit / lock / fullscreen controls. @xyflow/react v12 styles
+   the control buttons from `--xy-controls-button-*` custom properties whose
+   DEFAULTS assume a LIGHT theme (light button + light icon) — on our dark
+   canvas the icons were invisible. Map them to our theme tokens so the buttons
+   read as dark surface cards with legible icons, matching the app chrome. The
+   buttons sit top-left, laid out horizontally (set via the `<Controls>`
+   `position`/`orientation` props). */
+/* On-canvas control cluster (zoom / fit / lock / fullscreen). Styled globally
+   for EVERY reactflow canvas in the app — the editor and the read-only
+   workflow-view preview both render a v12 `<Controls>` and must share the same
+   dark-theme look. No wrapper prefix is needed: `<Controls>` only ever appears
+   inside our canvases, so one selector keeps them uniform without duplication. */
+.react-flow__controls {
+  /* Sit just inside the framed canvas, clear of the toolbar above it. A border
+     visually separates the control cluster from the canvas behind it. */
+  margin: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.react-flow__controls-button {
+  --xy-controls-button-background-color: var(--color-surface);
+  --xy-controls-button-background-color-hover: var(--color-bg);
+  --xy-controls-button-color: var(--color-text);
+  --xy-controls-button-color-hover: var(--color-primary);
+  --xy-controls-button-border-color: var(--color-border);
+  width: 28px;
+  height: 28px;
+}
+
+/* v12 forces control-button icons to `max-width/height: 12px`, which squashes
+   our 16×16 stroke icons until the `+`/`−` inside the magnifier lens merges
+   into the lens stroke and reads identically. Render them at their real 16px so
+   the signs stay distinct. (Per-shape `fill` is set on the elements that need
+   it — e.g. the fit-view centre dot — so we don't override `fill` here.) */
+.react-flow__controls-button svg {
+  width: 16px;
+  height: 16px;
+  max-width: none;
+  max-height: none;
 }
 
 /* Custom nodes */
+
+/* @xyflow/react v12 dropped the implicit `width: max-content` that v11 set on
+   `.react-flow__node` (in v12 only the BUILT-IN node types get a width). Our
+   custom nodes would otherwise stretch to fill the flow pane — making the card
+   span the whole canvas and leaving no empty pane to pan with the left mouse
+   button. Restore content-sizing on the node wrapper so each card hugs its
+   content again. */
+.react-flow__node {
+  width: max-content;
+}
+
 .wf-node {
   min-width: 120px;
   padding: 10px 12px;
@@ -4841,6 +4906,38 @@ body.is-editor-fullscreen .output-panel {
 
 .wf-node--text {
   border-color: var(--color-accent);
+}
+
+.wf-node--parallel {
+  border-color: var(--app-color-run);
+  /* Anchor the absolutely-positioned branch captions (and the output handles)
+     to this node box, and reserve a right gutter so every caption fits beside
+     its handle. The node's HEIGHT is set inline by `ParallelNode`, scaled to
+     the slot count, so captions never overlap as branches are added. */
+  position: relative;
+  padding-right: 76px;
+}
+
+/* One branch caption, vertically centered on the SAME `top` as its output
+   handle so the label reads strictly opposite the handle it names. Pinned to
+   the node's right gutter; `translateY(-50%)` centers it on the handle row. */
+.wf-branch-label--row {
+  position: absolute;
+  right: 12px;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* The trailing free slot ("Новая ветка"): muted + italic so it reads as a
+   placeholder affordance rather than an established branch. */
+.wf-branch-label--new {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.wf-node--join {
+  border-color: var(--app-color-run);
 }
 
 .wf-node__branches {
@@ -5651,6 +5748,10 @@ body.is-editor-fullscreen .output-panel {
 .workflow-view__canvas .react-flow {
   width: 100%;
   height: 100%;
+  /* v12 no longer sets `position: relative` on `.react-flow`; without it the
+     absolute `.react-flow__container` would size against an ancestor instead of
+     this box, breaking pan / zoom. See the `.wf-canvas .react-flow` note. */
+  position: relative;
 }
 
 /* Read-only command preview (CommandView). Reuses the `.command-form--view`

@@ -301,10 +301,24 @@ describe("useExecutionBridge - 'result' event", () => {
 });
 
 describe("useExecutionBridge - workflow node routing", () => {
-  it("should route an event with workflowRunId into the aggregated run, not a standalone execution", () => {
+  /** Set up the workflow run + a single node→execution mapping the buffering
+   *  path resolves against (mirrors what `nodeStarted` does in production). */
+  function setupRunWithNode(
+    runId: string,
+    nodeId: string,
+    executionId: string,
+  ): void {
+    const runStore = useWorkflowRunStore.getState();
+    runStore.clearAll();
+    runStore.startRun(runId, "wf-1");
+    runStore.markNodeStarted(runId, nodeId, executionId);
+  }
+
+  it("should BUFFER a node's stdout against its node (grouped flush), not append to the aggregate immediately", () => {
     const { handler } = mountBridge();
     // The aggregated process pre-exists (triggerWorkflowRun starts it).
     useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    setupRunWithNode("run-1", "node-A", "node-exec-1");
     handler({
       kind: "stdout",
       executionId: "node-exec-1",
@@ -312,28 +326,34 @@ describe("useExecutionBridge - workflow node routing", () => {
       workflowRunId: "run-1",
     });
     const state = useExecutionStore.getState();
-    // Output landed on the aggregate; no standalone node execution created.
+    // No standalone node execution created.
     expect(state.executions["node-exec-1"]).toBeUndefined();
-    expect(state.executions["run-1"].log).toEqual([
-      { stream: "stdout", line: "from node", ts: expect.any(Number) },
-    ]);
+    // The line is BUFFERED (awaiting flush under the node's header at finish),
+    // so the aggregate log is still empty — the workflow bridge owns the flush.
+    expect(state.executions["run-1"].log).toEqual([]);
     // The node id never entered recents.
     expect(state.recentIds).toEqual(["run-1"]);
+    // The line is buffered against the node for grouped flush.
+    expect(
+      useWorkflowRunStore.getState().runs["run-1"].lineBuffers["node-A"],
+    ).toEqual([{ stream: "stdout", line: "from node", ts: expect.any(Number) }]);
   });
 
-  it("should route stderr from a workflow node into the aggregate as stderr", () => {
+  it("should buffer stderr from a workflow node as stderr", () => {
     const { handler } = mountBridge();
     useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    setupRunWithNode("run-1", "node-A", "node-exec-1");
     handler({
       kind: "stderr",
       executionId: "node-exec-1",
       line: "warn",
       workflowRunId: "run-1",
     });
-    const log = useExecutionStore.getState().executions["run-1"].log;
-    expect(log).toEqual([
-      { stream: "stderr", line: "warn", ts: expect.any(Number) },
-    ]);
+    expect(
+      useWorkflowRunStore.getState().runs["run-1"].lineBuffers["node-A"],
+    ).toEqual([{ stream: "stderr", line: "warn", ts: expect.any(Number) }]);
+    // Still nothing on the aggregate until the node finishes.
+    expect(useExecutionStore.getState().executions["run-1"].log).toEqual([]);
   });
 
   it("should NOT create a standalone execution for a workflow node's started/finished events", () => {
