@@ -249,7 +249,9 @@ function ScheduleCard({
     >
       <div className="list-tile__head">
         <div className="list-tile__heading">
-          <h3 className="list-tile__title">{schedule.name}</h3>
+          <h3 className="list-tile__title" title={schedule.name}>
+            {schedule.name}
+          </h3>
           {!compact ? (
             <p className="list-tile__desc">
               <code className="list-schedule-card__cron">{schedule.cron}</code>

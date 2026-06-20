@@ -6,6 +6,7 @@ import {
   parseLeadingCommand,
   parseUtilityName,
   parseUtilityNameWithRange,
+  parseUtilityNamesWithRanges,
   scriptReferencesEscalationTool,
 } from "./utilityName";
 
@@ -232,6 +233,88 @@ describe("parseUtilityNameWithRange", () => {
     expect(parseUtilityNameWithRange("${tool} x")).toBeNull();
     expect(parseUtilityNameWithRange("~/bin/tool")).toBeNull();
     expect(parseUtilityNameWithRange("&& ls")).toBeNull();
+  });
+});
+
+describe("parseUtilityNamesWithRanges", () => {
+  // Every returned range must point at the exact characters in the
+  // ORIGINAL string, so `script.slice(start, end) === name`.
+  function expectRanges(
+    script: string,
+    expected: Array<{ name: string; slice: string }>,
+  ): void {
+    const ranges = parseUtilityNamesWithRanges(script);
+    expect(ranges.map((r) => r.name)).toEqual(expected.map((e) => e.name));
+    for (const r of ranges) {
+      expect(script.slice(r.start, r.end)).toBe(r.name);
+    }
+  }
+
+  it("returns the single leading utility for a plain command", () => {
+    const ranges = parseUtilityNamesWithRanges("df -h /");
+    expect(ranges).toEqual([{ name: "df", start: 0, end: 2 }]);
+  });
+
+  it("returns one range per command in a pipe chain", () => {
+    expectRanges("ls -la | grep foo", [
+      { name: "ls", slice: "ls" },
+      { name: "grep", slice: "grep" },
+    ]);
+  });
+
+  it("handles &&, ||, ;, & and | separators", () => {
+    expectRanges("df -h && du -sh", [
+      { name: "df", slice: "df" },
+      { name: "du", slice: "du" },
+    ]);
+    expectRanges("ls || echo fail", [
+      { name: "ls", slice: "ls" },
+      { name: "echo", slice: "echo" },
+    ]);
+    expectRanges("cat a.txt | sort | uniq", [
+      { name: "cat", slice: "cat" },
+      { name: "sort", slice: "sort" },
+      { name: "uniq", slice: "uniq" },
+    ]);
+    expectRanges("ls;rm", [
+      { name: "ls", slice: "ls" },
+      { name: "rm", slice: "rm" },
+    ]);
+  });
+
+  it("strips env-assignments and a sudo prefix per segment", () => {
+    expectRanges("FOO=1 ls | sudo grep x", [
+      { name: "ls", slice: "ls" },
+      { name: "grep", slice: "grep" },
+    ]);
+  });
+
+  it("parses each executable line and skips comments/blanks", () => {
+    expectRanges("# comment\nls | grep a\n\ndf", [
+      { name: "ls", slice: "ls" },
+      { name: "grep", slice: "grep" },
+      { name: "df", slice: "df" },
+    ]);
+  });
+
+  it("omits segments whose leading token is unsafe (e.g. ${var})", () => {
+    expectRanges("ls | ${tool} x | grep y", [
+      { name: "ls", slice: "ls" },
+      { name: "grep", slice: "grep" },
+    ]);
+  });
+
+  it("the leading range matches parseUtilityNameWithRange", () => {
+    const script = "git status | grep foo";
+    expect(parseUtilityNamesWithRanges(script)[0]).toEqual(
+      parseUtilityNameWithRange(script),
+    );
+  });
+
+  it("returns an empty array when no command has a safe utility", () => {
+    expect(parseUtilityNamesWithRanges("")).toEqual([]);
+    expect(parseUtilityNamesWithRanges("# just a comment")).toEqual([]);
+    expect(parseUtilityNamesWithRanges("${a} | ${b}")).toEqual([]);
   });
 });
 

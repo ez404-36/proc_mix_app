@@ -59,6 +59,14 @@ export interface EditorDraft {
    * an existing workflow; `null` for a new workflow until its first save.
    */
   currentId: string | null;
+  /**
+   * The persisted workflow's last-saved time (its `updatedAt`) when editing
+   * an existing workflow, or `null` for a brand-new draft. Seeds the
+   * editor header's "Saved at …" indicator so an existing workflow shows
+   * its real last-saved time on entering edit mode (not a dash until the
+   * first in-session save).
+   */
+  lastSavedAt: string | null;
 }
 
 /**
@@ -134,6 +142,7 @@ export function buildDraftForTarget(
         edges: flow.edges,
         meta: metaFromWorkflow(wf),
         currentId: wf.id,
+        lastSavedAt: wf.updatedAt,
       };
     }
   }
@@ -143,6 +152,7 @@ export function buildDraftForTarget(
     edges: initial.edges,
     meta: EMPTY_META,
     currentId: null,
+    lastSavedAt: null,
   };
 }
 
@@ -265,7 +275,9 @@ export const useEditorDraftStore = create<EditorDraftState>()((set, get) => ({
       }),
       past: [],
       future: [],
-      lastSavedAt: null,
+      // Seed from the loaded workflow's last-saved time so an existing
+      // workflow shows it immediately (null for a brand-new draft).
+      lastSavedAt: draft.lastSavedAt,
     }),
 
   setNodes: (arg) => set((state) => ({ nodes: resolveSetter(arg, state.nodes) })),
@@ -290,7 +302,7 @@ export const useEditorDraftStore = create<EditorDraftState>()((set, get) => ({
       }),
       past: [],
       future: [],
-      lastSavedAt: null,
+      lastSavedAt: draft.lastSavedAt,
     }),
 
   pushHistory: () =>

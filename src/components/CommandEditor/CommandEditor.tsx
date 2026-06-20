@@ -3,7 +3,11 @@ import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useUIStore } from "../../stores/uiStore";
 import { useCommandStore } from "../../stores/commandStore";
-import { collectCategories, collectTags } from "../../utils/commandFilters";
+import { useWorkflowStore } from "../../stores/workflowStore";
+import {
+  collectCategories,
+  collectTagsFrom,
+} from "../../utils/commandFilters";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { CommandForm } from "../CommandForm";
 
@@ -23,6 +27,7 @@ export function CommandEditor(): ReactElement | null {
   const { t } = useTranslation();
   const target = useUIStore((s) => s.commandEditorTarget);
   const commands = useCommandStore((s) => s.commands);
+  const workflows = useWorkflowStore((s) => s.workflows);
   const setCommandEditorDirty = useUIStore((s) => s.setCommandEditorDirty);
   const requestNavigation = useUIStore((s) => s.requestNavigation);
   const setLibraryTab = useUIStore((s) => s.setLibraryTab);
@@ -38,9 +43,11 @@ export function CommandEditor(): ReactElement | null {
     [commands],
   );
 
+  // Shared tag base: tags used across BOTH commands and workflows, so a
+  // workflow tag is offered as a suggestion in the command form too.
   const allTags = useMemo(
-    () => collectTags(commands),
-    [commands],
+    () => collectTagsFrom(commands, workflows),
+    [commands, workflows],
   );
 
   // Resolve the command to edit from its id so we always render the

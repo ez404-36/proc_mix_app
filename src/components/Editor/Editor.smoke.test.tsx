@@ -629,15 +629,32 @@ describe("Editor shell", () => {
     expect(useEditorDraftStore.getState().nodes).toHaveLength(2);
   });
 
-  it("shows the last-saved indicator with an em-dash before any save", () => {
-    useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
+  it("shows the last-saved indicator with an em-dash for a brand-new workflow", () => {
+    useWorkflowStore.setState({ workflows: [], hydrated: true });
+    // A new (null) workflow has never been saved → em-dash placeholder.
+    useUIStore.setState({ editorWorkflowId: null, currentView: "editor" });
+    act(() => {
+      render(<Editor />);
+    });
+    expect(screen.getByText("Last saved: —")).toBeTruthy();
+  });
+
+  it("shows the workflow's saved time when opening an existing workflow", () => {
+    const iso = "2026-04-05T06:07:08.000Z";
+    useWorkflowStore.setState({
+      workflows: [makeWorkflow({ updatedAt: iso })],
+      hydrated: true,
+    });
     useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
     act(() => {
       render(<Editor />);
     });
-    // No save yet (lastSavedAt === null) → the indicator still renders, with
-    // an em-dash placeholder for the datetime.
-    expect(screen.getByText("Last saved: —")).toBeTruthy();
+    // Entering edit mode seeds the indicator from the persisted updatedAt —
+    // it must NOT show the em-dash placeholder.
+    expect(screen.queryByText("Last saved: —")).toBeNull();
+    expect(
+      screen.getByText(`Last saved: ${new Date(iso).toLocaleString()}`),
+    ).toBeTruthy();
   });
 
   it("shows a formatted datetime in the last-saved indicator after a save", () => {

@@ -101,10 +101,26 @@ export function normalizeTags(tags: ReadonlyArray<string>): string[] {
  * against stale data rather than surfacing a blank chip.
  */
 export function collectTags(commands: ReadonlyArray<Command>): string[] {
+  return collectTagsFrom(commands);
+}
+
+/**
+ * Collect the unique set of tags across one OR MORE tagged-entity lists,
+ * sorted case-insensitively for stable display. Generalises
+ * {@link collectTags} so the tag-suggestion base can be SHARED between
+ * commands and workflows (both carry `tags: string[]`): pass both lists
+ * and a tag used by any command is offered in the workflow properties
+ * form and vice versa. Empty/whitespace-only tags are ignored.
+ */
+export function collectTagsFrom(
+  ...sources: ReadonlyArray<ReadonlyArray<{ tags: ReadonlyArray<string> }>>
+): string[] {
   const seen = new Set<string>();
-  for (const cmd of commands) {
-    for (const tag of cmd.tags) {
-      if (tag.trim() !== "") seen.add(tag);
+  for (const list of sources) {
+    for (const entity of list) {
+      for (const tag of entity.tags) {
+        if (tag.trim() !== "") seen.add(tag);
+      }
     }
   }
   return [...seen].sort((a, b) =>

@@ -80,6 +80,12 @@ interface CommandCardProps {
   onDuplicate: (cmd: Command) => void;
   /** Render the dense layout: no description, icon-only Run/View buttons. */
   compact?: boolean;
+  /**
+   * Hide the per-card category chip. Set when the list is grouped BY
+   * category — the group header already names the category, so repeating
+   * it on every card is redundant.
+   */
+  hideCategory?: boolean;
 }
 
 function buildCommandCardMenuItems(
@@ -152,6 +158,7 @@ function CommandCard({
   onView,
   onDuplicate,
   compact = false,
+  hideCategory = false,
 }: CommandCardProps): ReactElement {
   const { t } = useTranslation();
   const { show } = useContextMenu();
@@ -210,7 +217,9 @@ function CommandCard({
     >
       <div className="list-tile__head">
         <div className="list-tile__heading">
-          <h3 className="list-tile__title">{displayName}</h3>
+          <h3 className="list-tile__title" title={displayName}>
+            {displayName}
+          </h3>
           {!compact && displayDesc ? (
             <p className="list-tile__desc">{displayDesc}</p>
           ) : null}
@@ -263,7 +272,9 @@ function CommandCard({
       </div>
       <div className="list-tile__meta">
         {cmd.shell ? <span className="shell-badge">{cmd.shell}</span> : null}
-        {cmd.categoryId !== undefined && cmd.categoryId.trim() !== "" ? (
+        {!hideCategory &&
+        cmd.categoryId !== undefined &&
+        cmd.categoryId.trim() !== "" ? (
           <span className="category-chip">{cmd.categoryId}</span>
         ) : null}
         {cmd.tags.map((tag) => (
@@ -414,7 +425,9 @@ function WorkflowCard({
     >
       <div className="list-tile__head">
         <div className="list-tile__heading">
-          <h3 className="list-tile__title">{workflow.name}</h3>
+          <h3 className="list-tile__title" title={workflow.name}>
+            {workflow.name}
+          </h3>
           {!compact && workflow.description ? (
             <p className="list-tile__desc">{workflow.description}</p>
           ) : null}
@@ -690,6 +703,7 @@ function CommandGroupSection({
                 onView={onView}
                 onDuplicate={onDuplicate}
                 compact={compact}
+                hideCategory
               />
             ))}
           </div>

@@ -82,6 +82,16 @@ describe("buildDraftForTarget", () => {
     expect(draft.edges).toHaveLength(0);
   });
 
+  it("seeds lastSavedAt from an existing workflow's updatedAt", () => {
+    const wf = makeWorkflow({ updatedAt: "2026-03-04T05:06:07.000Z" });
+    const draft = buildDraftForTarget("wf-1", [wf]);
+    expect(draft.lastSavedAt).toBe("2026-03-04T05:06:07.000Z");
+  });
+
+  it("leaves lastSavedAt null for a brand-new (null) draft", () => {
+    expect(buildDraftForTarget(null, [makeWorkflow()]).lastSavedAt).toBeNull();
+  });
+
   it("falls back to a fresh graph when the target id is unknown", () => {
     const draft = buildDraftForTarget("ghost", [makeWorkflow()]);
     expect(draft.currentId).toBeNull();
@@ -100,6 +110,23 @@ describe("useEditorDraftStore hydrate / preserve", () => {
     expect(s.currentId).toBe("wf-1");
     expect(s.nodes.map((n) => n.id)).toEqual(["n-start", "n-cmd"]);
     expect(s.selectedNodeId).toBeNull();
+  });
+
+  it("hydrate seeds lastSavedAt from the loaded workflow", () => {
+    const wf = makeWorkflow({ updatedAt: "2026-05-06T07:08:09.000Z" });
+    useEditorDraftStore
+      .getState()
+      .hydrate("wf-1", buildDraftForTarget("wf-1", [wf]));
+    expect(useEditorDraftStore.getState().lastSavedAt).toBe(
+      "2026-05-06T07:08:09.000Z",
+    );
+  });
+
+  it("hydrate clears lastSavedAt for a brand-new draft", () => {
+    useEditorDraftStore
+      .getState()
+      .hydrate(null, buildDraftForTarget(null, [makeWorkflow()]));
+    expect(useEditorDraftStore.getState().lastSavedAt).toBeNull();
   });
 
   it("preserves an in-progress draft across a same-target remount", () => {
@@ -382,38 +409,51 @@ describe("useEditorDraftStore dirty tracking", () => {
 });
 
 describe("useEditorDraftStore lastSavedAt", () => {
-  it("is null after hydrating a workflow", () => {
+  it("seeds lastSavedAt from updatedAt after hydrating an existing workflow", () => {
     const store = useEditorDraftStore.getState();
-    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    const wf = makeWorkflow({ updatedAt: "2026-02-03T04:05:06.000Z" });
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [wf]));
+    expect(useEditorDraftStore.getState().lastSavedAt).toBe(
+      "2026-02-03T04:05:06.000Z",
+    );
+  });
+
+  it("is null after hydrating a brand-new (null) draft", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate(null, buildDraftForTarget(null, [makeWorkflow()]));
     expect(useEditorDraftStore.getState().lastSavedAt).toBeNull();
   });
 
   it("markSaved stamps lastSavedAt with a valid ISO timestamp", () => {
     const store = useEditorDraftStore.getState();
-    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.hydrate(null, buildDraftForTarget(null, [makeWorkflow()]));
     store.markSaved();
     const { lastSavedAt } = useEditorDraftStore.getState();
     expect(lastSavedAt).not.toBeNull();
     expect(Number.isNaN(new Date(lastSavedAt ?? "").getTime())).toBe(false);
   });
 
-  it("hydrate clears a previous lastSavedAt", () => {
+  it("hydrate re-seeds lastSavedAt from the newly loaded workflow", () => {
     const store = useEditorDraftStore.getState();
-    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.hydrate(null, buildDraftForTarget(null, [makeWorkflow()]));
     store.markSaved();
     expect(useEditorDraftStore.getState().lastSavedAt).not.toBeNull();
 
-    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
-    expect(useEditorDraftStore.getState().lastSavedAt).toBeNull();
+    const wf = makeWorkflow({ updatedAt: "2026-07-08T09:10:11.000Z" });
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [wf]));
+    expect(useEditorDraftStore.getState().lastSavedAt).toBe(
+      "2026-07-08T09:10:11.000Z",
+    );
   });
 
-  it("reset clears a previous lastSavedAt", () => {
+  it("reset preserves the workflow's saved time (clearing the draft is not a save)", () => {
     const store = useEditorDraftStore.getState();
-    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
-    store.markSaved();
-    expect(useEditorDraftStore.getState().lastSavedAt).not.toBeNull();
+    const wf = makeWorkflow({ updatedAt: "2026-08-09T10:11:12.000Z" });
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [wf]));
 
-    store.reset("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
-    expect(useEditorDraftStore.getState().lastSavedAt).toBeNull();
+    store.reset("wf-1", buildDraftForTarget("wf-1", [wf]));
+    expect(useEditorDraftStore.getState().lastSavedAt).toBe(
+      "2026-08-09T10:11:12.000Z",
+    );
   });
 });

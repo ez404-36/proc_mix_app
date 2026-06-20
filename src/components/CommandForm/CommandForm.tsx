@@ -28,8 +28,9 @@ import { getCachedPlatform } from "../../utils/platform";
 import { getCachedAvailableShells } from "../../utils/shells";
 import { normalizeTags } from "../../utils/commandFilters";
 import { isOverridingSystem, isValidEnvVarName } from "../../utils/envVars";
-import { parseUtilityNameWithRange } from "../../utils/utilityName";
-import { useUtilityHelp } from "../../hooks/useUtilityHelp";
+import { parseUtilityNamesWithRanges } from "../../utils/utilityName";
+import type { UtilityNameRange } from "../../utils/utilityName";
+import { useUtilitiesHelp } from "../../hooks/useUtilityHelp";
 import { useAdminEscalation } from "../../hooks/useAdminEscalation";
 import { useCommandLiveRun } from "../../hooks/useCommandLiveRun";
 import { useUIStore } from "../../stores/uiStore";
@@ -224,6 +225,13 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   const [flagBuilderOpen, setFlagBuilderOpen] = useState<boolean>(false);
   const [flagBuilderData, setFlagBuilderData] = useState<ParsedCli | null>(null);
   const [flagBuilderLoading, setFlagBuilderLoading] = useState<boolean>(false);
+  // Parsed CLI per recognised utility name, for the editor's per-command
+  // flag highlighting (every command in a `|`/`;` chain, not just the
+  // leading one). Keyed by utility name; populated by the proactive
+  // effect below as each utility resolves to "found".
+  const [flagsByUtility, setFlagsByUtility] = useState<
+    ReadonlyMap<string, ParsedCli>
+  >(() => new Map());
 
   // Dirty tracking for the host's unsaved-changes guard. We compare a
   // STABLE projection of the form against its initial snapshot, excluding
@@ -735,36 +743,62 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   // this at the SOURCE (the range) rather than only hiding the visuals
   // so the `--help`/`man` child process is never spawned for a user who
   // explicitly turned hints off.
-  const utilityRange = useMemo(
+  // EVERY command's utility (the leading one PLUS every command after a
+  // `|`/`;`/`&&`/`||`/`&` separator), each with its position — so the
+  // editor highlights and offers `--help` hints for `grep` in
+  // `ls | grep foo`, not just the leading `ls`.
+  const utilityRanges = useMemo<UtilityNameRange[]>(
     () =>
-      form.disableHints ? null : parseUtilityNameWithRange(form.script),
+      form.disableHints ? [] : parseUtilityNamesWithRanges(form.script),
     [form.script, form.disableHints],
   );
-  const utilityHelp = useUtilityHelp(utilityRange?.name ?? null);
+  // The leading utility drives the (single-utility) flag-builder panel.
+  const utilityRange = utilityRanges[0] ?? null;
 
-  // Highlight descriptor for the editor overlay: the token's offsets plus
-  // a colour status derived from the resolved lookup. While the lookup is
-  // idle/loading the status is "pending" so the token renders WITHOUT a
-  // green/red colour (avoids a flash before the answer arrives).
-  const resolvedHelp =
-    typeof utilityHelp.state === "object" ? utilityHelp.state : null;
-  const utilityHighlight = useMemo<UtilityHighlight | null>(() => {
-    if (!utilityRange) return null;
-    const status: UtilityHighlightStatus =
-      resolvedHelp === null
-        ? "pending"
-        : resolvedHelp.status === "found"
-          ? "found"
-          : "not-found";
-    return { start: utilityRange.start, end: utilityRange.end, status };
-  }, [utilityRange, resolvedHelp]);
+  // Resolve help for every recognised utility name at once (debounced,
+  // cached). Returns a map of name → resolved help (absent while loading).
+  const utilityNames = useMemo<string[]>(
+    () => utilityRanges.map((r) => r.name),
+    [utilityRanges],
+  );
+  const helpByUtility = useUtilitiesHelp(utilityNames);
+
+  // Resolved help for the LEADING utility — drives the flag-builder button
+  // and panel (a single-utility feature). `null` while still loading.
+  const resolvedHelp = utilityRange
+    ? helpByUtility.get(utilityRange.name) ?? null
+    : null;
+
+  // Highlight descriptors for the editor overlay: one per command, each
+  // with its offsets and a colour status from its resolved lookup. While
+  // a lookup is idle/loading the status is "pending" so the token renders
+  // WITHOUT a green/red colour (avoids a flash before the answer arrives).
+  const utilityHighlights = useMemo<UtilityHighlight[]>(() => {
+    return utilityRanges.map((range) => {
+      const help = helpByUtility.get(range.name) ?? null;
+      const status: UtilityHighlightStatus =
+        help === null
+          ? "pending"
+          : help.status === "found"
+            ? "found"
+            : "not-found";
+      return {
+        name: range.name,
+        start: range.start,
+        end: range.end,
+        status,
+      };
+    });
+  }, [utilityRanges, helpByUtility]);
 
   // Flag builder: fetch parsed CLI on demand, then open the inline section.
   const handleOpenFlagBuilder = useCallback((): void => {
     if (!utilityRange) return;
+    const name = utilityRange.name;
     setFlagBuilderLoading(true);
-    void parseUtilityFlags(utilityRange.name).then((parsed) => {
+    void parseUtilityFlags(name).then((parsed) => {
       setFlagBuilderData(parsed);
+      setFlagsByUtility((prev) => new Map(prev).set(name, parsed));
       setFlagBuilderOpen(true);
       setFlagBuilderLoading(false);
     }).catch(() => {
@@ -772,39 +806,84 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     });
   }, [utilityRange]);
 
-  // Fetch ParsedCli as soon as the utility is recognised (proactive — so flag
-  // highlights appear without the user opening the builder). Re-fetches when
-  // the utility name changes. Tracks the last *fetched* name so a status
-  // transition loading→found for the same name doesn't trigger a second fetch.
+  // Proactively fetch ParsedCli for EVERY recognised+found utility (so flag
+  // highlights appear for each command without the user opening the
+  // builder). The fetched flags accumulate in `flagsByUtility`; the leading
+  // utility's flags also feed the single-utility flag-builder panel.
+  //
+  // We track which names have been fetched this session so a status
+  // transition loading→found for the same name doesn't refetch, and prune
+  // entries whose utility is no longer present in the script.
   //
   // `flagBuilderOpen` is intentionally NOT in the dep array: opening/closing
-  // the builder must not re-trigger this effect. The builder open/close path
-  // is handled separately in handleOpenFlagBuilder / handleFlagBuilderDismiss.
-  const fetchedUtilityRef = useRef<string | null>(null);
+  // the builder must not re-trigger this effect.
+  const fetchedUtilitiesRef = useRef<Set<string>>(new Set());
   const flagBuilderOpenRef = useRef(flagBuilderOpen);
   flagBuilderOpenRef.current = flagBuilderOpen;
+  // Stable key of the found-utility name set, so the effect only re-runs
+  // when which utilities are FOUND actually changes.
+  const foundUtilityKey = useMemo<string>(() => {
+    const found = new Set<string>();
+    for (const range of utilityRanges) {
+      if (helpByUtility.get(range.name)?.status === "found") {
+        found.add(range.name);
+      }
+    }
+    return [...found].sort().join("\n");
+  }, [utilityRanges, helpByUtility]);
   useEffect(() => {
-    const name = utilityRange?.name ?? null;
-    const isFound = resolvedHelp?.status === "found";
+    const found = foundUtilityKey === "" ? [] : foundUtilityKey.split("\n");
+    const foundSet = new Set(found);
 
-    if (!name || !isFound) {
-      fetchedUtilityRef.current = null;
+    // Prune cached flags + fetch markers for utilities no longer found.
+    fetchedUtilitiesRef.current = new Set(
+      [...fetchedUtilitiesRef.current].filter((n) => foundSet.has(n)),
+    );
+    setFlagsByUtility((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const name of prev.keys()) {
+        if (!foundSet.has(name)) {
+          next.delete(name);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    if (found.length === 0) {
       setFlagBuilderData(null);
       if (flagBuilderOpenRef.current) setFlagBuilderOpen(false);
       return;
     }
 
-    if (fetchedUtilityRef.current === name) return;
-    fetchedUtilityRef.current = name;
+    for (const name of found) {
+      if (fetchedUtilitiesRef.current.has(name)) continue;
+      fetchedUtilitiesRef.current.add(name);
+      void parseUtilityFlags(name)
+        .then((parsed) => {
+          setFlagsByUtility((prev) => new Map(prev).set(name, parsed));
+        })
+        .catch(() => {
+          fetchedUtilitiesRef.current.delete(name);
+        });
+    }
+  }, [foundUtilityKey]);
 
-    void parseUtilityFlags(name).then((parsed) => {
-      setFlagBuilderData(parsed);
-    }).catch(() => {
-      fetchedUtilityRef.current = null;
+  // Keep the single-utility flag-builder panel in sync with the leading
+  // utility's parsed flags (or clear it when the leading utility changes /
+  // is no longer found).
+  const leadingUtilityName =
+    resolvedHelp?.status === "found" ? utilityRange?.name ?? null : null;
+  useEffect(() => {
+    if (leadingUtilityName === null) {
       setFlagBuilderData(null);
       if (flagBuilderOpenRef.current) setFlagBuilderOpen(false);
-    });
-  }, [utilityRange?.name, resolvedHelp?.status]);
+      return;
+    }
+    const flags = flagsByUtility.get(leadingUtilityName);
+    if (flags !== undefined) setFlagBuilderData(flags);
+  }, [leadingUtilityName, flagsByUtility]);
 
   const handleFlagBuilderChange = useCallback((script: string): void => {
     setForm((s) => ({ ...s, script }));
@@ -1515,9 +1594,10 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
                   ? "command-form-script-error"
                   : undefined
               }
-              utilityHighlight={utilityHighlight}
-              utilityHelp={resolvedHelp}
-              parsedFlags={flagBuilderData?.flags ?? null}
+              utilityHighlights={utilityHighlights}
+              helpByUtility={helpByUtility}
+              utilityRanges={utilityRanges}
+              flagsByUtility={flagsByUtility}
             />
             {showErrors && errors.script ? (
               <span

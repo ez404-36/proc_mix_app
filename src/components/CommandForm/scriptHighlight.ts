@@ -5,6 +5,7 @@
  */
 
 import type { ParsedFlag } from "../../types";
+import type { UtilityNameRange } from "../../utils/utilityName";
 
 /** Regex used to split the script into "plain" and "reference"
  *  segments for highlighting. Mirrors the parser's grammar but is
@@ -29,6 +30,9 @@ export interface HighlightSegment {
   text: string;
   /** Only set on `kind: "utility"` segments. */
   utilityStatus?: UtilityHighlightStatus;
+  /** The utility name — set on `kind: "utility"` segments so the editor
+   *  can resolve which utility's help popover to show. */
+  utilityName?: string;
   /** Only set on `kind: \"flag\"` segments. */
   parsedFlag?: ParsedFlag;
   /** Only set on `kind: \"flag\"` segments. */
@@ -36,10 +40,13 @@ export interface HighlightSegment {
 }
 
 /**
- * The leading-utility token to carve out and tag, in absolute offsets
- * into `script`. Supplied by the caller from `parseUtilityNameWithRange`.
+ * A utility token to carve out and tag, in absolute offsets into
+ * `script`. Supplied by the caller from `parseUtilityNamesWithRanges`.
+ * One per command segment, so `ls | grep` produces two — the `ls` and
+ * the `grep` token each become an independent highlight + hover target.
  */
 export interface UtilityHighlight {
+  name: string;
   start: number;
   end: number;
   status: UtilityHighlightStatus;
@@ -90,41 +97,75 @@ function scriptTokens(script: string): Array<{ text: string; start: number }> {
 
 /**
  * Build a sorted, non-overlapping list of {@link FlagHighlight} ranges for
- * all flag tokens found in `script`.
+ * the flag tokens of EVERY command in `script`, not just the leading one.
  *
- * Rules:
- * - The first non-escalation token (the utility name) is always skipped.
+ * `utilities` is the per-command utility-range list from
+ * `parseUtilityNamesWithRanges`; `flagsByUtility` maps each utility name
+ * to its parsed flags. A token is highlighted against the flag set of the
+ * utility whose command segment it belongs to — so `-l` in `ls -l | grep
+ * -i x` is matched against `ls`'s flags and `-i` against `grep`'s. Tokens
+ * before the first utility token, or in a segment whose utility has no
+ * parsed flags, are left untouched.
+ *
+ * Rules within a segment:
+ * - The utility token itself is the segment boundary; flag matching starts
+ *   after it.
  * - Tokens starting with `-` are tested against every alias of every flag.
- * - Combined short flags (`-czf`) are matched as a single token associated
- *   with the first short alias found in the group.
+ * - Combined short flags (`-czf`) are matched per character.
  * - Value tokens following a value-taking flag are left as plain text.
  */
 export function buildFlagHighlights(
   script: string,
-  flags: ReadonlyArray<ParsedFlag>,
+  utilities: ReadonlyArray<UtilityNameRange>,
+  flagsByUtility: ReadonlyMap<string, ReadonlyArray<ParsedFlag>>,
 ): FlagHighlight[] {
-  if (flags.length === 0) return [];
-
-  const byAlias = new Map<string, ParsedFlag>();
-  for (const flag of flags) {
-    for (const alias of flag.flags) {
-      byAlias.set(alias, flag);
-    }
-  }
+  if (utilities.length === 0) return [];
 
   const tokens = scriptTokens(script);
   if (tokens.length === 0) return [];
 
-  const ESCALATION = new Set(["sudo", "doas", "pkexec"]);
-  let skipCount = 1;
-  if (tokens.length > 0 && ESCALATION.has(tokens[0]!.text)) {
-    skipCount = 2;
+  const highlights: FlagHighlight[] = [];
+
+  // Walk each utility's command segment: the flag tokens between this
+  // utility token and the next one (or end of script) belong to it.
+  for (let u = 0; u < utilities.length; u += 1) {
+    const util = utilities[u]!;
+    const segFlags = flagsByUtility.get(util.name);
+    const next = utilities[u + 1];
+    const segEnd = next ? next.start : script.length;
+    if (segFlags === undefined || segFlags.length === 0) continue;
+
+    const byAlias = new Map<string, ParsedFlag>();
+    for (const flag of segFlags) {
+      for (const alias of flag.flags) byAlias.set(alias, flag);
+    }
+
+    // Start at the first token AFTER the utility token, within this segment.
+    const startIndex = tokens.findIndex((tok) => tok.start >= util.end);
+    if (startIndex === -1) continue;
+
+    buildSegmentFlagHighlights(tokens, startIndex, segEnd, byAlias, highlights);
   }
 
-  const highlights: FlagHighlight[] = [];
-  let i = skipCount;
+  highlights.sort((a, b) => a.start - b.start);
+  return highlights;
+}
 
-  while (i < tokens.length) {
+/**
+ * Match flag tokens for a single command segment, appending to
+ * `highlights`. Stops at the first token at or past `segEnd` (the next
+ * utility token's start, or end of script).
+ */
+function buildSegmentFlagHighlights(
+  tokens: ReadonlyArray<{ text: string; start: number }>,
+  startIndex: number,
+  segEnd: number,
+  byAlias: ReadonlyMap<string, ParsedFlag>,
+  highlights: FlagHighlight[],
+): void {
+  let i = startIndex;
+
+  while (i < tokens.length && tokens[i]!.start < segEnd) {
     const { text, start } = tokens[i]!;
     i += 1;
 
@@ -182,9 +223,6 @@ export function buildFlagHighlights(
     // Unrecognised flag token — highlight as not-found.
     highlights.push({ start, end: start + text.length, flagStatus: "not-found", flag: null });
   }
-
-  highlights.sort((a, b) => a.start - b.start);
-  return highlights;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,8 +234,9 @@ export function buildFlagHighlights(
  * to unit-test. The `knownNames` set determines whether a reference
  * is highlighted as "known" (declared) or "unknown" (likely typo).
  *
- * When `utility` is provided, the `[start, end)` slice of the script is
- * emitted as a dedicated `kind: "utility"` segment carrying its status.
+ * When `utilities` is provided, the `[start, end)` slice of each utility
+ * range is emitted as a dedicated `kind: "utility"` segment carrying its
+ * status and name — one per command in a pipe/`;`-separated chain.
  *
  * When `flagHighlights` is provided, each matched flag range is carved out
  * of the nearest plain-text segment and emitted as a `kind: "flag"` segment
@@ -206,14 +245,14 @@ export function buildFlagHighlights(
 export function tokenizeScript(
   script: string,
   knownNames: ReadonlySet<string>,
-  utility?: UtilityHighlight | null,
+  utilities?: ReadonlyArray<UtilityHighlight> | null,
   flagHighlights?: ReadonlyArray<FlagHighlight>,
 ): HighlightSegment[] {
   const base = tokenizeReferences(script, knownNames);
 
   let result = base;
-  if (utility && utility.end > utility.start) {
-    result = applyUtilityHighlight(result, script, utility);
+  if (utilities && utilities.length > 0) {
+    result = applyUtilityHighlights(result, utilities);
   }
   if (flagHighlights && flagHighlights.length > 0) {
     result = applyFlagHighlights(result, flagHighlights);
@@ -258,11 +297,33 @@ function tokenizeReferences(
 }
 
 /**
- * Carve the utility range out of whichever PLAIN-text segment contains it.
+ * Carve EVERY utility range out of whichever PLAIN-text segment contains
+ * it. Ranges must be sorted by `start` and non-overlapping (they are, as
+ * produced by `parseUtilityNamesWithRanges` over disjoint command
+ * segments). Each carved-out token becomes a `kind: "utility"` segment
+ * tagged with its status and name.
+ */
+function applyUtilityHighlights(
+  base: HighlightSegment[],
+  utilities: ReadonlyArray<UtilityHighlight>,
+): HighlightSegment[] {
+  let result = base;
+  // Apply from LAST to FIRST so earlier offsets stay valid against the
+  // original script positions while we splice text segments.
+  for (let u = utilities.length - 1; u >= 0; u -= 1) {
+    const util = utilities[u]!;
+    if (util.end <= util.start) continue;
+    result = applyUtilityHighlight(result, util);
+  }
+  return result;
+}
+
+/**
+ * Carve a single utility range out of whichever PLAIN-text segment
+ * contains it.
  */
 function applyUtilityHighlight(
   base: HighlightSegment[],
-  script: string,
   utility: UtilityHighlight,
 ): HighlightSegment[] {
   const out: HighlightSegment[] = [];
@@ -292,12 +353,16 @@ function applyUtilityHighlight(
     const after = seg.text.slice(relEnd);
 
     if (before.length > 0) out.push({ kind: "text", text: before });
-    out.push({ kind: "utility", text: mid, utilityStatus: utility.status });
+    out.push({
+      kind: "utility",
+      text: mid,
+      utilityStatus: utility.status,
+      utilityName: utility.name,
+    });
     if (after.length > 0) out.push({ kind: "text", text: after });
     placed = true;
   }
 
-  void script;
   return placed ? out : base;
 }
 

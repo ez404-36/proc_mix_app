@@ -18,11 +18,13 @@
 const ESCALATION_TOOLS: readonly string[] = ["sudo", "doas", "pkexec"];
 
 /**
- * Shell command separators. We only inspect the FIRST command of a
- * chain, so everything from the first separator onward is discarded
- * before tokenising. Ordered longest-first so `&&`/`||` match before
- * their single-character prefixes (`&`, `|`). Mirrors the Rust
- * `COMMAND_SEPARATORS`.
+ * Shell command separators. Used both to find the FIRST command of a
+ * chain (for auto-escalation, which can only elevate the leading
+ * command — {@link parseUtilityNameWithRange}) AND to split a script
+ * into EVERY command segment for per-command flag hints
+ * ({@link parseUtilityNamesWithRanges}). Ordered longest-first so
+ * `&&`/`||` match before their single-character prefixes (`&`, `|`).
+ * Mirrors the Rust `COMMAND_SEPARATORS`.
  */
 const COMMAND_SEPARATORS: readonly string[] = ["&&", "||", ";", "|", "&"];
 
@@ -154,14 +156,77 @@ export function parseUtilityNameWithRange(
 ): UtilityNameRange | null {
   const line = firstExecutableLine(script);
   if (line === null) return null;
-
-  // Tokens of the first command segment, each with its absolute offset
-  // in `script` (lineStart + token offset within the line).
+  // LEADING command only: cut at the first separator. A leading separator
+  // (`&& ls`) yields an empty first segment → no utility (null), which is
+  // the correct auto-escalation semantics. Per-command hints use
+  // {@link parseUtilityNamesWithRanges} instead.
   const segmentEnd = firstCommandSegmentEnd(line.text);
-  const tokens = tokenizeWithOffsets(
-    line.text.slice(0, segmentEnd),
-    line.start,
-  );
+  return utilityRangeOfSegment(line.text.slice(0, segmentEnd), line.start);
+}
+
+/**
+ * Extract the utility token of EVERY command segment in the script —
+ * each command separated by a shell separator (`&& || ; | &`) on every
+ * executable line — together with its absolute `[start, end)` offsets in
+ * `script`.
+ *
+ * Where {@link parseUtilityNameWithRange} returns only the leading
+ * utility (used for auto-escalation, where only the first command can be
+ * safely elevated), this returns one range per command so the script
+ * field can highlight and offer `--help` hints for `grep` in
+ * `ls | grep foo`, `du` in `df -h && du -sh`, and so on.
+ *
+ * Each segment is parsed with the same pipeline as the single-range
+ * parser: strip leading `NAME=value` env-assignments, then an optional
+ * single escalation prefix (sudo/doas/pkexec) plus any further
+ * env-assignments, then take the command token — but only when it is a
+ * safe bare name or path ({@link isSafeUtilityToken}). Segments whose
+ * leading token is a `${var}` reference, a path with metacharacters, or
+ * otherwise unsafe contribute no range. Ranges are returned in source
+ * order. The leading range (index 0) is byte-identical to
+ * {@link parseUtilityNameWithRange}'s result.
+ */
+export function parseUtilityNamesWithRanges(
+  script: string,
+): UtilityNameRange[] {
+  const ranges: UtilityNameRange[] = [];
+  let offset = 0;
+  for (const rawLine of script.split("\n")) {
+    const trimmedStart = rawLine.length - rawLine.trimStart().length;
+    const text = rawLine.trim();
+    const lineStart = offset + trimmedStart;
+    offset += rawLine.length + 1; // +1 for the consumed "\n"
+
+    if (text.length === 0 || text.startsWith("#")) continue;
+
+    // Walk each separator-delimited command segment of this line.
+    let segStart = 0;
+    while (segStart < text.length) {
+      const segEnd = segStart + firstCommandSegmentEnd(text.slice(segStart));
+      const range = utilityRangeOfSegment(
+        text.slice(segStart, segEnd),
+        lineStart + segStart,
+      );
+      if (range !== null) ranges.push(range);
+
+      if (segEnd >= text.length) break;
+      const sep = COMMAND_SEPARATORS.find((s) => text.startsWith(s, segEnd));
+      segStart = segEnd + (sep?.length ?? 1);
+    }
+  }
+  return ranges;
+}
+
+/**
+ * Parse the utility range of a SINGLE command segment (no separators
+ * inside). `baseOffset` is the absolute source offset of `segment[0]`.
+ * Returns `null` when the segment has no safe leading-utility token.
+ */
+function utilityRangeOfSegment(
+  segment: string,
+  baseOffset: number,
+): UtilityNameRange | null {
+  const tokens = tokenizeWithOffsets(segment, baseOffset);
 
   let index = skipEnvAssignments(tokens, 0);
 

@@ -37,6 +37,7 @@ import {
 import type { Command, WorkflowNodeKind } from "../../types";
 import { getCommandName } from "../../utils/commandLabels";
 import {
+  collectTagsFrom,
   commandsForWorkflowScope,
   localCommandsForWorkflow,
 } from "../../utils/commandFilters";
@@ -96,6 +97,7 @@ import { NodeInspector } from "./NodeInspector";
 import { WorkflowMetaModal } from "./WorkflowMetaModal";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { CommandView } from "../CommandView";
+import { HoverTooltip } from "../HoverTooltip";
 import {
   CancelIcon,
   FullscreenIcon,
@@ -241,6 +243,14 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const commands = useMemo(
     () => commandsForWorkflowScope(allCommands, currentId),
     [allCommands, currentId],
+  );
+
+  // Shared tag-suggestion base for the workflow properties modal: tags
+  // used across BOTH commands and workflows, so a command's tag is offered
+  // when tagging a scenario and vice versa (single base for both forms).
+  const tagSuggestions = useMemo(
+    () => collectTagsFrom(allCommands, workflows),
+    [allCommands, workflows],
   );
 
   // The palette's "Local commands" section lists ONLY this workflow's own
@@ -990,21 +1000,21 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
           <h3 className="wf-palette__title">{t("editor.palette.nodes")}</h3>
           <p className="wf-palette__hint">{t("editor.palette.nodeDragHint")}</p>
           {PALETTE_NODES.map(({ kind, place }) => (
-            <button
-              key={kind}
-              type="button"
-              className="btn btn--ghost wf-palette__btn"
-              draggable
-              onDragStart={(e) => onPaletteNodeDragStart(e, kind)}
-              onClick={() =>
-                place === "fixed"
-                  ? paletteAddNode(kind, undefined, { x: 240, y: 200 })
-                  : paletteAppendNode(kind, undefined)
-              }
-              title={t(`editor.nodeDesc.${kind}`)}
-            >
-              + {t(`editor.nodes.${kind}`)}
-            </button>
+            <HoverTooltip key={kind} label={t(`editor.nodeDesc.${kind}`)}>
+              <button
+                type="button"
+                className="btn btn--ghost wf-palette__btn"
+                draggable
+                onDragStart={(e) => onPaletteNodeDragStart(e, kind)}
+                onClick={() =>
+                  place === "fixed"
+                    ? paletteAddNode(kind, undefined, { x: 240, y: 200 })
+                    : paletteAppendNode(kind, undefined)
+                }
+              >
+                + {t(`editor.nodes.${kind}`)}
+              </button>
+            </HoverTooltip>
           ))}
         </div>
         <div className="wf-palette__section">
@@ -1191,6 +1201,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       {metaModalOpen ? (
         <WorkflowMetaModal
           initial={meta}
+          tagSuggestions={tagSuggestions}
           onSave={saveMeta}
           onClose={() => setMetaModalOpen(false)}
         />

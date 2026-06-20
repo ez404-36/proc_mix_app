@@ -12,7 +12,13 @@ import type {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import type { ParsedFlag, UtilityHelp, VariableSpec } from "../../types";
+import type {
+  ParsedCli,
+  ParsedFlag,
+  UtilityHelp,
+  VariableSpec,
+} from "../../types";
+import type { UtilityNameRange } from "../../utils/utilityName";
 import { useContextMenu } from "../ContextMenu";
 import type { ContextMenuEntry } from "../ContextMenu";
 import { buildFlagHighlights, tokenizeScript } from "./scriptHighlight";
@@ -82,24 +88,31 @@ export interface ScriptEditorProps {
   /** Optional ref hook for parent focus management. */
   textareaRef?: (el: HTMLTextAreaElement | null) => void;
   /**
-   * The leading utility token to highlight in the overlay, with its
-   * resolved status. `null` when there is no recognised utility or the
-   * lookup is still pending with no token to mark. The token is coloured
-   * (found / not-found) and becomes a hover target for {@link utilityHelp}.
+   * The utility tokens to highlight in the overlay — ONE per command in a
+   * `|`/`;`-separated chain, each with its resolved status. Empty when no
+   * command has a recognised utility. Each token is coloured (found /
+   * not-found / pending) and becomes an independent hover target whose
+   * `--help` popover is resolved from {@link helpByUtility}.
    */
-  utilityHighlight?: UtilityHighlight | null;
+  utilityHighlights?: ReadonlyArray<UtilityHighlight>;
   /**
-   * Resolved help for the highlighted utility, shown in a popover when
-   * the user hovers the token. `null` while the lookup is pending — the
-   * token still highlights (status "pending") but hovering shows nothing.
+   * Resolved help per utility name, shown in a popover when the user hovers
+   * the matching token. A name absent from the map is still loading — the
+   * token highlights (status "pending") but hovering shows nothing.
    */
-  utilityHelp?: UtilityHelp | null;
+  helpByUtility?: ReadonlyMap<string, UtilityHelp>;
   /**
-   * Parsed flags for the current utility. When provided, flag tokens in the
-   * script are highlighted with a subtle underline and show a description
-   * popover on hover. `null`/`undefined` disables flag highlighting entirely.
+   * The per-command utility ranges (from `parseUtilityNamesWithRanges`),
+   * used together with {@link flagsByUtility} to highlight each command's
+   * flags against ITS OWN utility's flag set.
    */
-  parsedFlags?: ReadonlyArray<ParsedFlag> | null;
+  utilityRanges?: ReadonlyArray<UtilityNameRange>;
+  /**
+   * Parsed CLI per utility name. When provided, each command's flag tokens
+   * are highlighted against that command's utility flags and show a
+   * description popover on hover. Empty/absent disables flag highlighting.
+   */
+  flagsByUtility?: ReadonlyMap<string, ParsedCli>;
 }
 
 export function ScriptEditor(props: ScriptEditorProps): ReactElement {
@@ -112,16 +125,17 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
     ariaInvalid,
     ariaDescribedBy,
     textareaRef: externalRef,
-    utilityHighlight,
-    utilityHelp,
-    parsedFlags,
+    utilityHighlights,
+    helpByUtility,
+    utilityRanges,
+    flagsByUtility,
   } = props;
   const { t } = useTranslation();
   const { show: showContextMenu } = useContextMenu();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const overlayRef = useRef<HTMLPreElement | null>(null);
-  // Ref to the highlighted utility <span> in the overlay.
-  const utilitySpanRef = useRef<HTMLSpanElement | null>(null);
+  // Refs to each utility <span> in the overlay, keyed by segment index.
+  const utilitySpanRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
   // Refs to each flag <span> in the overlay, keyed by segment index.
   const flagSpanRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
 
@@ -131,28 +145,49 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
     return set;
   }, [variables]);
 
-  // Compute flag highlight ranges whenever the script or flags change.
+  // Map of utility name → its parsed flags, for per-command flag matching.
+  const flagsMap = useMemo<ReadonlyMap<string, ReadonlyArray<ParsedFlag>>>(() => {
+    const map = new Map<string, ReadonlyArray<ParsedFlag>>();
+    if (flagsByUtility) {
+      for (const [name, cli] of flagsByUtility) map.set(name, cli.flags);
+    }
+    return map;
+  }, [flagsByUtility]);
+
+  // Compute flag highlight ranges whenever the script, ranges, or flags change.
   const flagHighlights = useMemo<ReadonlyArray<FlagHighlight>>(
-    () => buildFlagHighlights(value, parsedFlags ?? []),
-    [value, parsedFlags],
+    () => buildFlagHighlights(value, utilityRanges ?? [], flagsMap),
+    [value, utilityRanges, flagsMap],
   );
 
   const segments = useMemo(
-    () => tokenizeScript(value, knownNames, utilityHighlight ?? null, flagHighlights),
-    [value, knownNames, utilityHighlight, flagHighlights],
+    () =>
+      tokenizeScript(
+        value,
+        knownNames,
+        utilityHighlights ?? null,
+        flagHighlights,
+      ),
+    [value, knownNames, utilityHighlights, flagHighlights],
   );
 
-  // Clear stale flag span refs when segments change (different count/layout).
+  // Clear stale span refs when segments change (different count/layout).
   // We rebuild them fresh on each render via callback refs below.
   useEffect(() => {
     flagSpanRefs.current.clear();
+    utilitySpanRefs.current.clear();
   }, [segments]);
 
   // ---------------------------------------------------------------------------
   // Utility hover popover
   // ---------------------------------------------------------------------------
 
-  const [helpAnchor, setHelpAnchor] = useState<DOMRect | null>(null);
+  // The hovered utility token: its anchor rect + the utility name, so the
+  // popover can resolve the right `--help` text from `helpByUtility`.
+  const [hoveredUtility, setHoveredUtility] = useState<{
+    anchor: DOMRect;
+    name: string;
+  } | null>(null);
   const utilityCloseTimerRef = useRef<number | null>(null);
 
   const cancelUtilityClose = useCallback((): void => {
@@ -166,7 +201,7 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
     cancelUtilityClose();
     utilityCloseTimerRef.current = window.setTimeout(() => {
       utilityCloseTimerRef.current = null;
-      setHelpAnchor(null);
+      setHoveredUtility(null);
     }, 120);
   }, [cancelUtilityClose]);
 
@@ -202,31 +237,39 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
 
   const handleTextareaMouseMove = useCallback(
     (e: React.MouseEvent<HTMLTextAreaElement>): void => {
-      // --- Utility span hit-test ---
-      const uSpan = utilitySpanRef.current;
-      if (uSpan) {
-        const rect = uSpan.getBoundingClientRect();
-        const insideUtility =
+      // --- Utility spans hit-test (one per command in the chain) ---
+      let foundUtility = false;
+      for (const [, span] of utilitySpanRefs.current) {
+        const rect = span.getBoundingClientRect();
+        const inside =
           e.clientX >= rect.left &&
           e.clientX <= rect.right &&
           e.clientY >= rect.top &&
           e.clientY <= rect.bottom;
-        if (insideUtility) {
-          cancelUtilityClose();
-          scheduleFlagClose();
-          setHelpAnchor((prev) =>
-            prev &&
-            prev.left === rect.left &&
-            prev.top === rect.top &&
-            prev.width === rect.width &&
-            prev.height === rect.height
-              ? prev
-              : rect,
-          );
-          return;
+        if (inside) {
+          const segIdx = Number(span.dataset["segIdx"]);
+          const seg = segments[segIdx];
+          if (seg?.kind === "utility" && seg.utilityName !== undefined) {
+            const name = seg.utilityName;
+            cancelUtilityClose();
+            scheduleFlagClose();
+            setHoveredUtility((prev) =>
+              prev &&
+              prev.name === name &&
+              prev.anchor.left === rect.left &&
+              prev.anchor.top === rect.top &&
+              prev.anchor.width === rect.width &&
+              prev.anchor.height === rect.height
+                ? prev
+                : { anchor: rect, name },
+            );
+          }
+          foundUtility = true;
+          break;
         }
       }
-      if (helpAnchor !== null) scheduleUtilityClose();
+      if (foundUtility) return;
+      if (hoveredUtility !== null) scheduleUtilityClose();
 
       // --- Flag spans hit-test ---
       let foundFlag = false;
@@ -266,7 +309,7 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
       }
     },
     [
-      helpAnchor,
+      hoveredUtility,
       hoveredFlag,
       segments,
       cancelUtilityClose,
@@ -289,10 +332,18 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
     };
   }, [cancelUtilityClose, cancelFlagClose]);
 
-  // Close utility popover when utility token moves/disappears.
+  // Close utility popover when the set of utility tokens changes (moved /
+  // added / removed), so a stale anchor never lingers over the wrong token.
+  const utilityFingerprint = useMemo(
+    () =>
+      (utilityHighlights ?? [])
+        .map((u) => `${u.name}:${u.start}:${u.end}`)
+        .join("|"),
+    [utilityHighlights],
+  );
   useEffect(() => {
-    setHelpAnchor(null);
-  }, [utilityHighlight?.start, utilityHighlight?.end]);
+    setHoveredUtility(null);
+  }, [utilityFingerprint]);
 
   const handleRef = useCallback(
     (el: HTMLTextAreaElement | null): void => {
@@ -460,7 +511,14 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
             return (
               <span
                 key={i}
-                ref={utilitySpanRef}
+                ref={(el) => {
+                  if (el) {
+                    el.dataset["segIdx"] = String(i);
+                    utilitySpanRefs.current.set(i, el);
+                  } else {
+                    utilitySpanRefs.current.delete(i);
+                  }
+                }}
                 className={`command-form__script-editor-utility ${statusClass}`}
               >
                 {seg.text}
@@ -522,36 +580,39 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
         aria-invalid={ariaInvalid ? true : undefined}
         aria-describedby={ariaDescribedBy}
       />
-      {/* Utility help popover */}
-      {helpAnchor && utilityHelp
-        ? createPortal(
-            <div
-              role="tooltip"
-              className="command-form__help-popover command-form__script-help-popover"
-              style={tokenPopoverStyle(helpAnchor)}
-              onMouseEnter={cancelUtilityClose}
-              onMouseLeave={scheduleUtilityClose}
-            >
-              {utilityHelp.status === "not-found" ? (
-                t("commandForm.scriptHelp.notFound", {
-                  name: utilityHelp.utility,
-                })
-              ) : (
-                <>
-                  <pre className="command-form__script-help-body">
-                    {utilityHelp.text ?? ""}
-                  </pre>
-                  {utilityHelp.truncated ? (
-                    <p className="command-form__script-help-truncated">
-                      {t("commandForm.scriptHelp.truncated")}
-                    </p>
-                  ) : null}
-                </>
-              )}
-            </div>,
-            document.body,
-          )
-        : null}
+      {/* Utility help popover — resolves the hovered token's `--help`. */}
+      {(() => {
+        if (hoveredUtility === null) return null;
+        const help = helpByUtility?.get(hoveredUtility.name) ?? null;
+        if (help === null) return null;
+        return createPortal(
+          <div
+            role="tooltip"
+            className="command-form__help-popover command-form__script-help-popover"
+            style={tokenPopoverStyle(hoveredUtility.anchor)}
+            onMouseEnter={cancelUtilityClose}
+            onMouseLeave={scheduleUtilityClose}
+          >
+            {help.status === "not-found" ? (
+              t("commandForm.scriptHelp.notFound", {
+                name: help.utility,
+              })
+            ) : (
+              <>
+                <pre className="command-form__script-help-body">
+                  {help.text ?? ""}
+                </pre>
+                {help.truncated ? (
+                  <p className="command-form__script-help-truncated">
+                    {t("commandForm.scriptHelp.truncated")}
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>,
+          document.body,
+        );
+      })()}
       {/* Flag description popover */}
       {hoveredFlag !== null && hoveredFlag.flag.description.length > 0
         ? createPortal(

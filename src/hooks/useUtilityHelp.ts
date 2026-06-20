@@ -101,6 +101,111 @@ function initialStateFor(utilityName: string | null): UtilityHelpState {
 }
 
 /**
+ * Resolve CLI help for SEVERAL utility names at once — one per command in
+ * a pipe/`;`-separated script (`ls | grep` → `["ls", "grep"]`). Returns a
+ * `Map<name, UtilityHelp>` holding only the names that have RESOLVED so
+ * far (a name still loading is simply absent). Shares the same debounce,
+ * module-level cache, and stale-guarding as {@link useUtilityHelp}.
+ *
+ * Names are de-duplicated, so `ls | ls` issues a single lookup. The
+ * input array's identity is irrelevant — the effect keys on the sorted,
+ * de-duped name list so re-deriving the array per keystroke does not
+ * re-fetch already-resolved names.
+ */
+export function useUtilitiesHelp(
+  utilityNames: ReadonlyArray<string>,
+): ReadonlyMap<string, UtilityHelp> {
+  // Stable key: sorted unique names. Drives the effect so an unchanged
+  // set (even from a fresh array) does not re-run the fetch.
+  const key = [...new Set(utilityNames)].sort().join("\n");
+
+  const [resolved, setResolved] = useState<ReadonlyMap<string, UtilityHelp>>(
+    () => initialMapFor(key),
+  );
+
+  useEffect(() => {
+    const names = key === "" ? [] : key.split("\n");
+    if (names.length === 0) {
+      setResolved(new Map());
+      return;
+    }
+
+    // Seed with whatever is already cached, synchronously.
+    const seed = new Map<string, UtilityHelp>();
+    const missing: string[] = [];
+    for (const name of names) {
+      const cached = cache.get(name);
+      if (cached !== undefined) seed.set(name, cached);
+      else missing.push(name);
+    }
+    setResolved(seed);
+
+    if (missing.length === 0) return;
+
+    let stale = false;
+    const timer = window.setTimeout(() => {
+      for (const name of missing) {
+        void resolveInto(name, () => stale, setResolved);
+      }
+    }, DEBOUNCE_MS);
+
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [key]);
+
+  return resolved;
+}
+
+/** Synchronous initial map from the cache for the sorted-name `key`. */
+function initialMapFor(key: string): ReadonlyMap<string, UtilityHelp> {
+  const map = new Map<string, UtilityHelp>();
+  if (key === "") return map;
+  for (const name of key.split("\n")) {
+    const cached = cache.get(name);
+    if (cached !== undefined) map.set(name, cached);
+  }
+  return map;
+}
+
+/**
+ * Fetch one utility's help and merge it into the resolved map unless the
+ * batch has gone stale. Mirrors {@link resolve} but accumulates into a
+ * map instead of replacing a single state value.
+ */
+async function resolveInto(
+  utilityName: string,
+  isStale: () => boolean,
+  setResolved: (
+    update: (
+      prev: ReadonlyMap<string, UtilityHelp>,
+    ) => ReadonlyMap<string, UtilityHelp>,
+  ) => void,
+): Promise<void> {
+  let result: UtilityHelp;
+  try {
+    result = await fetchUtilityHelp(utilityName);
+    cache.set(utilityName, result);
+  } catch {
+    result = {
+      utility: utilityName,
+      status: "not-found",
+      source: null,
+      text: null,
+      truncated: false,
+    };
+  }
+
+  if (isStale()) return;
+  setResolved((prev) => {
+    const next = new Map(prev);
+    next.set(utilityName, result);
+    return next;
+  });
+}
+
+/**
  * Perform the fetch and apply the result unless it has gone stale. Kept
  * out of the effect body so the stale check reads cleanly.
  */

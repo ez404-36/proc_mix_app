@@ -89,45 +89,67 @@ describe("tokenizeScript", () => {
 
   it("carves out the leading-utility range as a `utility` segment", () => {
     // "df -h" — utility "df" at [0,2).
-    const segs = tokenizeScript("df -h", noKnown, {
-      start: 0,
-      end: 2,
-      status: "found",
-    });
+    const segs = tokenizeScript("df -h", noKnown, [
+      { name: "df", start: 0, end: 2, status: "found" },
+    ]);
     expect(segs).toEqual([
-      { kind: "utility", text: "df", utilityStatus: "found" },
+      { kind: "utility", text: "df", utilityStatus: "found", utilityName: "df" },
       { kind: "text", text: " -h" },
     ]);
   });
 
   it("splits text before AND after the utility token", () => {
     // Leading whitespace before the utility, args after it.
-    const segs = tokenizeScript("  git status", noKnown, {
-      start: 2,
-      end: 5,
-      status: "not-found",
-    });
+    const segs = tokenizeScript("  git status", noKnown, [
+      { name: "git", start: 2, end: 5, status: "not-found" },
+    ]);
     expect(segs).toEqual([
       { kind: "text", text: "  " },
-      { kind: "utility", text: "git", utilityStatus: "not-found" },
+      {
+        kind: "utility",
+        text: "git",
+        utilityStatus: "not-found",
+        utilityName: "git",
+      },
       { kind: "text", text: " status" },
     ]);
   });
 
   it("keeps a following ${var} reference intact alongside the utility", () => {
-    const segs = tokenizeScript("echo ${who}", known, {
-      start: 0,
-      end: 4,
-      status: "found",
-    });
+    const segs = tokenizeScript("echo ${who}", known, [
+      { name: "echo", start: 0, end: 4, status: "found" },
+    ]);
     expect(segs).toEqual([
-      { kind: "utility", text: "echo", utilityStatus: "found" },
+      {
+        kind: "utility",
+        text: "echo",
+        utilityStatus: "found",
+        utilityName: "echo",
+      },
       { kind: "text", text: " " },
       { kind: "known", text: "${who}" },
     ]);
   });
 
-  it("ignores a utility range that is absent (no highlight)", () => {
+  it("carves out EVERY command's utility in a pipe chain", () => {
+    // "ls | grep" — "ls" at [0,2), "grep" at [5,9).
+    const segs = tokenizeScript("ls | grep", noKnown, [
+      { name: "ls", start: 0, end: 2, status: "found" },
+      { name: "grep", start: 5, end: 9, status: "found" },
+    ]);
+    expect(segs).toEqual([
+      { kind: "utility", text: "ls", utilityStatus: "found", utilityName: "ls" },
+      { kind: "text", text: " | " },
+      {
+        kind: "utility",
+        text: "grep",
+        utilityStatus: "found",
+        utilityName: "grep",
+      },
+    ]);
+  });
+
+  it("ignores a utility range list that is empty (no highlight)", () => {
     const segs = tokenizeScript("df -h", noKnown, null);
     expect(segs).toEqual([{ kind: "text", text: "df -h" }]);
   });

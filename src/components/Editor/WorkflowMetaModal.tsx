@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent,
@@ -7,6 +7,7 @@ import type {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { normalizeTags } from "../../utils/commandFilters";
 import { CancelIcon, CheckIcon } from "../icons";
 
 /**
@@ -24,22 +25,14 @@ export interface WorkflowMeta {
 
 interface WorkflowMetaModalProps {
   initial: WorkflowMeta;
+  /**
+   * Tag suggestions shown in the autocomplete list as the user types — the
+   * SHARED base of tags used across both commands and workflows, so the
+   * field mirrors the command form's tags editor.
+   */
+  tagSuggestions?: ReadonlyArray<string>;
   onSave: (meta: WorkflowMeta) => void;
   onClose: () => void;
-}
-
-/** Split a comma-separated tag string into a trimmed, de-duped list. */
-function parseTags(raw: string): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const part of raw.split(",")) {
-    const tag = part.trim();
-    if (tag !== "" && !seen.has(tag)) {
-      seen.add(tag);
-      out.push(tag);
-    }
-  }
-  return out;
 }
 
 /**
@@ -47,22 +40,102 @@ function parseTags(raw: string): string[] {
  * the first save. Mirrors `CommandForm`'s modal mechanics: Esc / backdrop
  * cancels, Cmd/Ctrl+Enter saves, focus lands on the name field. Save is
  * blocked until a non-empty name is entered.
+ *
+ * The Tags field mirrors the command form: chips with a remove button, an
+ * inline input with autocomplete suggestions (filtered from
+ * {@link WorkflowMetaModalProps.tagSuggestions}), and the same keyboard
+ * affordances (ArrowUp/Down to cycle, Enter/`,` to commit, Backspace to
+ * remove the last chip, Escape to clear the draft).
  */
 export function WorkflowMetaModal({
   initial,
+  tagSuggestions = [],
   onSave,
   onClose,
 }: WorkflowMetaModalProps): ReactElement {
   const { t } = useTranslation();
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description ?? "");
-  const [tags, setTags] = useState(initial.tags.join(", "));
+  const [tags, setTags] = useState<string[]>(() =>
+    normalizeTags(initial.tags),
+  );
+  const [tagDraft, setTagDraft] = useState<string>("");
+  const [tagSuggestActiveIndex, setTagSuggestActiveIndex] =
+    useState<number>(-1);
   const [showError, setShowError] = useState(false);
   const nameRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     nameRef.current?.focus();
   }, []);
+
+  const filteredTagSuggestions = useMemo((): string[] => {
+    const draft = tagDraft.trim();
+    if (draft === "") return [];
+    const lower = draft.toLowerCase();
+    return tagSuggestions.filter(
+      (s) =>
+        s.toLowerCase().includes(lower) &&
+        !tags.some((existing) => existing.toLowerCase() === s.toLowerCase()),
+    );
+  }, [tagDraft, tagSuggestions, tags]);
+
+  const commitTag = (raw: string): void => {
+    const trimmed = raw.trim();
+    if (trimmed === "") return;
+    setTags((prev) =>
+      prev.some((tag) => tag.toLowerCase() === trimmed.toLowerCase())
+        ? prev
+        : [...prev, trimmed],
+    );
+    setTagDraft("");
+    setTagSuggestActiveIndex(-1);
+  };
+
+  const handleRemoveTag = (index: number): void => {
+    setTags((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleTagInputKeyDown = (
+    e: ReactKeyboardEvent<HTMLInputElement>,
+  ): void => {
+    const suggestions = filteredTagSuggestions;
+    if (e.key === "ArrowDown" && suggestions.length > 0) {
+      e.preventDefault();
+      setTagSuggestActiveIndex((i) =>
+        i + 1 >= suggestions.length ? 0 : i + 1,
+      );
+      return;
+    }
+    if (e.key === "ArrowUp" && suggestions.length > 0) {
+      e.preventDefault();
+      setTagSuggestActiveIndex((i) =>
+        i - 1 < 0 ? suggestions.length - 1 : i - 1,
+      );
+      return;
+    }
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      const active = suggestions[tagSuggestActiveIndex];
+      commitTag(active ?? tagDraft);
+      return;
+    }
+    if (e.key === "Backspace" && tagDraft === "" && tags.length > 0) {
+      e.preventDefault();
+      handleRemoveTag(tags.length - 1);
+      return;
+    }
+    if (e.key === "Escape") {
+      // Clear the draft locally; do NOT close the modal here so a partial
+      // tag entry is discarded without losing the rest of the form.
+      if (tagDraft !== "") {
+        e.preventDefault();
+        e.stopPropagation();
+        setTagDraft("");
+        setTagSuggestActiveIndex(-1);
+      }
+    }
+  };
 
   const trimmedName = name.trim();
   const nameInvalid = trimmedName === "";
@@ -73,10 +146,16 @@ export function WorkflowMetaModal({
       return;
     }
     const trimmedDesc = description.trim();
+    // Fold any uncommitted draft into the saved tags so a typed-but-not-
+    // Entered tag is not silently dropped.
+    const pending = tagDraft.trim();
+    const finalTags = normalizeTags(
+      pending === "" ? tags : [...tags, pending],
+    );
     onSave({
       name: trimmedName,
       description: trimmedDesc === "" ? undefined : trimmedDesc,
-      tags: parseTags(tags),
+      tags: finalTags,
       categoryId: initial.categoryId,
       icon: initial.icon,
     });
@@ -145,18 +224,62 @@ export function WorkflowMetaModal({
         </div>
 
         <div className="command-form__field">
-          <label className="command-form__label" htmlFor="wf-meta-tags">
-            {t("editor.meta.tags")}
-          </label>
-          <input
-            id="wf-meta-tags"
-            className="input"
-            placeholder={t("editor.meta.tagsPlaceholder")}
-            value={tags}
-            onChange={(e: ChangeEvent<HTMLInputElement>) =>
-              setTags(e.target.value)
-            }
-          />
+          <span className="command-form__label">{t("editor.meta.tags")}</span>
+          <div className="tag-input-wrap">
+            <div className="tag-input">
+              {tags.map((tag, index) => (
+                <span key={tag} className="tag-input__chip">
+                  <span className="tag-input__chip-label">{tag}</span>
+                  <button
+                    type="button"
+                    className="tag-input__chip-remove"
+                    onClick={() => handleRemoveTag(index)}
+                    aria-label={t("commandForm.tags.remove", { tag })}
+                    title={t("commandForm.tags.remove", { tag })}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <input
+                type="text"
+                className="tag-input__field"
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={handleTagInputKeyDown}
+                onBlur={() => {
+                  if (tagSuggestActiveIndex >= 0) return;
+                  commitTag(tagDraft);
+                }}
+                placeholder={t("editor.meta.tagsPlaceholder")}
+                autoComplete="off"
+              />
+            </div>
+            {filteredTagSuggestions.length > 0 ? (
+              <ul className="tag-suggest" role="listbox">
+                {filteredTagSuggestions.map((suggestion, idx) => (
+                  <li
+                    key={suggestion}
+                    className={
+                      "tag-suggest__option" +
+                      (idx === tagSuggestActiveIndex
+                        ? " tag-suggest__option--active"
+                        : "")
+                    }
+                    role="option"
+                    aria-selected={idx === tagSuggestActiveIndex}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      commitTag(suggestion);
+                    }}
+                    onMouseEnter={() => setTagSuggestActiveIndex(idx)}
+                  >
+                    {suggestion}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         </div>
 
         <div className="command-form__actions">

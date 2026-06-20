@@ -3403,6 +3403,14 @@ body.is-editor-fullscreen .output-panel {
   pointer-events: auto;
 }
 
+/* Generic hover-tooltip wrapper (HoverTooltip). `display: contents` makes
+ * the wrapper transparent to layout so a wrapped full-width button keeps
+ * filling its container (e.g. the node palette buttons). The popover reuses
+ * `.help-tooltip__popover` for its visual style. */
+.hover-tooltip__wrap {
+  display: contents;
+}
+
 /* ---------------------------------------------------------------------
  * Script flag-hint affordance: the leading utility in the script field
  * is highlighted in the editor overlay and hovering it reveals a popover

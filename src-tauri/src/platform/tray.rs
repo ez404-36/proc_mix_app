@@ -82,10 +82,23 @@ pub struct TrayLabels {
 
 pub fn default_labels() -> TrayLabels {
     TrayLabels {
-        show: "Show ProcMix".into(),
-        hide: "Hide to Tray".into(),
-        quit: "Quit ProcMix".into(),
-        tooltip: "ProcMix".into(),
+        show: dev_tag("Show ProcMix"),
+        hide: dev_tag("Hide to Tray"),
+        quit: dev_tag("Quit ProcMix"),
+        tooltip: dev_tag("ProcMix"),
+    }
+}
+
+/// In a debug build, suffix the product name "ProcMix" with " (dev)" so the
+/// FIRST tray menu/tooltip shown (before the frontend pushes localized
+/// labels via `update_tray_menu`) is also marked as the dev build. In a
+/// release build this is the identity. Mirrors `withDevSuffix` in
+/// `src/utils/tray.ts` (which handles the localized labels at runtime).
+fn dev_tag(label: &str) -> String {
+    if cfg!(debug_assertions) {
+        label.replacen("ProcMix", "ProcMix (dev)", 1)
+    } else {
+        label.to_string()
     }
 }
 
