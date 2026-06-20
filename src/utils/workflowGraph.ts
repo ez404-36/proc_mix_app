@@ -812,13 +812,109 @@ export function parallelBranchIndices(count: number): number[] {
 }
 
 /**
- * Whether a node exposes a free single `out` source port — i.e. it is a
- * single-exit kind (`start` / `command` / `data`) with no edge already
- * leaving its `out` handle. Multi-exit / branching kinds (`condition`,
- * `switch`, `loop`, `try`, `parallel`, `join`) are deliberately EXCLUDED:
- * their branch ports (`then`/`else`, `case:*`/`default`, `body`/`done`,
- * `ok`/`catch`, `branch:<n>`) are too ambiguous to auto-pick, so they are
- * only wired manually or via edge-insertion. `end` nodes have no source port.
+ * Every source handle a node EXPOSES, each with its on-canvas anchor point and
+ * the vertical fraction (0..1 of the node box) it sits at — mirroring exactly
+ * what each node component renders:
+ *   - single-exit (`start`/`command`/`data`/`parser`/`text`/`join`): `out` @50%
+ *   - `condition`: `then`@60%, `else`@85%
+ *   - `try`: `ok`@60%, `catch`@85%
+ *   - `loop`: `body`@60%, `done`@85%
+ *   - `switch`: `case:<id>` and `default`, evenly distributed over `slots+1`
+ *   - `parallel`: one `branch:<n>` per rendered slot, anchored at the fork's
+ *     dynamic per-slot center (absolute px, since the node grows with its slot
+ *     count — see {@link ParallelNode})
+ *   - `end`: none (terminal)
+ * Handle `top` percentages map to a y of `position.y + fraction * NODE_HEIGHT`;
+ * the parallel handles use their absolute slot center directly.
+ */
+function nodeOutputHandles(
+  node: WorkflowFlowNode,
+): Array<{ sourceHandle: string; anchor: FlowPoint }> {
+  const kind = node.type ?? node.data.kind;
+  const x = node.position.x + NODE_WIDTH;
+  const at = (fraction: number): FlowPoint => ({
+    x,
+    y: node.position.y + fraction * NODE_HEIGHT,
+  });
+  switch (kind) {
+    case "end":
+      return [];
+    case "condition":
+      return [
+        { sourceHandle: "then", anchor: at(0.6) },
+        { sourceHandle: "else", anchor: at(0.85) },
+      ];
+    case "try":
+      return [
+        { sourceHandle: "ok", anchor: at(0.6) },
+        { sourceHandle: "catch", anchor: at(0.85) },
+      ];
+    case "loop":
+      return [
+        { sourceHandle: "body", anchor: at(0.6) },
+        { sourceHandle: "done", anchor: at(0.85) },
+      ];
+    case "switch": {
+      const cases = node.data.cases ?? [];
+      const slots = cases.length + 1;
+      const handles = cases.map((c, i) => ({
+        sourceHandle: `case:${c.id}`,
+        anchor: at((i + 1) / (slots + 1)),
+      }));
+      handles.push({
+        sourceHandle: "default",
+        anchor: at((cases.length + 1) / (slots + 1)),
+      });
+      return handles;
+    }
+    case "parallel": {
+      // Mirror ParallelNode's slot geometry: one handle per rendered slot
+      // (`parallelBranchIndices`), each at its absolute per-slot center.
+      const SLOT_HEIGHT = 24;
+      const HEADER = 52;
+      const count = node.data.parallelBranchCount ?? 0;
+      return parallelBranchIndices(count).map((branchIndex, slot) => ({
+        sourceHandle: `branch:${branchIndex}`,
+        anchor: {
+          x,
+          y: node.position.y + HEADER + slot * SLOT_HEIGHT + SLOT_HEIGHT / 2,
+        },
+      }));
+    }
+    default:
+      // start / command / data / parser / text / join — single centred `out`.
+      return [{ sourceHandle: "out", anchor: at(0.5) }];
+  }
+}
+
+/**
+ * Every FREE output handle of a node — a handle from {@link nodeOutputHandles}
+ * with no edge already leaving it. For a `parallel` fork the only "free" slot
+ * is the trailing `branch:<count>` one (the rest are wired branches whose edges
+ * occupy them); every other kind's handle is free when no edge carries that
+ * exact `sourceHandle`. Used by {@link findAttachTail} to auto-connect a
+ * dropped node to the NEAREST free output across all nodes and all their ports.
+ */
+function freeOutputHandles(
+  node: WorkflowFlowNode,
+  edges: WorkflowFlowEdge[],
+): Array<{ sourceHandle: string; anchor: FlowPoint }> {
+  const usedFromNode = new Set(
+    edges
+      .filter((e) => e.source === node.id)
+      .map((e) => e.sourceHandle ?? "out"),
+  );
+  return nodeOutputHandles(node).filter(
+    (h) => !usedFromNode.has(h.sourceHandle),
+  );
+}
+
+/**
+ * Whether a node exposes a free single `out` source port — a single-exit kind
+ * (`start` / `command` / `data`) with no edge already leaving its `out`
+ * handle. Used by click-to-append, which only ever wires linear `out` chains;
+ * the drop path uses {@link findAttachTail}, which auto-connects to the nearest
+ * free output handle of ANY kind.
  */
 function hasFreeOutPort(
   node: WorkflowFlowNode,
@@ -826,13 +922,7 @@ function hasFreeOutPort(
 ): boolean {
   const kind = node.type ?? node.data.kind;
   if (kind !== "start" && kind !== "command" && kind !== "data") return false;
-  return !edges.some(
-    (e) =>
-      e.source === node.id &&
-      (e.sourceHandle === "out" ||
-        e.sourceHandle === null ||
-        e.sourceHandle === undefined),
-  );
+  return freeOutputHandles(node, edges).some((h) => h.sourceHandle === "out");
 }
 
 /**
@@ -859,28 +949,76 @@ export function findSinglePredecessor(
 }
 
 /**
- * Find the node to auto-attach a dropped command to: the `start`/`command`
- * node with a FREE `out` port whose output anchor is nearest to `point`.
- * Returns `null` when no such tail exists (the dropped node is then left
- * unconnected). Never auto-attaches to a `condition` branch.
+ * The node + source handle a dropped node should auto-attach to: the FREE
+ * output handle — across every node and every one of its ports (see
+ * {@link freeOutputHandles}) — whose anchor is nearest to `point`. So a drop
+ * beside a `condition` picks its `then` or `else` by which is closer, beside a
+ * `switch` picks the nearest free `case:*`/`default`, beside a fork picks its
+ * next free `branch:<n>`, and so on. Returns `null` when no free handle exists
+ * anywhere (the dropped node is then left unconnected).
  */
 export function findAttachTail(
   nodes: WorkflowFlowNode[],
   edges: WorkflowFlowEdge[],
   point: FlowPoint,
-): string | null {
-  let bestId: string | null = null;
+): { id: string; sourceHandle: string } | null {
+  let best: { id: string; sourceHandle: string } | null = null;
   let bestDist = Infinity;
   for (const node of nodes) {
-    if (!hasFreeOutPort(node, edges)) continue;
-    const anchor = sourceAnchor(node);
-    const dist = Math.hypot(point.x - anchor.x, point.y - anchor.y);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestId = node.id;
+    for (const handle of freeOutputHandles(node, edges)) {
+      const dist = Math.hypot(
+        point.x - handle.anchor.x,
+        point.y - handle.anchor.y,
+      );
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = { id: node.id, sourceHandle: handle.sourceHandle };
+      }
     }
   }
-  return bestId;
+  return best;
+}
+
+/** A source handle with its MEASURED (real DOM) anchor in flow coordinates. */
+export interface MeasuredSourceHandle {
+  nodeId: string;
+  sourceHandle: string;
+  anchor: FlowPoint;
+}
+
+/**
+ * Pick the FREE source handle — from a list of MEASURED (real-DOM) handle
+ * anchors — nearest to `point`. A handle is free when no edge already leaves
+ * that exact `nodeId` + `sourceHandle`. This is the precise counterpart to
+ * {@link findAttachTail}: rather than estimating each port's y from a fixed
+ * node height (which is wrong once a node grows with its content — e.g. a
+ * `try` card with variable rows pushes `ok`/`catch` down), the caller reads
+ * the handles' true on-screen positions and converts them to flow space, so
+ * "drop opposite `ok`" reliably resolves to `ok`. Returns `null` when no free
+ * handle is supplied.
+ */
+export function findNearestFreeHandle(
+  handles: ReadonlyArray<MeasuredSourceHandle>,
+  edges: WorkflowFlowEdge[],
+  point: FlowPoint,
+): { id: string; sourceHandle: string } | null {
+  const used = new Set(
+    edges.map((e) => `${e.source}\u0000${e.sourceHandle ?? "out"}`),
+  );
+  let best: { id: string; sourceHandle: string } | null = null;
+  let bestDist = Infinity;
+  for (const handle of handles) {
+    if (used.has(`${handle.nodeId}\u0000${handle.sourceHandle}`)) continue;
+    const dist = Math.hypot(
+      point.x - handle.anchor.x,
+      point.y - handle.anchor.y,
+    );
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = { id: handle.nodeId, sourceHandle: handle.sourceHandle };
+    }
+  }
+  return best;
 }
 
 /**
@@ -909,15 +1047,18 @@ export function findLastNode(
 }
 
 /**
- * Connect a tail node's `out` port to `newNode` and append the node. Pure:
+ * Connect a tail node's source port to `newNode` and append the node. Pure:
  * returns fresh `nodes` / `edges` arrays. Does nothing extra when `tailId`
- * is null (just appends the node unconnected).
+ * is null (just appends the node unconnected). `sourceHandle` defaults to
+ * `"out"` (the linear click-append case); the drop path passes the handle
+ * {@link findAttachTail} resolved — e.g. a fork's `branch:<n>` slot.
  */
 export function connectTailToNode(
   nodes: WorkflowFlowNode[],
   edges: WorkflowFlowEdge[],
   tailId: string | null,
   newNode: WorkflowFlowNode,
+  sourceHandle: string = "out",
 ): { nodes: WorkflowFlowNode[]; edges: WorkflowFlowEdge[] } {
   const nextNodes = [...nodes, newNode];
   if (tailId === null) {
@@ -927,7 +1068,7 @@ export function connectTailToNode(
     id: makeGraphId("edge"),
     source: tailId,
     target: newNode.id,
-    sourceHandle: "out",
+    sourceHandle,
   };
   return { nodes: nextNodes, edges: [...edges, edge] };
 }

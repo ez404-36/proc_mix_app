@@ -5,6 +5,7 @@ import { useCommandStore } from "../../../stores/commandStore";
 import { getCommandName } from "../../../utils/commandLabels";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
 import { insertNeighborClass, runStatusClass } from "./runStatus";
+import { VariableSourceList } from "./VariableSourceList";
 
 /**
  * A command-running node that branches on the first matching `case`: one
@@ -38,6 +39,7 @@ export function SwitchNode({ data }: NodeProps<Node<WorkflowNodeData>>): ReactEl
       <Handle type="target" position={Position.Left} />
       <div className="wf-node__kind">{t("editor.nodes.switch")}</div>
       <div className="wf-node__title">{label}</div>
+      <VariableSourceList variableSources={data.variableSources} />
       <div className="wf-node__branches">
         {cases.map((c) => (
           <span key={c.id} className="wf-branch-label">

@@ -193,6 +193,19 @@
       "parserSummary": "{{count}} parser step(s)",
       "unboundCommand": "Pick a command…"
     },
+    "nodeDesc": {
+      "command": "Runs the selected command.",
+      "condition": "Branches on exit code or a predicate: success / failure.",
+      "switch": "Branches across several cases; the first match wins.",
+      "loop": "Repeats the nested section a fixed count or while a condition holds.",
+      "try": "Runs a command, retrying on failure: ok / catch.",
+      "parallel": "Fans execution out into several concurrent branches.",
+      "join": "A barrier that waits for all of a Parallel's branches to finish.",
+      "data": "Stores variables for later nodes without running a process.",
+      "parser": "Applies an output schema to the previous node's result.",
+      "text": "Composes text from a template with variable substitution.",
+      "end": "Ends this branch of the workflow."
+    },
     "palette": {
       "nodes": "Nodes",
       "nodeDragHint": "Drag a node onto the canvas or click",

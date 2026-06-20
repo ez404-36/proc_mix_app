@@ -8,6 +8,7 @@ import {
   findAttachTail,
   findEdgeNearPoint,
   findLastNode,
+  findNearestFreeHandle,
   findSinglePredecessor,
   flowToWorkflow,
   insertNodeOnEdge,
@@ -819,7 +820,7 @@ describe("findAttachTail", () => {
   it("returns a lone start node (free out port)", () => {
     const nodes = [flowNode("s", "start", 0, 0)];
     const tail = findAttachTail(nodes, [], { x: 400, y: 0 });
-    expect(tail).toBe("s");
+    expect(tail).toEqual({ id: "s", sourceHandle: "out" });
   });
 
   it("excludes a start whose out port is already used", () => {
@@ -828,12 +829,54 @@ describe("findAttachTail", () => {
       { id: "e", source: "s", target: "c", sourceHandle: "out" },
     ];
     // s.out is taken → only c (free out) qualifies.
-    expect(findAttachTail(nodes, edges, { x: 600, y: 0 })).toBe("c");
+    expect(findAttachTail(nodes, edges, { x: 600, y: 0 })).toEqual({
+      id: "c",
+      sourceHandle: "out",
+    });
   });
 
-  it("never auto-attaches to a condition node", () => {
+  it("auto-attaches to a condition's nearest free branch (then vs else)", () => {
     const nodes = [flowNode("cond", "condition", 0, 0)];
-    expect(findAttachTail(nodes, [], { x: 200, y: 0 })).toBeNull();
+    // then ≈ 60% of 52 = 31.2; else ≈ 85% = 44.2 (both at x=150).
+    // A point low/right is nearest `else`; high/right nearest `then`.
+    expect(findAttachTail(nodes, [], { x: 150, y: 46 })).toEqual({
+      id: "cond",
+      sourceHandle: "else",
+    });
+    expect(findAttachTail(nodes, [], { x: 150, y: 30 })).toEqual({
+      id: "cond",
+      sourceHandle: "then",
+    });
+  });
+
+  it("skips a condition branch already wired, offering only the free one", () => {
+    const nodes = [flowNode("cond", "condition", 0, 0)];
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e", source: "cond", target: "x", sourceHandle: "then" },
+    ];
+    // `then` is taken → even a point near it resolves to the free `else`.
+    expect(findAttachTail(nodes, edges, { x: 150, y: 30 })).toEqual({
+      id: "cond",
+      sourceHandle: "else",
+    });
+  });
+
+  it("auto-attaches to a fork's next free branch slot", () => {
+    const nodes: WorkflowFlowNode[] = [
+      {
+        id: "p",
+        type: "parallel",
+        position: { x: 0, y: 0 },
+        data: { kind: "parallel", parallelBranchCount: 2 },
+      },
+    ];
+    // count=2 → slots branch:0/1 (wired conceptually) + free branch:2.
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e0", source: "p", target: "a", sourceHandle: "branch:0" },
+      { id: "e1", source: "p", target: "b", sourceHandle: "branch:1" },
+    ];
+    const tail = findAttachTail(nodes, edges, { x: 150, y: 200 });
+    expect(tail).toEqual({ id: "p", sourceHandle: "branch:2" });
   });
 
   it("picks the tail whose output is nearest the point", () => {
@@ -842,12 +885,50 @@ describe("findAttachTail", () => {
       flowNode("b", "command", 0, 400),
     ];
     // a.out ≈ (150,26); b.out ≈ (150,426). Point near b.
-    expect(findAttachTail(nodes, [], { x: 150, y: 420 })).toBe("b");
+    expect(findAttachTail(nodes, [], { x: 150, y: 420 })).toEqual({
+      id: "b",
+      sourceHandle: "out",
+    });
   });
 
-  it("returns null when no tail has a free out port", () => {
+  it("returns null when no node has any free output port", () => {
     const nodes = [flowNode("e", "end", 0, 0)];
     expect(findAttachTail(nodes, [], { x: 0, y: 0 })).toBeNull();
+  });
+});
+
+describe("findNearestFreeHandle", () => {
+  // A `try` node's measured ok/catch handles at their REAL (DOM) positions —
+  // spread wider than a fixed-height estimate would place them.
+  const tryHandles = [
+    { nodeId: "t", sourceHandle: "ok", anchor: { x: 150, y: 70 } },
+    { nodeId: "t", sourceHandle: "catch", anchor: { x: 150, y: 110 } },
+  ];
+
+  it("resolves a drop opposite `ok` to `ok` (not `catch`)", () => {
+    expect(
+      findNearestFreeHandle(tryHandles, [], { x: 160, y: 72 }),
+    ).toEqual({ id: "t", sourceHandle: "ok" });
+  });
+
+  it("resolves a drop opposite `catch` to `catch`", () => {
+    expect(
+      findNearestFreeHandle(tryHandles, [], { x: 160, y: 108 }),
+    ).toEqual({ id: "t", sourceHandle: "catch" });
+  });
+
+  it("skips a handle already wired, offering the free one", () => {
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e", source: "t", target: "x", sourceHandle: "ok" },
+    ];
+    // Even a point right on `ok` resolves to the free `catch`.
+    expect(
+      findNearestFreeHandle(tryHandles, edges, { x: 150, y: 70 }),
+    ).toEqual({ id: "t", sourceHandle: "catch" });
+  });
+
+  it("returns null when no handles are supplied", () => {
+    expect(findNearestFreeHandle([], [], { x: 0, y: 0 })).toBeNull();
   });
 });
 
@@ -900,6 +981,13 @@ describe("connectTailToNode", () => {
     const next = connectTailToNode([], [], null, node);
     expect(next.nodes).toHaveLength(1);
     expect(next.edges).toHaveLength(0);
+  });
+
+  it("wires the given sourceHandle (e.g. a fork branch) when provided", () => {
+    const nodes = [flowNode("p", "command", 0, 0)];
+    const node = newCommandNode("n1", 300, 0);
+    const next = connectTailToNode(nodes, [], "p", node, "branch:2");
+    expect(next.edges[0]?.sourceHandle).toBe("branch:2");
   });
 });
 

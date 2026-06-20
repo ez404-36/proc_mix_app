@@ -6,6 +6,7 @@ import { conditionSummary } from "../../../utils/conditionSummary";
 import { getCommandName } from "../../../utils/commandLabels";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
 import { insertNeighborClass, runStatusClass } from "./runStatus";
+import { VariableSourceList } from "./VariableSourceList";
 
 /**
  * A node that runs its referenced `Command` and branches. Without a predicate
@@ -48,6 +49,7 @@ export function ConditionNode({
       <Handle type="target" position={Position.Left} />
       <div className="wf-node__kind">{t("editor.nodes.condition")}</div>
       <div className="wf-node__title">{label}</div>
+      <VariableSourceList variableSources={data.variableSources} />
       <div className="wf-node__branches-row">
         {summary !== null ? (
           <span className="wf-node__predicate" title={summary}>

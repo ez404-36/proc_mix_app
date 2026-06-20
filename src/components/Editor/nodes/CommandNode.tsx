@@ -5,6 +5,7 @@ import { useCommandStore } from "../../../stores/commandStore";
 import { getCommandName } from "../../../utils/commandLabels";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
 import { insertNeighborClass, runStatusClass } from "./runStatus";
+import { VariableSourceList } from "./VariableSourceList";
 
 /**
  * A node that runs a referenced `Command`. Target handle on the left, single
@@ -36,6 +37,7 @@ export function CommandNode({
       <Handle type="target" position={Position.Left} />
       <div className="wf-node__kind">{t("editor.nodes.command")}</div>
       <div className="wf-node__title">{label}</div>
+      <VariableSourceList variableSources={data.variableSources} />
       <Handle type="source" position={Position.Right} id="out" />
     </div>
   );

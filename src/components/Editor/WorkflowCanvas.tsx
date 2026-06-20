@@ -66,6 +66,30 @@ import {
  * created once by `makeInitialFlow` and never added) can be placed.
  */
 type PaletteNodeKind = Exclude<WorkflowNodeKind, "start">;
+
+/**
+ * The palette's node catalogue, in display order. `place` records how a CLICK
+ * adds the node: `append` wires it onto the current tail, `fixed` drops it at a
+ * fixed canvas position (used for branching kinds whose tail wiring is
+ * ambiguous). Each entry's `title`/`desc` i18n keys live under
+ * `editor.nodes.*` / `editor.nodeDesc.*`; the button reuses `wf-palette__btn`.
+ */
+const PALETTE_NODES: ReadonlyArray<{
+  kind: PaletteNodeKind;
+  place: "append" | "fixed";
+}> = [
+  { kind: "command", place: "append" },
+  { kind: "condition", place: "fixed" },
+  { kind: "switch", place: "fixed" },
+  { kind: "loop", place: "fixed" },
+  { kind: "try", place: "fixed" },
+  { kind: "parallel", place: "fixed" },
+  { kind: "join", place: "append" },
+  { kind: "data", place: "append" },
+  { kind: "parser", place: "append" },
+  { kind: "text", place: "append" },
+  { kind: "end", place: "append" },
+];
 import { workflowNodeTypes } from "./nodes";
 import { CanvasZoomControls } from "./CanvasZoomControls";
 import { NodeInspector } from "./NodeInspector";
@@ -964,120 +988,24 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       <aside className="wf-palette">
         <div className="wf-palette__section">
           <h3 className="wf-palette__title">{t("editor.palette.nodes")}</h3>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "command")}
-            onClick={() => paletteAppendNode("command", undefined)}
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.command")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "condition")}
-            onClick={() =>
-              paletteAddNode("condition", undefined, { x: 240, y: 200 })
-            }
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.condition")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "switch")}
-            onClick={() => paletteAddNode("switch", undefined, { x: 240, y: 200 })}
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.switch")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "loop")}
-            onClick={() => paletteAddNode("loop", undefined, { x: 240, y: 200 })}
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.loop")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "try")}
-            onClick={() => paletteAddNode("try", undefined, { x: 240, y: 200 })}
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.try")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "parallel")}
-            onClick={() =>
-              paletteAddNode("parallel", undefined, { x: 240, y: 200 })
-            }
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.parallel")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "join")}
-            onClick={() => paletteAppendNode("join", undefined)}
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.join")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "data")}
-            onClick={() => paletteAppendNode("data", undefined)}
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.data")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "parser")}
-            onClick={() => paletteAppendNode("parser", undefined)}
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.parser")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "text")}
-            onClick={() => paletteAppendNode("text", undefined)}
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.text")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost wf-palette__btn"
-            draggable
-            onDragStart={(e) => onPaletteNodeDragStart(e, "end")}
-            onClick={() => paletteAppendNode("end", undefined)}
-            title={t("editor.palette.nodeDragHint")}
-          >
-            + {t("editor.nodes.end")}
-          </button>
+          <p className="wf-palette__hint">{t("editor.palette.nodeDragHint")}</p>
+          {PALETTE_NODES.map(({ kind, place }) => (
+            <button
+              key={kind}
+              type="button"
+              className="btn btn--ghost wf-palette__btn"
+              draggable
+              onDragStart={(e) => onPaletteNodeDragStart(e, kind)}
+              onClick={() =>
+                place === "fixed"
+                  ? paletteAddNode(kind, undefined, { x: 240, y: 200 })
+                  : paletteAppendNode(kind, undefined)
+              }
+              title={t(`editor.nodeDesc.${kind}`)}
+            >
+              + {t(`editor.nodes.${kind}`)}
+            </button>
+          ))}
         </div>
         <div className="wf-palette__section">
           <h3 className="wf-palette__title">

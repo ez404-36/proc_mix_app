@@ -5,6 +5,7 @@ import { useCommandStore } from "../../../stores/commandStore";
 import { getCommandName } from "../../../utils/commandLabels";
 import type { WorkflowNodeData } from "../../../utils/workflowGraph";
 import { insertNeighborClass, runStatusClass } from "./runStatus";
+import { VariableSourceList } from "./VariableSourceList";
 
 /**
  * A command-running node that retries its command on failure: `ok` once it
@@ -40,6 +41,7 @@ export function TryNode({ data }: NodeProps<Node<WorkflowNodeData>>): ReactEleme
       <Handle type="target" position={Position.Left} />
       <div className="wf-node__kind">{t("editor.nodes.try")}</div>
       <div className="wf-node__title">{title}</div>
+      <VariableSourceList variableSources={data.variableSources} />
       <div className="wf-node__branches">
         <span className="wf-branch-label wf-branch-label--ok">
           {t("editor.nodes.ok")}

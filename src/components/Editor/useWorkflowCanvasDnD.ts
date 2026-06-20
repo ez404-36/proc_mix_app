@@ -7,8 +7,10 @@ import {
   connectTailToNode,
   findAttachTail,
   findEdgeNearPoint,
+  findNearestFreeHandle,
   insertNodeOnEdge,
   insertPreviewPoint,
+  type MeasuredSourceHandle,
   type WorkflowFlowNode,
 } from "../../utils/workflowGraph";
 
@@ -48,6 +50,37 @@ function parsePayload(raw: string): PaletteDragPayload | null {
     // Malformed payload (e.g. a foreign drag) — ignore.
   }
   return null;
+}
+
+/**
+ * Read every SOURCE handle currently rendered on the canvas with its TRUE
+ * on-screen center converted to flow coordinates. @xyflow/react renders each
+ * handle as `.react-flow__handle.source[data-nodeid][data-handleid]`, so the
+ * real position is read straight from the DOM — immune to a node's dynamic
+ * height (variable rows, branch labels, …) that breaks a fixed-height estimate.
+ * `screenToFlow` is the instance's `screenToFlowPosition`, applied to each
+ * handle's bounding-box center.
+ */
+function readMeasuredSourceHandles(
+  wrapper: HTMLElement,
+  screenToFlow: (p: { x: number; y: number }) => { x: number; y: number },
+): MeasuredSourceHandle[] {
+  const result: MeasuredSourceHandle[] = [];
+  const els = wrapper.querySelectorAll<HTMLElement>(
+    ".react-flow__handle.source[data-nodeid][data-handleid]",
+  );
+  els.forEach((el) => {
+    const nodeId = el.getAttribute("data-nodeid");
+    const sourceHandle = el.getAttribute("data-handleid");
+    if (nodeId === null || sourceHandle === null) return;
+    const rect = el.getBoundingClientRect();
+    const anchor = screenToFlow({
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    });
+    result.push({ nodeId, sourceHandle, anchor });
+  });
+  return result;
 }
 
 interface InsertPreviewPos {
@@ -191,13 +224,41 @@ export function useWorkflowCanvasDnD({
         setEdges(next.edges);
         return;
       }
-      const tailId = findAttachTail(curNodes, curEdges, point);
-      const next = connectTailToNode(curNodes, curEdges, tailId, newNode);
+      // Auto-attach to the nearest FREE source handle. Prefer real measured
+      // handle positions from the DOM (exact regardless of a node's dynamic
+      // height); fall back to the estimated geometry when the wrapper / DOM
+      // handles are unavailable (e.g. in tests without a live canvas).
+      const wrapper = flowWrapperRef.current;
+      const measured =
+        wrapper === null
+          ? []
+          : readMeasuredSourceHandles(wrapper, (p) =>
+              instance.screenToFlowPosition(p),
+            );
+      const tail =
+        measured.length > 0
+          ? findNearestFreeHandle(measured, curEdges, point)
+          : findAttachTail(curNodes, curEdges, point);
+      const next = connectTailToNode(
+        curNodes,
+        curEdges,
+        tail?.id ?? null,
+        newNode,
+        tail?.sourceHandle ?? "out",
+      );
       onBeforeMutate();
       setNodes(next.nodes);
       setEdges(next.edges);
     },
-    [makeNode, setNodes, setEdges, clearInsertHint, rfInstanceRef, onBeforeMutate],
+    [
+      makeNode,
+      setNodes,
+      setEdges,
+      clearInsertHint,
+      rfInstanceRef,
+      flowWrapperRef,
+      onBeforeMutate,
+    ],
   );
 
   const onPaletteDragStart = useCallback(
