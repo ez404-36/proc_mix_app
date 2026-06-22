@@ -178,3 +178,19 @@ CREATE TABLE IF NOT EXISTS schedules (
 );
 
 CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
+
+-- SSH host metadata (v0.9.0). ProcMix-owned state for SSH connections whose
+-- PARAMETERS live in their source of truth (`~/.ssh/config`, …) and are parsed
+-- read-only by `core::ssh` — never duplicated here. This table stores only the
+-- bits that have no home in an SSH config: the outcome/time of the last
+-- reachability check. Keyed by the composite host key `"<source>:<name>"`
+-- (see `core::ssh::SshHostId::key`) so the same alias in different sources keeps
+-- independent metadata. Rows are created lazily on first check; a host with no
+-- row simply renders as "not checked yet". See `storage/ssh_host_meta.rs`.
+CREATE TABLE IF NOT EXISTS ssh_host_meta (
+  host_key      TEXT PRIMARY KEY NOT NULL,
+  -- RFC 3339 timestamp of the last reachability check (NULL = never).
+  last_check_at TEXT,
+  -- Last check result as INTEGER 0/1 (SQLite has no bool); NULL = never checked.
+  last_check_ok INTEGER
+);

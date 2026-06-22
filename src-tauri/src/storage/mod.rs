@@ -13,6 +13,7 @@ pub mod db;
 pub mod env_config;
 pub mod history;
 pub mod schedules;
+pub mod ssh_host_meta;
 pub mod workflows;
 
 pub use db::{init_pool, DbPool};

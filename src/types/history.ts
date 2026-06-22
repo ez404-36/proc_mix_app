@@ -34,7 +34,13 @@ export type HistoryEventKind =
   | "workflowEdited"
   | "workflowDeleted"
   | "workflowRun"
-  | "scheduledRun";
+  | "scheduledRun"
+  | "sshHostAdded"
+  | "sshHostDiscovered"
+  | "sshHostEdited"
+  | "sshHostEditedExternally"
+  | "sshHostDeleted"
+  | "sshHostDeletedExternally";
 
 /**
  * Outcome of a scheduled (cron) fire. Mirrors the free-form status strings
@@ -237,6 +243,67 @@ export interface ScheduledRunEvent extends HistoryEventBase {
   result?: ExtractedResult;
 }
 
+/**
+ * Compact snapshot of an SSH host/pattern stored with an SSH history event.
+ * Mirrors the Rust `SshHostSnapshot`.
+ */
+export interface SshHostSnapshot {
+  hostKey: string;
+  name: string;
+  source: string;
+  hostName: string | null;
+  user: string | null;
+  port: number | null;
+  identityFile: string | null;
+  isPattern: boolean;
+  rawText: string;
+}
+
+/** SSH host/pattern created inside ProcMix. */
+export interface SshHostAddedEvent extends HistoryEventBase {
+  kind: "sshHostAdded";
+  hostKey: string;
+  hostName: string;
+  snapshotAfter: SshHostSnapshot;
+}
+/** SSH host/pattern first seen on disk (created outside ProcMix). */
+export interface SshHostDiscoveredEvent extends HistoryEventBase {
+  kind: "sshHostDiscovered";
+  hostKey: string;
+  hostName: string;
+  snapshotAfter: SshHostSnapshot;
+}
+/** SSH host/pattern edited inside ProcMix. */
+export interface SshHostEditedEvent extends HistoryEventBase {
+  kind: "sshHostEdited";
+  hostKey: string;
+  hostName: string;
+  snapshotBefore: SshHostSnapshot;
+  snapshotAfter: SshHostSnapshot;
+}
+/** SSH host/pattern changed on disk outside ProcMix. */
+export interface SshHostEditedExternallyEvent extends HistoryEventBase {
+  kind: "sshHostEditedExternally";
+  hostKey: string;
+  hostName: string;
+  snapshotBefore: SshHostSnapshot;
+  snapshotAfter: SshHostSnapshot;
+}
+/** SSH host/pattern deleted inside ProcMix. */
+export interface SshHostDeletedEvent extends HistoryEventBase {
+  kind: "sshHostDeleted";
+  hostKey: string;
+  hostName: string;
+  snapshotBefore: SshHostSnapshot;
+}
+/** SSH host/pattern that disappeared from disk (deleted outside ProcMix). */
+export interface SshHostDeletedExternallyEvent extends HistoryEventBase {
+  kind: "sshHostDeletedExternally";
+  hostKey: string;
+  hostName: string;
+  snapshotBefore: SshHostSnapshot;
+}
+
 export type HistoryEvent =
   | CommandCreatedEvent
   | CommandEditedEvent
@@ -248,7 +315,13 @@ export type HistoryEvent =
   | WorkflowEditedEvent
   | WorkflowDeletedEvent
   | WorkflowRunEvent
-  | ScheduledRunEvent;
+  | ScheduledRunEvent
+  | SshHostAddedEvent
+  | SshHostDiscoveredEvent
+  | SshHostEditedEvent
+  | SshHostEditedExternallyEvent
+  | SshHostDeletedEvent
+  | SshHostDeletedExternallyEvent;
 
 /**
  * Display name of the entity a history event acts on — the command name
@@ -273,6 +346,13 @@ export function historyEventSubjectName(event: HistoryEvent): string {
       return event.workflowName;
     case "scheduledRun":
       return event.scheduleName;
+    case "sshHostAdded":
+    case "sshHostDiscovered":
+    case "sshHostEdited":
+    case "sshHostEditedExternally":
+    case "sshHostDeleted":
+    case "sshHostDeletedExternally":
+      return event.hostName;
   }
 }
 
@@ -300,6 +380,13 @@ export function historyEventSubjectId(event: HistoryEvent): string {
       // `targetId`. Returning the schedule id keeps "does the subject
       // exist?" checks meaningful for scheduled runs.
       return event.scheduleId;
+    case "sshHostAdded":
+    case "sshHostDiscovered":
+    case "sshHostEdited":
+    case "sshHostEditedExternally":
+    case "sshHostDeleted":
+    case "sshHostDeletedExternally":
+      return event.hostKey;
   }
 }
 

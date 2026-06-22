@@ -57,6 +57,10 @@ pub fn run() {
         // setup hook once the DB pool exists; this holds the reload signal
         // the schedule commands pulse on every mutation.
         .manage(Arc::new(SchedulerState::new()))
+        // Shared SSH inventory baseline: the watcher diffs against it and the
+        // save/delete commands advance it to echo-suppress ProcMix's own
+        // writes (so they aren't logged as external changes).
+        .manage(Arc::new(crate::core::ssh::SshWatchState::new()))
         .setup(|app| {
             // Initialise the SQLite-backed command library. `setup` is a
             // synchronous Tauri hook, so we block_on the async pool
@@ -122,6 +126,12 @@ pub fn run() {
                 );
             }
 
+            // Start the SSH config watcher: polls ~/.ssh/config for changes
+            // made outside ProcMix (terminal/VS Code) and emits an event so
+            // the Connections tab auto-refreshes. Runs for the process
+            // lifetime; the manual Refresh button remains as a fallback.
+            crate::core::ssh::spawn_ssh_config_watch(app.handle().clone());
+
             crate::platform::tray::build_tray(app.handle())?;
 
             if let Some(main_window) = app.get_webview_window("main") {
@@ -185,6 +195,10 @@ pub fn run() {
             commands::get_user_env_with_sources,
             commands::get_root_env_with_sources,
             commands::open_windows_env_dialog,
+            commands::list_ssh_hosts,
+            commands::check_ssh_host,
+            commands::save_ssh_host,
+            commands::delete_ssh_host,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

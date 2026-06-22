@@ -23,6 +23,12 @@ import type {
   RunStatus,
   ScheduledRunStatus,
   ScheduleTargetKind,
+  SshHostAddedEvent,
+  SshHostDiscoveredEvent,
+  SshHostEditedEvent,
+  SshHostEditedExternallyEvent,
+  SshHostDeletedEvent,
+  SshHostDeletedExternallyEvent,
 } from "../types";
 import {
   type CommandRecord,
@@ -196,7 +202,16 @@ export type WireHistoryEvent =
   | WireWorkflowEdited
   | WireWorkflowDeleted
   | WireWorkflowRun
-  | WireScheduledRun;
+  | WireScheduledRun
+  // SSH events carry plain snapshots whose wire shape matches the UI shape
+  // (no Command/Workflow-record conversion), so we reuse the UI event types
+  // directly on the wire.
+  | SshHostAddedEvent
+  | SshHostDiscoveredEvent
+  | SshHostEditedEvent
+  | SshHostEditedExternallyEvent
+  | SshHostDeletedEvent
+  | SshHostDeletedExternallyEvent;
 
 interface WireHistoryPage {
   items: WireHistoryEvent[];
@@ -335,6 +350,15 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         output: w.output ?? undefined,
         result: w.result ?? undefined,
       };
+    case "sshHostAdded":
+    case "sshHostDiscovered":
+    case "sshHostEdited":
+    case "sshHostEditedExternally":
+    case "sshHostDeleted":
+    case "sshHostDeletedExternally":
+      // Wire shape equals UI shape (plain snapshots, `null` optionals match);
+      // pass through unchanged.
+      return w;
   }
 }
 
@@ -480,6 +504,16 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         ...(e.output !== undefined ? { output: e.output } : {}),
         ...(e.result !== undefined ? { result: e.result } : {}),
       };
+    case "sshHostAdded":
+    case "sshHostDiscovered":
+    case "sshHostEdited":
+    case "sshHostEditedExternally":
+    case "sshHostDeleted":
+    case "sshHostDeletedExternally":
+      // SSH history events are produced entirely on the backend (the save/
+      // delete commands and the config watcher) and are never written back
+      // from the frontend, so this conversion is unreachable for them.
+      throw new Error(`SSH history events are backend-only: ${e.kind}`);
   }
 }
 

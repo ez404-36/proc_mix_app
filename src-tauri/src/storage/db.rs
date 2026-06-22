@@ -55,6 +55,7 @@ pub async fn init_pool(db_path: PathBuf) -> Result<DbPool, String> {
     ensure_workflows_columns(&pool).await?;
     ensure_schedules_columns(&pool).await?;
     ensure_history_columns(&pool).await?;
+    ensure_ssh_host_meta_columns(&pool).await?;
 
     Ok(Arc::new(pool))
 }
@@ -173,6 +174,42 @@ async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
                 .execute(pool)
                 .await
                 .map_err(|e| format!("add column {col} to workflows: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `ssh_host_meta` table.
+///
+/// The table was introduced whole in v0.9.0, so on first release there are no
+/// missing columns to backfill — the migration list is intentionally empty.
+/// It exists now (rather than being added later) so future columns have an
+/// established, tested home that mirrors [`ensure_workflows_columns`]. The
+/// same `PRAGMA table_info` inspection guards idempotency once entries are
+/// added.
+async fn ensure_ssh_host_meta_columns(pool: &SqlitePool) -> Result<(), String> {
+    let rows = sqlx::query("PRAGMA table_info(ssh_host_meta)")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("inspect ssh_host_meta table: {e}"))?;
+
+    let existing: std::collections::HashSet<String> = rows
+        .into_iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .collect();
+
+    // (column_name, "ADD COLUMN …" fragment). Append future columns here.
+    // The SQL must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound —
+    // a runtime-built ALTER would also invite injection bugs. Empty for the
+    // v0.9.0 initial release; see the doc comment above.
+    let migrations: &[(&str, &'static str)] = &[];
+
+    for &(col, sql) in migrations {
+        if !existing.contains(col) {
+            sqlx::query(sql)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("add column {col} to ssh_host_meta: {e}"))?;
         }
     }
     Ok(())

@@ -29,6 +29,7 @@ import {
   TrashIcon,
 } from "../icons";
 import { ScheduledRunOutput } from "./ScheduledRunOutput";
+import { SshHostChangeDetail } from "./SshHostChangeDetail";
 
 /**
  * Color grouping for the action-icon column — drives the `--<group>` CSS
@@ -57,6 +58,15 @@ function actionGroup(kind: HistoryEvent["kind"]): ActionGroup {
       return "run";
     case "commandRestored":
       return "restore";
+    case "sshHostAdded":
+    case "sshHostDiscovered":
+      return "create";
+    case "sshHostEdited":
+    case "sshHostEditedExternally":
+      return "edit";
+    case "sshHostDeleted":
+    case "sshHostDeletedExternally":
+      return "delete";
   }
 }
 
@@ -83,6 +93,15 @@ function ActionIcon({ kind }: { kind: HistoryEvent["kind"] }): ReactElement {
     case "workflowRun":
     case "scheduledRun":
       return <RunIcon />;
+    case "sshHostAdded":
+    case "sshHostDiscovered":
+      return <PlusIcon />;
+    case "sshHostEdited":
+    case "sshHostEditedExternally":
+      return <EditIcon />;
+    case "sshHostDeleted":
+    case "sshHostDeletedExternally":
+      return <TrashIcon />;
   }
 }
 
@@ -106,13 +125,53 @@ function formatTimestamp(iso: string): string {
   return d.toLocaleString();
 }
 
+/** Kinds that carry an SSH snapshot we can inspect for `isPattern`. */
+type SshEventKind =
+  | "sshHostAdded"
+  | "sshHostDiscovered"
+  | "sshHostEdited"
+  | "sshHostEditedExternally"
+  | "sshHostDeleted"
+  | "sshHostDeletedExternally";
+
+function isSshEvent(
+  event: HistoryEvent,
+): event is Extract<HistoryEvent, { kind: SshEventKind }> {
+  return event.kind.startsWith("sshHost");
+}
+
+/**
+ * Whether an SSH history event concerns a wildcard/pattern block (a "rule")
+ * rather than a concrete connection. Read from whichever snapshot the variant
+ * carries (`snapshotAfter` for add/edit/discover, `snapshotBefore` for delete).
+ */
+function sshEventIsPattern(
+  event: Extract<HistoryEvent, { kind: SshEventKind }>,
+): boolean {
+  switch (event.kind) {
+    case "sshHostAdded":
+    case "sshHostDiscovered":
+      return event.snapshotAfter.isPattern;
+    case "sshHostEdited":
+    case "sshHostEditedExternally":
+      return event.snapshotAfter.isPattern;
+    case "sshHostDeleted":
+    case "sshHostDeletedExternally":
+      return event.snapshotBefore.isPattern;
+  }
+}
+
 /**
  * Build the human-readable kind label used in the row title.
  * Translation keys live under `history.kinds.<kind>` and accept a
- * `{{name}}` interpolation.
+ * `{{name}}` interpolation. SSH events that concern a PATTERN use a `_pattern`
+ * key variant so the sentence reads "rule" instead of "connection".
  */
-function kindKey(event: HistoryEvent): `history.kinds.${HistoryEvent["kind"]}` {
-  return `history.kinds.${event.kind}` as const;
+function kindKey(event: HistoryEvent): string {
+  if (isSshEvent(event) && sshEventIsPattern(event)) {
+    return `history.kinds.${event.kind}_pattern`;
+  }
+  return `history.kinds.${event.kind}`;
 }
 
 export function HistoryRow({
@@ -123,6 +182,7 @@ export function HistoryRow({
   const { t } = useTranslation();
   const undoEdit = useHistoryStore((s) => s.undoEdit);
   const restoreDeleted = useHistoryStore((s) => s.restoreDeleted);
+  const undoSshEdit = useHistoryStore((s) => s.undoSshEdit);
   // Subscribe to *just* the existence boolean — using a selector that
   // returns a primitive prevents re-rendering when unrelated commands
   // change. The Zustand store re-runs the selector on every update;
@@ -134,6 +194,12 @@ export function HistoryRow({
 
   const showUndo = event.kind === "commandEdited" && commandExists;
   const showRestore = event.kind === "commandDeleted" && !commandExists;
+  // SSH edits (in ProcMix or external) can be reverted by re-writing the
+  // prior snapshot, but only when its source is writable (OpenSSH user config).
+  const showSshUndo =
+    (event.kind === "sshHostEdited" ||
+      event.kind === "sshHostEditedExternally") &&
+    event.snapshotBefore.source === "open-ssh-config";
 
   // Per-row run-status badge for `commandRun` events.
   let runStatusBadge: ReactElement | null = null;
@@ -233,6 +299,15 @@ export function HistoryRow({
           {t("history.restoreBtn")}
         </button>
       )}
+      {showSshUndo && (
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => void undoSshEdit(event.id)}
+        >
+          {t("history.undoBtn")}
+        </button>
+      )}
       <time
         className="history-row__timestamp"
         dateTime={event.createdAt}
@@ -278,6 +353,32 @@ export function HistoryRow({
           <ScheduledRunOutput
             output={runDetail.output}
             result={runDetail.result}
+          />
+        </details>
+      </li>
+    );
+  }
+
+  // SSH edit rows (ProcMix or external) are expandable, revealing the
+  // `Field: old > new` change list (and the new block if the raw text changed).
+  if (
+    event.kind === "sshHostEdited" ||
+    event.kind === "sshHostEditedExternally"
+  ) {
+    return (
+      <li className="history-row history-row--scheduled history-row--selectable">
+        {selectBox}
+        <details className="history-row__disclosure">
+          <summary className="history-row__summary">
+            <div className="history-row__main">
+              {icon}
+              {title}
+            </div>
+            {meta}
+          </summary>
+          <SshHostChangeDetail
+            before={event.snapshotBefore}
+            after={event.snapshotAfter}
           />
         </details>
       </li>

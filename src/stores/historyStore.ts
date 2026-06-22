@@ -26,6 +26,17 @@ import type {
   HistoryLogLine,
   RunStatus,
 } from "../types";
+import type { SshHostDraft, SshSource } from "../types/sshHost";
+import { saveSshHost } from "../services/sshConnectionService";
+
+/** The SSH source tokens ProcMix can write back. Used to validate the
+ *  `source` string a history snapshot carries before treating it as a
+ *  `SshSource` (avoids a blind `as` cast). */
+const WRITABLE_SOURCES: readonly SshSource[] = ["open-ssh-config"];
+
+function toWritableSource(source: string): SshSource | null {
+  return WRITABLE_SOURCES.find((s) => s === source) ?? null;
+}
 import {
   upsertCommandInDb,
 } from "../utils/commandRepository";
@@ -137,6 +148,13 @@ interface HistoryState {
   deleteSelected: () => Promise<void>;
   undoEdit: (eventId: string) => Promise<void>;
   restoreDeleted: (eventId: string) => Promise<void>;
+  /**
+   * Revert an SSH `edited` / `editedExternally` event by re-writing the
+   * `snapshotBefore` state back to `~/.ssh/config` via `saveSshHost`. The
+   * backend logs this as a fresh `sshHostEdited` event (the audit trail of the
+   * undo). Best-effort; surfaces a toast on failure.
+   */
+  undoSshEdit: (eventId: string) => Promise<void>;
   /**
    * Clear history. With no argument (or the `all` range) the whole table is
    * dropped; with a bounded range only rows older than its cutoff are
@@ -409,6 +427,66 @@ export const useHistoryStore = create<HistoryState>()((set, get) => ({
       const msg = err instanceof Error ? err.message : String(err);
       Message.error(
         `${i18n.t("history.restoreFailed", { defaultValue: "Restore failed" })}: ${msg}`,
+      );
+    }
+  },
+  undoSshEdit: async (eventId) => {
+    let source: HistoryEvent | null;
+    try {
+      source = await getHistoryEventFromDb(eventId);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Message.error(
+        `${i18n.t("history.undoFailed", { defaultValue: "Undo failed" })}: ${msg}`,
+      );
+      return;
+    }
+    if (
+      source === null ||
+      (source.kind !== "sshHostEdited" &&
+        source.kind !== "sshHostEditedExternally")
+    ) {
+      Message.error(
+        i18n.t("history.undoMissing", {
+          defaultValue: "Original edit event is no longer available",
+        }),
+      );
+      void get().load();
+      return;
+    }
+    const before = source.snapshotBefore;
+    const writableSource = toWritableSource(before.source);
+    if (writableSource === null) {
+      // Only OpenSSH user-config is writable; a snapshot from a read-only
+      // source (system config) can't be reverted.
+      Message.error(
+        i18n.t("history.ssh.undoReadOnly", {
+          defaultValue: "This connection's source is read-only.",
+        }),
+      );
+      return;
+    }
+    // Re-write the prior state. The backend records this as a fresh
+    // sshHostEdited event (the undo's audit trail) and updates the watcher
+    // baseline (echo-suppression).
+    const draft: SshHostDraft = {
+      name: before.name,
+      previousName: null,
+      hostName: before.hostName,
+      user: before.user,
+      port: before.port,
+      identityFile: before.identityFile,
+    };
+    try {
+      await saveSshHost(writableSource, draft);
+      Message.success(
+        i18n.t("history.ssh.undoSuccess", { defaultValue: "Change reverted" }),
+      );
+      void get().load();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Message.error(
+        `${i18n.t("history.undoFailed", { defaultValue: "Undo failed" })}: ${msg}`,
       );
     }
   },

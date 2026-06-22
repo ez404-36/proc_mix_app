@@ -14,7 +14,7 @@ import { DatePicker } from "../DatePicker/DatePicker";
  * This prevents duplicate chip labels (e.g. three separate "Запуск" chips).
  */
 const KIND_GROUPS: ReadonlyArray<{
-  labelKey: `history.kindLabels.${HistoryEventKind}`;
+  labelKey: `history.kindLabels.${HistoryEventKind | "ssh"}`;
   kinds: ReadonlyArray<HistoryEventKind>;
 }> = [
   { labelKey: "history.kindLabels.commandCreated",  kinds: ["commandCreated", "workflowCreated"] },
@@ -23,6 +23,17 @@ const KIND_GROUPS: ReadonlyArray<{
   { labelKey: "history.kindLabels.commandRun",      kinds: ["commandRun", "workflowRun", "scheduledRun"] },
   { labelKey: "history.kindLabels.commandRestored", kinds: ["commandRestored"] },
   { labelKey: "history.kindLabels.commandReverted", kinds: ["commandReverted"] },
+  {
+    labelKey: "history.kindLabels.ssh",
+    kinds: [
+      "sshHostAdded",
+      "sshHostDiscovered",
+      "sshHostEdited",
+      "sshHostEditedExternally",
+      "sshHostDeleted",
+      "sshHostDeletedExternally",
+    ],
+  },
 ];
 
 /**

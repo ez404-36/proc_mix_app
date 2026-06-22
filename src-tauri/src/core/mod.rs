@@ -10,6 +10,7 @@ pub mod redact;
 pub mod scheduler;
 pub mod scope_tracker;
 pub mod shells;
+pub mod ssh;
 pub mod utility_help;
 pub mod workflow;
 pub mod workflow_condition;

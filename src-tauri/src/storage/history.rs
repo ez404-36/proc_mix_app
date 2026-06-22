@@ -279,6 +279,85 @@ pub enum HistoryEventPayload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result: Option<HistoryExtractedResult>,
     },
+
+    // ----- SSH connection events (v0.10.0) ----------------------------------
+    //
+    // Track create/edit/delete of SSH hosts and patterns, distinguishing
+    // changes made INSIDE ProcMix (`...Added`/`...Edited`/`...Deleted`) from
+    // ones detected OUTSIDE ProcMix by the config watcher
+    // (`...Discovered`/`...EditedExternally`/`...DeletedExternally`). A rename
+    // is recorded as a delete of the old name + an add of the new one — both
+    // for ProcMix actions and for external diffs (see `core::ssh::history`).
+    //
+    // These carry no command/workflow/schedule id, so the denormalised id
+    // columns stay NULL; `command_name` (the generic "subject name" column)
+    // holds the host key so the name filter still works.
+    /// A host/pattern created inside ProcMix.
+    #[serde(rename_all = "camelCase")]
+    SshHostAdded {
+        host_key: String,
+        host_name: String,
+        snapshot_after: SshHostSnapshot,
+    },
+    /// A host/pattern first seen on disk (created outside ProcMix).
+    #[serde(rename_all = "camelCase")]
+    SshHostDiscovered {
+        host_key: String,
+        host_name: String,
+        snapshot_after: SshHostSnapshot,
+    },
+    /// A host/pattern edited inside ProcMix.
+    #[serde(rename_all = "camelCase")]
+    SshHostEdited {
+        host_key: String,
+        host_name: String,
+        snapshot_before: SshHostSnapshot,
+        snapshot_after: SshHostSnapshot,
+    },
+    /// A host/pattern whose on-disk definition changed outside ProcMix.
+    #[serde(rename_all = "camelCase")]
+    SshHostEditedExternally {
+        host_key: String,
+        host_name: String,
+        snapshot_before: SshHostSnapshot,
+        snapshot_after: SshHostSnapshot,
+    },
+    /// A host/pattern deleted inside ProcMix.
+    #[serde(rename_all = "camelCase")]
+    SshHostDeleted {
+        host_key: String,
+        host_name: String,
+        snapshot_before: SshHostSnapshot,
+    },
+    /// A host/pattern that disappeared from disk (deleted outside ProcMix).
+    #[serde(rename_all = "camelCase")]
+    SshHostDeletedExternally {
+        host_key: String,
+        host_name: String,
+        snapshot_before: SshHostSnapshot,
+    },
+}
+
+/// Compact snapshot of an SSH host/pattern stored with a history event.
+/// Carries the modelled fields plus the source and the raw block text, so the
+/// history view can show what changed without re-reading the config. Mirrors
+/// the TS `SshHostSnapshot` in `src/types/history.ts`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshHostSnapshot {
+    /// Composite `"<source>:<name>"` key.
+    pub host_key: String,
+    pub name: String,
+    /// Source token (`"open-ssh-config"`, `"system-config"`, …).
+    pub source: String,
+    pub host_name: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub identity_file: Option<String>,
+    /// `true` when the name is a wildcard/pattern (`*`, `?`, leading `!`).
+    pub is_pattern: bool,
+    /// The block's raw text exactly as in the file.
+    pub raw_text: String,
 }
 
 impl HistoryEventPayload {
@@ -299,6 +378,12 @@ impl HistoryEventPayload {
             HistoryEventPayload::WorkflowDeleted { .. } => "workflowDeleted",
             HistoryEventPayload::WorkflowRun { .. } => "workflowRun",
             HistoryEventPayload::ScheduledRun { .. } => "scheduledRun",
+            HistoryEventPayload::SshHostAdded { .. } => "sshHostAdded",
+            HistoryEventPayload::SshHostDiscovered { .. } => "sshHostDiscovered",
+            HistoryEventPayload::SshHostEdited { .. } => "sshHostEdited",
+            HistoryEventPayload::SshHostEditedExternally { .. } => "sshHostEditedExternally",
+            HistoryEventPayload::SshHostDeleted { .. } => "sshHostDeleted",
+            HistoryEventPayload::SshHostDeletedExternally { .. } => "sshHostDeletedExternally",
         }
     }
 
@@ -319,7 +404,13 @@ impl HistoryEventPayload {
             | HistoryEventPayload::WorkflowEdited { .. }
             | HistoryEventPayload::WorkflowDeleted { .. }
             | HistoryEventPayload::WorkflowRun { .. }
-            | HistoryEventPayload::ScheduledRun { .. } => None,
+            | HistoryEventPayload::ScheduledRun { .. }
+            | HistoryEventPayload::SshHostAdded { .. }
+            | HistoryEventPayload::SshHostDiscovered { .. }
+            | HistoryEventPayload::SshHostEdited { .. }
+            | HistoryEventPayload::SshHostEditedExternally { .. }
+            | HistoryEventPayload::SshHostDeleted { .. }
+            | HistoryEventPayload::SshHostDeletedExternally { .. } => None,
         }
     }
 
@@ -367,6 +458,12 @@ impl HistoryEventPayload {
             | HistoryEventPayload::WorkflowDeleted { workflow_name, .. }
             | HistoryEventPayload::WorkflowRun { workflow_name, .. } => workflow_name,
             HistoryEventPayload::ScheduledRun { schedule_name, .. } => schedule_name,
+            HistoryEventPayload::SshHostAdded { host_name, .. }
+            | HistoryEventPayload::SshHostDiscovered { host_name, .. }
+            | HistoryEventPayload::SshHostEdited { host_name, .. }
+            | HistoryEventPayload::SshHostEditedExternally { host_name, .. }
+            | HistoryEventPayload::SshHostDeleted { host_name, .. }
+            | HistoryEventPayload::SshHostDeletedExternally { host_name, .. } => host_name,
         }
     }
 
@@ -488,6 +585,12 @@ pub fn allowed_kinds() -> HashSet<&'static str> {
         "workflowDeleted",
         "workflowRun",
         "scheduledRun",
+        "sshHostAdded",
+        "sshHostDiscovered",
+        "sshHostEdited",
+        "sshHostEditedExternally",
+        "sshHostDeleted",
+        "sshHostDeletedExternally",
     ]
     .into_iter()
     .collect()

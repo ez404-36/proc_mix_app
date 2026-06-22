@@ -1040,7 +1040,14 @@
       "workflowEdited": "Редактирование",
       "workflowDeleted": "Удаление",
       "workflowRun": "Запуск",
-      "scheduledRun": "Запуск"
+      "scheduledRun": "Запуск",
+      "sshHostAdded": "Добавление подключения",
+      "sshHostDiscovered": "Обнаружение подключения",
+      "sshHostEdited": "Изменение подключения",
+      "sshHostEditedExternally": "Внешнее изменение",
+      "sshHostDeleted": "Удаление подключения",
+      "sshHostDeletedExternally": "Внешнее удаление",
+      "ssh": "SSH-подключения"
     },
     "kinds": {
       "commandCreated": "Создана команда «{{name}}»",
@@ -1053,7 +1060,25 @@
       "workflowEdited": "Отредактирован сценарий «{{name}}»",
       "workflowDeleted": "Удалён сценарий «{{name}}»",
       "workflowRun": "Запущен сценарий «{{name}}»",
-      "scheduledRun": "Запуск по расписанию «{{name}}»"
+      "scheduledRun": "Запуск по расписанию «{{name}}»",
+      "sshHostAdded": "Добавлено SSH-подключение «{{name}}»",
+      "sshHostDiscovered": "Обнаружено SSH-подключение «{{name}}» (создано вне ProcMix)",
+      "sshHostEdited": "Изменено SSH-подключение «{{name}}»",
+      "sshHostEditedExternally": "SSH-подключение «{{name}}» изменено вне ProcMix",
+      "sshHostDeleted": "Удалено SSH-подключение «{{name}}»",
+      "sshHostDeletedExternally": "SSH-подключение «{{name}}» удалено вне ProcMix",
+      "sshHostAdded_pattern": "Добавлено SSH-правило «{{name}}»",
+      "sshHostDiscovered_pattern": "Обнаружено SSH-правило «{{name}}» (создано вне ProcMix)",
+      "sshHostEdited_pattern": "Изменено SSH-правило «{{name}}»",
+      "sshHostEditedExternally_pattern": "SSH-правило «{{name}}» изменено вне ProcMix",
+      "sshHostDeleted_pattern": "Удалено SSH-правило «{{name}}»",
+      "sshHostDeletedExternally_pattern": "SSH-правило «{{name}}» удалено вне ProcMix"
+    },
+    "ssh": {
+      "noModelledFieldChanges": "Стандартные поля не изменились.",
+      "fullBlock": "Полный блок (новый)",
+      "undoSuccess": "Изменение отменено",
+      "undoReadOnly": "Источник этого подключения доступен только для чтения."
     },
     "runStatus": {
       "running": "Выполняется…",
@@ -1075,7 +1100,7 @@
   },
   "envManager": {
     "title": "Окружение",
-    "subtitle": "Переменные окружения текущего процесса с указанием источника. На вкладке «Root» — переменные, видимые командам, запускаемым с правами администратора.",
+    "subtitle": "Системные переменные окружения и сохранённые SSH-подключения в режиме просмотра. Вкладка «Системные переменные» показывает окружение процесса с определением источника; вкладка «Подключения» — SSH-хосты из ~/.ssh/config.",
     "showValue": "Показать значение",
     "hideValue": "Скрыть значение",
     "searchPlaceholder": "Фильтр по имени или значению…",
@@ -1092,6 +1117,48 @@
     "sourceMultiple": "{{count}} файла",
     "tabUser": "Пользователь",
     "tabRoot": "Root",
+    "sectionTabs": {
+      "systemVars": "Системные переменные",
+      "connections": "Подключения"
+    },
+    "ssh": {
+      "refresh": "Обновить",
+      "check": "Проверить",
+      "checking": "Проверка…",
+      "reachable": "доступен",
+      "unreachable": "недоступен",
+      "notChecked": "не проверялось",
+      "managedManually": "управляется вручную",
+      "empty": "SSH-подключения не найдены. Подключения читаются из ~/.ssh/config.",
+      "loadError": "Не удалось загрузить SSH-подключения: {{message}}",
+      "sourceError": "{{source}}: {{message}}",
+      "newConnection": "Новое подключение",
+      "deleteTitle": "Удалить подключение",
+      "deleteConfirm": "Удалить «{{name}}» из ~/.ssh/config?",
+      "patternsTitle": "Правила и шаблоны ({{count}})",
+      "patternsHint": "Блоки-паттерны применяются к группам хостов. Это не подключения; их изменение меняет настройки для всей группы.",
+      "newRule": "Новое правило",
+      "view": {
+        "action": "Просмотр",
+        "source": "Источник",
+        "notSet": "—",
+        "rawTitle": "Полный блок (как в файле)"
+      },
+      "form": {
+        "createTitle": "Новое подключение",
+        "editTitle": "Редактирование подключения",
+        "aliasInvalid": "Допустимы буквы, цифры и . _ - : @ * ? (без дефиса в начале).",
+        "hostNamePlaceholder": "например, 203.0.113.10 или host.example.com",
+        "portInvalid": "Порт должен быть 1–65535.",
+        "renameWarning": "Смена имени паттерна переназначает эти настройки на другую группу хостов."
+      },
+      "source": {
+        "open-ssh-config": "OpenSSH",
+        "putty": "PuTTY",
+        "wsl": "WSL",
+        "system-config": "Система"
+      }
+    },
     "userLoadFailed": "Не удалось загрузить переменные окружения.",
     "rootNoPassword": "Для просмотра окружения root требуется пароль администратора.",
     "rootEnterPassword": "Ввести пароль администратора…",
