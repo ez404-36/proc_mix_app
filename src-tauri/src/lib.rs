@@ -201,6 +201,9 @@ pub fn run() {
             commands::check_ssh_host,
             commands::save_ssh_host,
             commands::delete_ssh_host,
+            commands::has_ssh_password,
+            commands::set_ssh_password,
+            commands::clear_ssh_password,
         ])
         // Build (not `run`) so we can observe `RunEvent`s. The exit hook below
         // needs `app` and the managed `ExecutorState` to tear running children
