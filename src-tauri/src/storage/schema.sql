@@ -53,7 +53,12 @@ CREATE TABLE IF NOT EXISTS commands (
   -- Owning workflow id for a 'local'-scoped command (NULL for globals). When
   -- the owning workflow is deleted, its local commands are cascade-deleted
   -- (see storage/commands.rs::delete_local_for_workflow). Added in v0.7.1.
-  workflow_id     TEXT
+  workflow_id     TEXT,
+  -- Where the command runs: JSON-encoded ExecutionTarget
+  -- ({"kind":"local"} / {"kind":"remote","alias":...} / {"kind":"remotePrompt"}).
+  -- NULL means local (legacy rows / commands that never set a target). Added
+  -- in v0.9.1; see docs/ssh-remote-execution.md and core::executor::ExecutionTarget.
+  target          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_commands_favorite ON commands(favorite);

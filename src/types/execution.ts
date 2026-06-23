@@ -163,6 +163,14 @@ export interface Execution {
    * in that case we render a generic "shell" label.
    */
   shell?: string;
+  /**
+   * Where this run executed. Absent (or `{ kind: 'local' }`) for a local run;
+   * `{ kind: 'remote', alias }` when the command ran over SSH. Captured at
+   * execution start so the console can show a "Remote: <alias>" badge. Never
+   * `remotePrompt` here — the runner resolves that to a concrete host before
+   * starting the run.
+   */
+  target?: import("./command").ExecutionTarget;
   status: ExecutionStatus;
   startedAt: number;
   finishedAt?: number;

@@ -162,11 +162,8 @@ export function WorkflowMetaModal({
   };
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onClose();
-      return;
-    }
+    // Cmd/Ctrl+Enter saves. Escape intentionally does NOT close the modal —
+    // it closes only via an explicit button or a backdrop click.
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       handleSave();

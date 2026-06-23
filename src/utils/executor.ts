@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Command,
   ExecutionEvent,
+  ExecutionTarget,
   OutputSchema,
   VariableSpec,
 } from "../types";
@@ -54,6 +55,25 @@ export interface RunOptions {
    * the JS type contract is intentionally stricter.
    */
   variableValues: Record<string, string>;
+  /**
+   * Per-invocation override for the execution target. When set, this wins
+   * over `cmd.target` — used by the "choose host at run time" flow, where
+   * `triggerCommandRun` resolves a `{ kind: "remotePrompt" }` command target
+   * into a concrete `{ kind: "remote", alias }` and forwards it here. When
+   * omitted, `cmd.target` is used (defaulting to local).
+   *
+   * MUST already be resolved to `local` or `remote` — a `remotePrompt` value
+   * is a caller bug (the backend rejects it with `REMOTE_TARGET_UNRESOLVED`).
+   */
+  target?: ExecutionTarget;
+  /**
+   * One-shot SSH password for a remote run whose host needs password auth —
+   * the result of the run-time password prompt (`triggerCommandRun` collects
+   * it before invoking). Forwarded verbatim across IPC for a single run; the
+   * caller MUST NOT persist it. Ignored unless the resolved target is remote.
+   * A blank string is treated as absent.
+   */
+  sshPassword?: string;
 }
 
 interface ExecuteRequestPayload {
@@ -107,6 +127,24 @@ interface ExecuteRequestPayload {
    * byte-identical for commands without output parsing.
    */
   outputSchema?: OutputSchema;
+  /**
+   * Mirrors `ExecuteRequest.target` on the Rust side. Omitted from the
+   * payload when the run is local (the Rust field defaults to `Local`), so a
+   * local run's wire shape stays byte-identical to the pre-feature payload.
+   * A `{ kind: "remote", alias }` routes the spawn through the system `ssh`
+   * binary. `{ kind: "remotePrompt" }` is NEVER sent — `triggerCommandRun`
+   * resolves it to a concrete remote target before invoking.
+   */
+  target?: ExecutionTarget;
+  /**
+   * Mirrors `ExecuteRequest.ssh_password` on the Rust side: the one-shot
+   * password for a remote run whose host needs password auth. Omitted unless
+   * the run is remote AND a password was entered, so a key-auth remote run and
+   * every local run stay byte-identical on the wire. The backend parks it in a
+   * throwaway keychain entry and hands `ssh` only an opaque run-id — the value
+   * never reaches `ssh`'s argv/env. Never persisted; re-run prompts again.
+   */
+  sshPassword?: string;
 }
 
 function buildEnv(
@@ -140,8 +178,30 @@ export async function runCommand(
   // the keychain password on stdin; the now-root inner `sudo` no longer
   // prompts. The CommandForm checkbox auto-detect (useAdminEscalation)
   // only covers the editing surface — this covers direct runs.
+  // Resolve the execution target at the same boundary as elevation: a
+  // per-run override (`opts.target`, the "choose host at run time" result)
+  // wins over the persisted `cmd.target`, which defaults to local. A
+  // `remotePrompt` here is a caller bug — `triggerCommandRun` is responsible
+  // for resolving it before this point — so we treat it as local rather than
+  // sending a value the backend rejects; the run-path guards against it too.
+  const resolvedTarget: ExecutionTarget = opts.target ??
+    cmd.target ?? { kind: "local" };
+  const isRemote = resolvedTarget.kind === "remote";
+
+  // One-shot SSH password (run-time prompt result) only applies to a remote
+  // run. A blank string is treated as absent. Never sent for a local run.
+  const sshPassword =
+    isRemote && opts.sshPassword && opts.sshPassword.trim() !== ""
+      ? opts.sshPassword
+      : undefined;
+
+  // Remote runs cannot be elevated in this version (local sudo/UAC does not
+  // map onto a remote host). Drop elevation for a remote target so we never
+  // send a payload the backend would reject with REMOTE_ELEVATION_UNSUPPORTED;
+  // the form also disables the toggle, this is defence in depth.
   const elevated =
-    opts.elevated ?? (cmd.runAsAdmin || detectAdminEscalation(cmd.script));
+    !isRemote &&
+    (opts.elevated ?? (cmd.runAsAdmin || detectAdminEscalation(cmd.script)));
   // The one-shot password is only meaningful when the run is actually
   // elevated. We deliberately drop it otherwise so a stale value can't
   // leak into a non-admin payload — defence in depth against a future
@@ -176,6 +236,14 @@ export async function runCommand(
     ...(variableValues ? { variableValues } : {}),
     ...(cmd.timeoutSeconds !== undefined ? { timeoutSeconds: cmd.timeoutSeconds } : {}),
     ...(cmd.outputSchema !== undefined ? { outputSchema: cmd.outputSchema } : {}),
+    // Only include the target when it is remote — a local run omits it so the
+    // payload stays byte-identical to the pre-feature wire shape (the Rust
+    // field defaults to local).
+    ...(isRemote ? { target: resolvedTarget } : {}),
+    // Only include the one-shot SSH password for a remote run that supplied
+    // one; omitted otherwise so key-auth remote and local runs stay
+    // byte-identical on the wire.
+    ...(sshPassword ? { sshPassword } : {}),
   };
   return invoke<string>("execute_command", { req });
 }

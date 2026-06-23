@@ -76,12 +76,13 @@ describe("ConfirmDialog", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("calls onCancel when Escape is pressed", () => {
-    const { onCancel } = renderDialog();
+  it("does NOT close when Escape is pressed", () => {
+    const { onCancel, onConfirm } = renderDialog();
     act(() => {
       fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     });
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it("calls onCancel when the backdrop is clicked", () => {

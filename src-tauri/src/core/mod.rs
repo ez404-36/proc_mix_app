@@ -9,6 +9,7 @@ pub mod parser;
 pub mod redact;
 pub mod scheduler;
 pub mod scope_tracker;
+pub mod sftp;
 pub mod shells;
 pub mod ssh;
 pub mod utility_help;

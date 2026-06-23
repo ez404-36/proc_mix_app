@@ -813,10 +813,42 @@
       "adminPasswordWillAsk": "При первом запуске будет запрошен пароль администратора."
     },
     "hints": {
-      "runAsAdminAutoDetected": "В начале скрипта обнаружен sudo/doas/pkexec. Режим администратора обязателен и не может быть отключён, пока не удалить эту команду из начала скрипта."
+      "runAsAdminAutoDetected": "В начале скрипта обнаружен sudo/doas/pkexec. Режим администратора обязателен и не может быть отключён, пока не удалить эту команду из начала скрипта.",
+      "runAsAdminRemote": "Запуск от имени администратора недоступен для удалённых команд."
     },
     "tooltips": {
-      "runAsAdminAutoDetected": "В начале скрипта обнаружен sudo/doas/pkexec — режим администратора обязателен."
+      "runAsAdminAutoDetected": "В начале скрипта обнаружен sudo/doas/pkexec — режим администратора обязателен.",
+      "runAsAdminRemote": "Запуск от имени администратора недоступен для удалённых команд."
+    },
+    "target": {
+      "label": "Где выполнять",
+      "local": "Локально",
+      "remote": "Удалённый хост",
+      "prompt": "Указать при запуске",
+      "host": "SSH-хост",
+      "hostUnavailableSuffix": "(нет в подключениях)",
+      "check": "Проверить",
+      "checking": "Проверка…",
+      "reachable": "Хост доступен",
+      "unreachable": "Хост недоступен: {{message}}",
+      "noHosts": "SSH-подключения не найдены. Добавьте в разделе «Окружение» → «Подключения».",
+      "remoteLimitations": "Удалённые запуски игнорируют рабочую директорию и переменные окружения, не могут запускаться от администратора и используют POSIX-шелл (sh) на хосте.",
+      "promptSshPassword": "Запрашивать пароль при запуске",
+      "promptSshPasswordHint": "Пароль SSH будет запрашиваться перед каждым запуском. Он используется один раз и не сохраняется — для повторных запусков рекомендуются SSH-ключи. (Только Unix.)",
+      "sshPasswordLabel": "Сохранённый пароль SSH",
+      "sshPasswordInputLabel": "Пароль SSH для {{alias}}",
+      "sshPasswordSet": "Задать пароль…",
+      "sshPasswordChange": "Изменить…",
+      "sshPasswordSave": "Сохранить",
+      "sshPasswordCancel": "Отмена",
+      "sshPasswordClear": "Очистить",
+      "sshPasswordStatusSaved": "Сохранён ✓",
+      "sshPasswordStatusNone": "Не сохранён — будут использованы ключи/агент.",
+      "sshPasswordSaved": "Пароль SSH сохранён",
+      "sshPasswordSaveError": "Не удалось сохранить пароль SSH",
+      "sshPasswordCleared": "Пароль SSH очищен",
+      "sshPasswordClearError": "Не удалось очистить пароль SSH",
+      "sshPasswordHint": "Хранится в системном хранилище ключей для этого хоста, чтобы запуск можно было выполнять без участия пользователя. Предпочтительны SSH-ключи; пароль — запасной вариант. (Только Unix.)"
     },
     "scriptEditor": {
       "insertVariable": "Вставить переменную"
@@ -851,6 +883,10 @@
     "defaultValue": "По умолчанию: {{value}}",
     "sensitiveValue": "Секретное — значение скрыто"
   },
+  "commandTarget": {
+    "badgeRemote": "Удалённо: {{alias}}",
+    "badgePrompt": "Удалённо (указать при запуске)"
+  },
   "seeds": {
     "listHomeDir": {
       "name": "Список домашней директории",
@@ -879,7 +915,13 @@
   "runCommand": {
     "adminPasswordSaveFailed": "Не удалось сохранить пароль администратора",
     "adminPasswordRejected": "Неверный пароль администратора — попробуйте ещё раз",
-    "inlineEscalationHint": "Эта команда вызывает sudo внутри, но запускается без прав администратора. Переместите sudo в начало скрипта или включите «Запускать от имени администратора»."
+    "inlineEscalationHint": "Эта команда вызывает sudo внутри, но запускается без прав администратора. Переместите sudo в начало скрипта или включите «Запускать от имени администратора».",
+    "remote": {
+      "invalidHost": "Недопустимый SSH-хост «{{alias}}»",
+      "elevationUnsupported": "«Запускать от имени администратора» недоступно для удалённых команд",
+      "targetUnresolved": "Не выбран удалённый хост для запуска",
+      "passwordBackend": "Не удалось безопасно сохранить пароль SSH"
+    }
   },
   "variablePrompt": {
     "title": "Введите значения переменных",
@@ -891,6 +933,22 @@
     "label": "Директория",
     "hint": "Оставьте пустым, чтобы использовать значение по умолчанию (домашняя директория).",
     "placeholder": "например, /home/user/project",
+    "submit": "Запустить",
+    "cancel": "Отмена"
+  },
+  "remoteHostPrompt": {
+    "title": "Выберите удалённый хост",
+    "label": "SSH-хост",
+    "noHosts": "SSH-подключения не найдены. Добавьте в разделе «Окружение» → «Подключения».",
+    "submit": "Запустить",
+    "cancel": "Отмена"
+  },
+  "sshPasswordPrompt": {
+    "title": "Пароль SSH для «{{alias}}»",
+    "label": "Пароль",
+    "hint": "Используется только для этого запуска и не сохраняется. Для повторных запусков рекомендуются SSH-ключи.",
+    "reveal": "Показать",
+    "hide": "Скрыть",
     "submit": "Запустить",
     "cancel": "Отмена"
   },
@@ -1150,14 +1208,28 @@
         "aliasInvalid": "Допустимы буквы, цифры и . _ - : @ * ? (без дефиса в начале).",
         "hostNamePlaceholder": "например, 203.0.113.10 или host.example.com",
         "portInvalid": "Порт должен быть 1–65535.",
-        "renameWarning": "Смена имени паттерна переназначает эти настройки на другую группу хостов."
+        "renameWarning": "Смена имени паттерна переназначает эти настройки на другую группу хостов.",
+        "sshPasswordLabel": "Сохранённый пароль",
+        "sshPasswordInputLabel": "Пароль SSH для {{alias}}",
+        "sshPasswordSet": "Задать пароль…",
+        "sshPasswordChange": "Изменить…",
+        "sshPasswordSave": "Сохранить пароль",
+        "sshPasswordClear": "Очистить",
+        "sshPasswordStatusSaved": "Сохранён ✓",
+        "sshPasswordStatusNone": "Не сохранён — будут использованы ключи/агент.",
+        "sshPasswordSaved": "Пароль SSH сохранён",
+        "sshPasswordSaveError": "Не удалось сохранить пароль SSH",
+        "sshPasswordCleared": "Пароль SSH очищен",
+        "sshPasswordClearError": "Не удалось очистить пароль SSH",
+        "sshPasswordHint": "Хранится в системном хранилище ключей для этого хоста, чтобы подключения (запуск и передача файлов) проходили без запроса пароля. Предпочтительны SSH-ключи; пароль — запасной вариант. (Только Unix.)"
       },
       "source": {
         "open-ssh-config": "OpenSSH",
         "putty": "PuTTY",
         "wsl": "WSL",
         "system-config": "Система"
-      }
+      },
+      "openFiles": "Открыть файлы"
     },
     "userLoadFailed": "Не удалось загрузить переменные окружения.",
     "rootNoPassword": "Для просмотра окружения root требуется пароль администратора.",
@@ -1216,5 +1288,44 @@
     "dismissBuilder": "Закрыть конструктор",
     "useShortFlag": "краткий вариант",
     "flagSearchPlaceholder": "Поиск флага…"
+  },
+  "sftp": {
+    "title": "Файлы — {{alias}}",
+    "localhost": "localhost",
+    "pathLabel": "Текущий путь (Enter — перейти)",
+    "pathSuggestLabel": "Папки",
+    "showHidden": "Показать скрытые",
+    "showHiddenHint": "Скрытых элементов: {{count}}",
+    "dragCopyBadge": "Копирование",
+    "dropHere": "Скопировать сюда",
+    "dropToFolder": "Скопировать в эту папку",
+    "log": {
+      "toggle": "История передач",
+      "title": "Передачи",
+      "clear": "Очистить историю",
+      "failed": "Ошибка",
+      "summaryOk": "Передано: {{ok}}",
+      "summaryErrors": "Успешно: {{ok}}, с ошибкой: {{errors}}",
+      "dir": {
+        "upload": "загружено",
+        "download": "скачано",
+        "local": "перемещено (локально)",
+        "remote": "перемещено (удалённо)"
+      }
+    },
+    "transferring": "Передача…",
+    "newFolderTitle": "Новая папка",
+    "renameTitle": "Переименовать",
+    "deleteTitle": "Удалить",
+    "deleteConfirm": "Удалить элементов: {{count}}? Это действие необратимо.",
+    "actions": {
+      "copy": "Копировать",
+      "cut": "Вырезать",
+      "paste": "Вставить",
+      "delete": "Удалить",
+      "rename": "Переименовать",
+      "newFolder": "Новая папка",
+      "refresh": "Обновить"
+    }
   }
 }

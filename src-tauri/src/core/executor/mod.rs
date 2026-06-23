@@ -26,6 +26,13 @@ mod waiter;
 // `crate::core::executor::*` unchanged.
 pub use types::*;
 
+// Shared with `core::sftp`, which spawns the system `sftp` binary using the
+// same `procmix-askpass` password transport and Unix process-group setup as a
+// remote `ssh` run. Re-exported (rather than duplicated) so the askpass-helper
+// resolution and the `setsid` shim stay single-sourced.
+#[cfg(unix)]
+pub(crate) use command_build::{askpass_helper_path, libc_setsid};
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -110,7 +117,7 @@ pub async fn spawn_execution<R: Runtime>(
 pub async fn spawn_execution_with_completion<R: Runtime>(
     app: AppHandle<R>,
     state: Arc<ExecutorState>,
-    req: ExecuteRequest,
+    mut req: ExecuteRequest,
     completion_tx: Option<oneshot::Sender<NodeOutcome>>,
 ) -> Result<String, String> {
     // Prefer the caller-supplied id so the JS side can pre-register state
@@ -121,6 +128,11 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
         .clone()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    // Canonicalise the id ON the request so `build_command` uses the SAME id
+    // we use everywhere else — the remote password path keys its throwaway
+    // keychain entry (and the askpass env var) on it, and the finalizer below
+    // clears that entry by the same id.
+    req.execution_id = Some(execution_id.clone());
     let command_id = req.command_id.clone();
     // Tag every event from this run with the workflow run id (when this
     // execution is a workflow node) so the frontend can fold its output
@@ -257,8 +269,31 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
         }
     };
 
+    // Resolve where the bundled `procmix-askpass` helper lives so the remote
+    // password-auth path can point `ssh` at it. `bundle.resources` ships it
+    // into the platform resource dir (NOT next to the executable), so we ask
+    // the Tauri `PathResolver`. A failure here is non-fatal — the resolver
+    // inside `build_command` falls back to the `current_exe()`-sibling layout
+    // (dev / co-located packaging). Only the password path consults it.
+    #[cfg(unix)]
+    let askpass_resource_path: Option<std::path::PathBuf> = {
+        use tauri::Manager;
+        app.path()
+            .resolve("procmix-askpass", tauri::path::BaseDirectory::Resource)
+            .ok()
+    };
+    #[cfg(not(unix))]
+    let askpass_resource_path: Option<std::path::PathBuf> = None;
+
     // Build the Command (working-dir validation, env, stdio, pre_exec).
-    let mut cmd = command_build::build_command(program, prefix_args, &resolved, &req, &global_env)?;
+    let mut cmd = command_build::build_command(
+        program,
+        prefix_args,
+        &resolved,
+        &req,
+        &global_env,
+        askpass_resource_path.as_deref(),
+    )?;
 
     let mut child = cmd
         .spawn()
@@ -377,6 +412,10 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
             execution_id.clone(),
             RunningEntry {
                 cancel_tx: Some(cancel_tx),
+                // Stored so the shutdown hook can group-kill synchronously when
+                // the runtime is torn down before the waiter can react.
+                #[cfg(unix)]
+                pgid,
             },
         );
     }
@@ -412,6 +451,17 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
         root_pid: pid.map(|p| p as i32),
         #[cfg(unix)]
         kill_password,
+        // True iff the remote password path parked a one-shot keychain entry
+        // for this run (Unix + remote target + a non-blank ssh_password). The
+        // waiter clears it on the terminal outcome; a local / key-auth run
+        // leaves this false and never touches the keychain.
+        #[cfg(unix)]
+        clear_ssh_oneshot: matches!(req.target, ExecutionTarget::Remote { .. })
+            && req
+                .ssh_password
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false),
     });
 
     Ok(execution_id)
@@ -439,6 +489,135 @@ pub async fn cancel_execution(
     // Not found: already reaped — treat as success so the UI can stay
     // idempotent across rapid clicks.
     Ok(())
+}
+
+/// Synchronously tear down every in-flight run. Called from the Tauri exit
+/// hook (`RunEvent::ExitRequested`) where the async runtime is winding down,
+/// so this must NOT be async and must not depend on waiter tasks getting
+/// scheduled.
+///
+/// For each running entry it:
+///   - (Unix) sends `SIGTERM` to the child's process group, which includes a
+///     remote run's local `ssh` — without this, `ssh` is detached (`setsid`)
+///     and would linger as an orphan after the app exits;
+///   - (Unix) clears the run's throwaway one-shot SSH-password keychain entry
+///     (idempotent: a local / key-auth run has none, so it's a cheap no-op).
+///
+/// Best-effort: errors are ignored (we're exiting) and a `kill -9` of ProcMix
+/// itself can't be intercepted here. The registry is emptied at the end.
+pub fn shutdown_all_sync(state: &ExecutorState) {
+    // `blocking_lock` is correct here: we are on the main thread during exit,
+    // not inside an async task, and we want the kills to complete before the
+    // process goes away. The waiter tasks that also hold this lock briefly are
+    // about to be dropped with the runtime.
+    let mut running = state.running.blocking_lock();
+    for (_execution_id, _entry) in running.iter() {
+        #[cfg(unix)]
+        {
+            // SIGTERM the whole group (best-effort). The group leader is the
+            // spawned child (setsid made it a session/group leader); for a
+            // remote run that's the local `ssh`.
+            if let Some(g) = _entry.pgid {
+                let _ = command_build::libc_killpg(g, command_build::SIGTERM);
+            }
+            // Clear any one-shot SSH password parked under this run id.
+            // Idempotent; the value is never in the error.
+            let _ = crate::security::ssh_oneshot::clear(_execution_id);
+        }
+    }
+    running.clear();
+}
+
+#[cfg(all(test, unix))]
+mod shutdown_tests {
+    use super::*;
+    use crate::core::executor::command_build::{libc_getpgid, libc_setsid};
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command as StdCommand, Stdio};
+
+    /// Spawn a `setsid` `sleep` child (its own process group, pgid == pid),
+    /// mirroring the production spawn. Returns the std `Child` + its pgid.
+    fn spawn_setsid_sleep() -> (std::process::Child, i32) {
+        let mut cmd = StdCommand::new("sleep");
+        cmd.arg("60");
+        cmd.stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .stdin(Stdio::null());
+        unsafe {
+            cmd.pre_exec(|| {
+                let _ = libc_setsid();
+                Ok(())
+            });
+        }
+        let child = cmd.spawn().expect("sleep must be installed");
+        let pid = child.id() as i32;
+        let g = libc_getpgid(pid);
+        let pgid = if g == pid { Some(g) } else { None };
+        (child, pgid.expect("setsid child must lead its own group"))
+    }
+
+    /// `kill(pid, 0)` probes liveness without sending a signal: 0 → alive,
+    /// -1/ESRCH → gone.
+    fn is_alive(pid: i32) -> bool {
+        extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        unsafe { kill(pid, 0) == 0 }
+    }
+
+    /// `shutdown_all_sync` SIGTERMs every running entry's group and empties the
+    /// registry. Built on real processes, like the waiter kill-path tests.
+    ///
+    /// `blocking_lock` panics inside an async context, so the shutdown call is
+    /// hopped onto a plain OS thread (no runtime), while the child spawn +
+    /// registry insert happen on the multi-thread runtime.
+    #[test]
+    fn shutdown_all_sync_kills_groups_and_clears_registry() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let state = Arc::new(ExecutorState::new());
+        let (mut child, pgid) = spawn_setsid_sleep();
+        let pid = child.id() as i32;
+
+        // Register a synthetic running entry for this child.
+        rt.block_on(async {
+            state.running.lock().await.insert(
+                "shutdown-test".to_string(),
+                RunningEntry {
+                    cancel_tx: None,
+                    pgid: Some(pgid),
+                },
+            );
+        });
+        assert!(is_alive(pid), "child should be alive before shutdown");
+
+        // Call the sync shutdown OUTSIDE any async context.
+        let state_for_thread = state.clone();
+        std::thread::spawn(move || {
+            shutdown_all_sync(&state_for_thread);
+        })
+        .join()
+        .unwrap();
+
+        // The registry is emptied.
+        rt.block_on(async {
+            assert!(state.running.lock().await.is_empty());
+        });
+
+        // The child receives SIGTERM and exits. Reap it (with a short bound)
+        // so we don't leak a zombie, and confirm it's gone.
+        for _ in 0..50 {
+            if let Ok(Some(_)) = child.try_wait() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = child.try_wait();
+        assert!(!is_alive(pid), "child must be dead after shutdown SIGTERM");
+    }
 }
 
 #[cfg(test)]

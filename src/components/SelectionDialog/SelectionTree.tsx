@@ -158,23 +158,12 @@ export function SelectionTree<
     });
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onCancel();
-    }
-  };
-
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>): void => {
     if (e.target === e.currentTarget) onCancel();
   };
 
   return (
-    <div
-      className="command-form__backdrop"
-      onClick={handleBackdropClick}
-      onKeyDown={handleKeyDown}
-    >
+    <div className="command-form__backdrop" onClick={handleBackdropClick}>
       <div
         className={`command-form ${formModifier}`}
         role="dialog"

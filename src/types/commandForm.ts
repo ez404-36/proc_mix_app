@@ -58,4 +58,17 @@ export interface FormState {
   workingDir: string;
   /** When true, the runner will prompt the user for the working directory before each run. */
   promptWorkingDir: boolean;
+  /**
+   * Where the command runs. `{ kind: 'local' }` (the default) runs on this
+   * machine; `{ kind: 'remote', alias }` runs over SSH on the given host;
+   * `{ kind: 'remotePrompt' }` asks for the host at run time. See
+   * {@link import('./command').ExecutionTarget}.
+   */
+  target: import('./command').ExecutionTarget;
+  /**
+   * When true, prompt for a one-shot SSH password before each remote run.
+   * Only meaningful when `target` is remote; persisted as
+   * `Command.promptSshPassword`.
+   */
+  promptSshPassword: boolean;
 }

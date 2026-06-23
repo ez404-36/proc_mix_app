@@ -229,6 +229,8 @@ describe("fingerprintForm", () => {
     envRows: [],
     workingDir: "",
     promptWorkingDir: false,
+    target: { kind: "local" },
+    promptSshPassword: false,
   };
 
   it("is stable for identical persisted fields", () => {
@@ -256,6 +258,21 @@ describe("fingerprintForm", () => {
       fingerprintForm(base),
     );
   });
+
+  it("changes when the execution target changes", () => {
+    expect(
+      fingerprintForm({ ...base, target: { kind: "remote", alias: "prod" } }),
+    ).not.toBe(fingerprintForm(base));
+    expect(
+      fingerprintForm({ ...base, target: { kind: "remotePrompt" } }),
+    ).not.toBe(fingerprintForm(base));
+  });
+
+  it("changes when promptSshPassword toggles", () => {
+    expect(
+      fingerprintForm({ ...base, promptSshPassword: true }),
+    ).not.toBe(fingerprintForm(base));
+  });
 });
 
 describe("buildInitialState", () => {
@@ -270,6 +287,7 @@ describe("buildInitialState", () => {
       runAsAdmin: false,
       variables: [],
       timeoutSeconds: "",
+      target: { kind: "local" },
     });
   });
 
@@ -284,6 +302,7 @@ describe("buildInitialState", () => {
       runAsAdmin: true,
       variables: [{ name: "DIR", sensitive: false, defaultValue: "/" }],
       timeoutSeconds: 5,
+      target: { kind: "remote", alias: "prod" },
     } as Command;
     const state = buildInitialState(command, "edit", tIdentity, "macos", [
       "zsh",
@@ -295,8 +314,27 @@ describe("buildInitialState", () => {
       category: "Tools",
       runAsAdmin: true,
       timeoutSeconds: "5",
+      target: { kind: "remote", alias: "prod" },
     });
     expect(state.variables[0]).toMatchObject({ name: "DIR", promptAtRuntime: false });
+  });
+
+  it("defaults a command with no target to local in edit mode", () => {
+    const command: Command = {
+      id: "c2",
+      name: "Local cmd",
+      script: "ls",
+      tags: [],
+      favorite: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      runCount: 0,
+      runAsAdmin: false,
+    } as Command;
+    const state = buildInitialState(command, "edit", tIdentity, "linux", [
+      "bash",
+    ]);
+    expect(state.target).toEqual({ kind: "local" });
   });
 });
 

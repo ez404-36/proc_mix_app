@@ -70,6 +70,7 @@ interface ExecutionState {
     variables?: ExecutionVariable[],
     env?: Record<string, string>,
     variableValuesRaw?: Record<string, string>,
+    target?: import("../types").ExecutionTarget,
   ) => void;
   /**
    * Create (or reuse) the single aggregated execution for a workflow run,
@@ -248,7 +249,17 @@ export const useExecutionStore = create<ExecutionState>()(
       panelWidth: DEFAULT_PANEL_WIDTH,
       consolePosition: "bottom",
 
-  startExecution: (id, commandId, commandName, script, shell, variables, env, variableValuesRaw) =>
+  startExecution: (
+    id,
+    commandId,
+    commandName,
+    script,
+    shell,
+    variables,
+    env,
+    variableValuesRaw,
+    target,
+  ) =>
     set((state) => {
       const existing = state.executions[id];
       const execution: Execution = existing
@@ -261,6 +272,7 @@ export const useExecutionStore = create<ExecutionState>()(
             variables: existing.variables ?? variables,
             env: existing.env ?? env,
             variableValuesRaw: existing.variableValuesRaw ?? variableValuesRaw,
+            target: existing.target ?? target,
             // If a stub was created by an out-of-order log event, mark it
             // running here (it already was, but be explicit).
             status: existing.status,
@@ -274,6 +286,7 @@ export const useExecutionStore = create<ExecutionState>()(
             variables,
             env,
             variableValuesRaw,
+            target,
             status: "running",
             startedAt: Date.now(),
             log: [],

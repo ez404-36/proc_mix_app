@@ -17,6 +17,7 @@ import { useTranslation } from "react-i18next";
 import { useCommandStore } from "../../stores/commandStore";
 import { useHistoryStore } from "../../stores/historyStore";
 import type { HistoryEvent } from "../../types";
+import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 import {
   historyEventSubjectId,
   historyEventSubjectName,
@@ -281,6 +282,11 @@ export function HistoryRow({
   );
   const meta = (
     <div className="history-row__meta">
+      {event.kind === "commandRun" && isRemoteTarget(event.target) ? (
+        <span className="target-badge">
+          {formatTargetBadge(event.target, t)}
+        </span>
+      ) : null}
       {showUndo && (
         <button
           type="button"

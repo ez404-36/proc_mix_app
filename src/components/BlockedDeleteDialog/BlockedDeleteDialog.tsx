@@ -1,9 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type {
-  KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactElement,
-} from 'react';
+import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { DeleteBlocker } from '../../utils/usageCheck';
@@ -35,23 +31,12 @@ export function BlockedDeleteDialog({
     closeRef.current?.focus();
   }, []);
 
-  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-    }
-  };
-
   const handleBackdropClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
     if (e.target === e.currentTarget) onClose();
   };
 
   const modal = (
-    <div
-      className="command-form__backdrop"
-      onClick={handleBackdropClick}
-      onKeyDown={handleKeyDown}
-    >
+    <div className="command-form__backdrop" onClick={handleBackdropClick}>
       <div
         className="command-form command-form--confirm"
         role="dialog"

@@ -21,6 +21,35 @@ use crate::storage::commands::{OutputSchemaRecord, VariableSpec};
 
 pub const EXECUTION_EVENT: &str = "execution-event";
 
+/// Where a command is executed.
+///
+/// - [`ExecutionTarget::Local`] (the serde default for a missing field): the
+///   script runs on the local machine through the existing executor path.
+///   Legacy `ExecuteRequest` payloads — which never carried a `target` — are
+///   byte-identical to this variant.
+/// - [`ExecutionTarget::Remote`]: the script runs on a remote host over SSH.
+///   `alias` is a `Host` name from `~/.ssh/config`; the executor spawns the
+///   system `ssh` binary with a fixed argv. The alias is allow-list validated
+///   (`core::ssh::is_safe_alias`) before it reaches the process.
+/// - [`ExecutionTarget::RemotePrompt`]: a UI-only state meaning "ask which
+///   host at run time". The frontend MUST resolve it to a concrete `Remote`
+///   before invoking; if it ever reaches the spawn path, the executor rejects
+///   it with [`ERR_REMOTE_TARGET_UNRESOLVED`].
+///
+/// Serialised with `tag = "kind"`, `rename_all = "camelCase"` to mirror the
+/// TS `ExecutionTarget` union (`{ kind: "local" }` / `{ kind: "remote",
+/// alias }` / `{ kind: "remotePrompt" }`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum ExecutionTarget {
+    #[default]
+    Local,
+    Remote {
+        alias: String,
+    },
+    RemotePrompt,
+}
+
 /// Hard cap on the number of stdout bytes buffered for post-run output
 /// extraction. Buffering is enabled ONLY when a command declares an
 /// output schema (or runs as a workflow node), and the cap bounds memory
@@ -78,6 +107,34 @@ pub const ERR_ADMIN_PASSWORD_BACKEND_PREFIX: &str = "ADMIN_PASSWORD_BACKEND:";
 /// future message-wrapping / i18n pass cannot mutate the part the JS side
 /// matches on.
 pub const ERR_INVALID_WORKING_DIR: &str = "INVALID_WORKING_DIR:";
+
+/// Sentinel returned BEFORE the child is spawned when a remote
+/// ([`ExecutionTarget::Remote`]) run carries an alias that fails the
+/// allow-list check (`core::ssh::is_safe_alias`). The offending alias is
+/// appended after the colon. A single ASCII identifier so a future
+/// message-wrapping / i18n pass cannot mutate the part the JS side matches on.
+pub const ERR_INVALID_REMOTE_TARGET: &str = "INVALID_REMOTE_TARGET:";
+
+/// Sentinel returned BEFORE the child is spawned when an elevated run is
+/// requested against a remote target. Local sudo/UAC does not map onto a
+/// remote host, so remote elevation is unsupported in this version. The JS
+/// side surfaces this as a toast and the form disables the elevation toggle
+/// for remote commands.
+pub const ERR_REMOTE_ELEVATION_UNSUPPORTED: &str = "REMOTE_ELEVATION_UNSUPPORTED";
+
+/// Sentinel returned BEFORE the child is spawned when an
+/// [`ExecutionTarget::RemotePrompt`] reaches the spawn path unresolved. The
+/// frontend is responsible for opening a host picker and rewriting the target
+/// to a concrete [`ExecutionTarget::Remote`] before invoking; this sentinel
+/// is a defensive guard against that contract being violated.
+pub const ERR_REMOTE_TARGET_UNRESOLVED: &str = "REMOTE_TARGET_UNRESOLVED";
+
+/// Prefix returned BEFORE the child is spawned when parking the one-shot SSH
+/// password in the keychain fails (no Secret Service on a Linux headless box,
+/// permission denied, …). The backend error message follows the colon. The JS
+/// side surfaces it as a toast. The keychain crate never includes the password
+/// in its error variants, so the suffix is safe to display.
+pub const ERR_SSH_PASSWORD_BACKEND_PREFIX: &str = "SSH_PASSWORD_BACKEND:";
 
 // NOTE: `Debug` is intentionally NOT derived. `admin_password` holds the
 // user's sudo password for the "Continue without saving" flow, and
@@ -211,14 +268,42 @@ pub struct ExecuteRequest {
     /// keeps legacy payloads parsing cleanly.
     #[serde(default)]
     pub silent: bool,
+    /// Where to run this command. Defaults to [`ExecutionTarget::Local`] when
+    /// the field is absent, so every legacy payload (which never carried a
+    /// `target`) runs locally exactly as before. A [`ExecutionTarget::Remote`]
+    /// routes the spawn through the system `ssh` binary (see
+    /// `command_build::build_remote_argv`); the alias is allow-list validated
+    /// before the child is spawned. `#[serde(default)]` keeps legacy payloads
+    /// parsing cleanly.
+    #[serde(default)]
+    pub target: ExecutionTarget,
+    /// One-shot SSH password for this remote run only (the "enter password at
+    /// run time" flow). When `Some` and the target is
+    /// [`ExecutionTarget::Remote`] on Unix, the executor parks it in a
+    /// throwaway OS-keychain entry (`security::ssh_oneshot`) keyed by the run
+    /// id and hands the spawned `ssh` only that id via the `SSH_ASKPASS`
+    /// helper — the password itself NEVER enters `ssh`'s argv or environment.
+    /// The value is read-and-deleted by the helper and the run finalizer
+    /// clears the entry regardless, so it is never persisted across runs.
+    ///
+    /// A blank/whitespace-only string is treated as absent. Ignored for a
+    /// local target and on Windows (key/agent auth only there). Like
+    /// `admin_password`, this is a secret: it is redacted from `Debug` and
+    /// never logged or echoed into events/history. `#[serde(default)]` keeps
+    /// payloads without the field backwards-compatible.
+    ///
+    /// See `docs/plans/ssh-remote-password-transient-keychain.md`.
+    #[serde(default)]
+    pub ssh_password: Option<String>,
 }
 
 impl std::fmt::Debug for ExecuteRequest {
-    /// Hand-written so secrets never reach a log. `admin_password` is shown as
-    /// a presence flag only (`Some("***")` / `None`), and every value of a
-    /// `sensitive` variable is replaced with `***` in `variable_values`. All
-    /// non-secret fields print normally. See the `redact` module and the H2/M1
-    /// entries in the `CHANGELOG.md` `[0.1.1]` security-hardening release.
+    /// Hand-written so secrets never reach a log. `admin_password` and
+    /// `ssh_password` are shown as a presence flag only (`Some("***")` /
+    /// `None`), and every value of a `sensitive` variable is replaced with
+    /// `***` in `variable_values`. All non-secret fields print normally. See
+    /// the `redact` module and the H2/M1 entries in the `CHANGELOG.md`
+    /// `[0.1.1]` security-hardening release.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let secrets =
             crate::core::redact::collect_sensitive_values(&self.variables, &self.variable_values);
@@ -229,6 +314,10 @@ impl std::fmt::Debug for ExecuteRequest {
             .collect();
         let admin_password = self
             .admin_password
+            .as_ref()
+            .map(|_| crate::core::redact::REDACTED);
+        let ssh_password = self
+            .ssh_password
             .as_ref()
             .map(|_| crate::core::redact::REDACTED);
 
@@ -249,6 +338,8 @@ impl std::fmt::Debug for ExecuteRequest {
             .field("output_schema", &self.output_schema)
             .field("capture_output", &self.capture_output)
             .field("silent", &self.silent)
+            .field("target", &self.target)
+            .field("ssh_password", &ssh_password)
             .finish()
     }
 }
@@ -578,6 +669,14 @@ pub const TRUNCATION_MARKER: &str = "…(truncated)";
 /// waiter needs it.
 pub struct RunningEntry {
     pub cancel_tx: Option<oneshot::Sender<()>>,
+    /// Process-group id of the spawned child, captured at spawn time. The
+    /// waiter normally owns the kill, but on app shutdown the runtime is torn
+    /// down before waiter tasks can run, so the exit hook needs to group-kill
+    /// synchronously — it reads the pgid from here. `None` when `setsid`
+    /// failed (the spawn falls back to a single-process kill). Unix only;
+    /// Windows has no process-group kill in this model.
+    #[cfg(unix)]
+    pub pgid: Option<i32>,
 }
 
 pub struct ExecutorState {
@@ -603,6 +702,69 @@ mod wire_format_tests {
     use super::*;
     use crate::core::parser;
     use crate::storage::commands::VariableSpec;
+
+    /// The default `ExecutionTarget` is `Local`, so a missing field on any DTO
+    /// (`#[serde(default)]`) keeps legacy payloads behaving exactly as before
+    /// the remote-execution feature existed.
+    #[test]
+    fn execution_target_defaults_to_local() {
+        assert_eq!(ExecutionTarget::default(), ExecutionTarget::Local);
+    }
+
+    /// `ExecutionTarget` serialises with `tag = "kind"` and camelCase variant
+    /// names. The TS `ExecutionTarget` union depends on this exact shape;
+    /// renaming a tag is a breaking IPC change.
+    #[test]
+    fn wire_format_execution_target_uses_kind_tag_camelcase() {
+        let local = serde_json::to_value(ExecutionTarget::Local).unwrap();
+        assert_eq!(local["kind"], "local");
+
+        let remote = serde_json::to_value(ExecutionTarget::Remote {
+            alias: "prod".into(),
+        })
+        .unwrap();
+        assert_eq!(remote["kind"], "remote");
+        assert_eq!(remote["alias"], "prod");
+
+        let prompt = serde_json::to_value(ExecutionTarget::RemotePrompt).unwrap();
+        assert_eq!(prompt["kind"], "remotePrompt");
+        // Negative: snake_case spelling must not leak.
+        assert!(prompt.get("remote_prompt").is_none());
+    }
+
+    /// Each variant round-trips from the wire JS will send.
+    #[test]
+    fn wire_format_execution_target_round_trips() {
+        let local: ExecutionTarget =
+            serde_json::from_value(serde_json::json!({ "kind": "local" })).unwrap();
+        assert_eq!(local, ExecutionTarget::Local);
+
+        let remote: ExecutionTarget = serde_json::from_value(
+            serde_json::json!({ "kind": "remote", "alias": "db-1" }),
+        )
+        .unwrap();
+        assert_eq!(
+            remote,
+            ExecutionTarget::Remote {
+                alias: "db-1".into()
+            }
+        );
+
+        let prompt: ExecutionTarget =
+            serde_json::from_value(serde_json::json!({ "kind": "remotePrompt" })).unwrap();
+        assert_eq!(prompt, ExecutionTarget::RemotePrompt);
+    }
+
+    /// The remote sentinel strings are part of the IPC contract — the JS side
+    /// matches on them to dispatch error toasts. Lock their spellings so a
+    /// refactor can't silently change what the frontend must recognise.
+    #[test]
+    fn remote_sentinels_are_pinned() {
+        assert_eq!(ERR_INVALID_REMOTE_TARGET, "INVALID_REMOTE_TARGET:");
+        assert_eq!(ERR_REMOTE_ELEVATION_UNSUPPORTED, "REMOTE_ELEVATION_UNSUPPORTED");
+        assert_eq!(ERR_REMOTE_TARGET_UNRESOLVED, "REMOTE_TARGET_UNRESOLVED");
+        assert_eq!(ERR_SSH_PASSWORD_BACKEND_PREFIX, "SSH_PASSWORD_BACKEND:");
+    }
 
     #[test]
     fn wire_format_started_uses_camelcase() {
@@ -846,6 +1008,8 @@ mod wire_format_tests {
             output_schema: None,
             capture_output: false,
             silent: false,
+            target: ExecutionTarget::Local,
+            ssh_password: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert!(json["workingDir"].is_string());
@@ -866,9 +1030,10 @@ mod wire_format_tests {
         assert!(json.get("variable_values").is_none());
     }
 
-    /// H2: the hand-written `Debug` impl must NOT print the sudo password, and
-    /// must redact `sensitive` variable values, while still serialising the
-    /// real values over the wire (covered by the camelCase test above).
+    /// H2: the hand-written `Debug` impl must NOT print the sudo password or
+    /// the one-shot SSH password, and must redact `sensitive` variable values,
+    /// while still serialising the real values over the wire (covered by the
+    /// camelCase test above).
     #[test]
     fn debug_redacts_admin_password_and_sensitive_values() {
         let mut variable_values = BTreeMap::new();
@@ -906,10 +1071,17 @@ mod wire_format_tests {
             output_schema: None,
             capture_output: false,
             silent: false,
+            target: ExecutionTarget::Local,
+            ssh_password: Some("sshpw-secret".into()),
         };
         let dbg = format!("{req:?}");
         // The sudo password must never appear.
         assert!(!dbg.contains("hunter2"), "admin password leaked: {dbg}");
+        // The one-shot SSH password must never appear.
+        assert!(
+            !dbg.contains("sshpw-secret"),
+            "ssh password leaked: {dbg}"
+        );
         // The sensitive variable value must never appear.
         assert!(
             !dbg.contains("s3cr3t-token"),
@@ -1059,6 +1231,31 @@ mod wire_format_tests {
         assert!(req.admin_password.is_none());
     }
 
+    /// One-shot `sshPassword` deserialises into the optional field on the Rust
+    /// side. This is the wire contract the "enter password at run time" flow
+    /// relies on — a JS-side rename or a serde `rename_all` change must break
+    /// this test, not the production remote-run flow.
+    #[test]
+    fn wire_format_execute_request_round_trips_ssh_password() {
+        let json = serde_json::json!({
+            "script": "uptime",
+            "target": { "kind": "remote", "alias": "prod" },
+            "sshPassword": "hunter2",
+        });
+        let req: ExecuteRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.ssh_password.as_deref(), Some("hunter2"));
+    }
+
+    /// Existing JS callers that never set `sshPassword` continue to
+    /// deserialise with `None`. Locks the `#[serde(default)]` contract so a
+    /// legacy (key-auth) remote run keeps parsing.
+    #[test]
+    fn wire_format_execute_request_ssh_password_defaults_to_none_when_absent() {
+        let json = serde_json::json!({ "script": "whoami" });
+        let req: ExecuteRequest = serde_json::from_value(json).unwrap();
+        assert!(req.ssh_password.is_none());
+    }
+
     /// `elevated:true` survives a JSON round-trip — the JS side sends
     /// it as a plain camelCase boolean and the executor must observe
     /// it as `true`. Locks the contract so a future serde rename can't
@@ -1182,5 +1379,36 @@ mod wire_format_tests {
     #[test]
     fn admin_password_backend_prefix_is_exact() {
         assert_eq!(ERR_ADMIN_PASSWORD_BACKEND_PREFIX, "ADMIN_PASSWORD_BACKEND:");
+    }
+
+    /// A legacy `ExecuteRequest` payload (no `target`) deserialises with the
+    /// default `Local` target — every existing JS caller relies on this.
+    #[test]
+    fn wire_format_execute_request_target_defaults_to_local_when_absent() {
+        let json = serde_json::json!({ "script": "whoami" });
+        let req: ExecuteRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.target, ExecutionTarget::Local);
+    }
+
+    /// A remote target round-trips as camelCase `target` with the `kind` tag.
+    /// This is the wire contract the executor's remote-spawn branch reads.
+    #[test]
+    fn wire_format_execute_request_round_trips_remote_target() {
+        let json = serde_json::json!({
+            "script": "uptime",
+            "target": { "kind": "remote", "alias": "prod-web" },
+        });
+        let req: ExecuteRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            req.target,
+            ExecutionTarget::Remote {
+                alias: "prod-web".into()
+            }
+        );
+
+        // And serialising it back keeps the exact shape JS sent.
+        let back = serde_json::to_value(&req).unwrap();
+        assert_eq!(back["target"]["kind"], "remote");
+        assert_eq!(back["target"]["alias"], "prod-web");
     }
 }

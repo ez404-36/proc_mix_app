@@ -93,14 +93,12 @@ export function EnvVarModal({
   };
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === 'Escape') {
+    // Escape exits inline value-editing (reverting the draft) but does NOT
+    // close the modal — modals close only via an explicit button or backdrop.
+    if (e.key === 'Escape' && editing) {
       e.preventDefault();
-      if (editing) {
-        setEditing(false);
-        setDraft(entry.value);
-      } else {
-        onClose();
-      }
+      setEditing(false);
+      setDraft(entry.value);
     }
   };
 

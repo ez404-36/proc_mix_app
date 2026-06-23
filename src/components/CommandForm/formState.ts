@@ -275,6 +275,10 @@ export function buildInitialState(
       envRows: recordToEnvRows(command.env),
       workingDir: command.workingDir ?? "",
       promptWorkingDir: command.promptWorkingDir ?? false,
+      // A missing target on the stored command means "local" (the executor
+      // default). Carry it verbatim otherwise so an edit preserves the host.
+      target: command.target ?? { kind: "local" },
+      promptSshPassword: command.promptSshPassword ?? false,
     };
   }
   return {
@@ -295,6 +299,10 @@ export function buildInitialState(
     envRows: [],
     workingDir: "",
     promptWorkingDir: false,
+    // New commands run locally by default; the user opts into remote
+    // execution explicitly via the "where to run" selector.
+    target: { kind: "local" },
+    promptSshPassword: false,
   };
 }
 
@@ -330,5 +338,7 @@ export function fingerprintForm(form: FormState): string {
     envRows: form.envRows.map((r) => ({ key: r.key, value: r.value })),
     workingDir: form.workingDir,
     promptWorkingDir: form.promptWorkingDir,
+    target: form.target,
+    promptSshPassword: form.promptSshPassword,
   });
 }

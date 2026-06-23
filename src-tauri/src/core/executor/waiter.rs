@@ -90,6 +90,14 @@ pub(super) struct WaiterCtx<R: Runtime> {
     /// Unix only.
     #[cfg(unix)]
     pub kill_password: Option<String>,
+    /// `true` when this run used the remote SSH password path, so a throwaway
+    /// one-shot keychain entry was parked under `execution_id`. On the terminal
+    /// outcome the waiter clears it (idempotent), guaranteeing the entry never
+    /// outlives the run even if `ssh` exited before the askpass helper read it
+    /// (key auth ultimately succeeded, or the connection failed early). Unix
+    /// only — the password path doesn't exist elsewhere.
+    #[cfg(unix)]
+    pub clear_ssh_oneshot: bool,
 }
 
 /// Best-effort send of the terminal [`NodeOutcome`] on the optional
@@ -134,6 +142,8 @@ pub(super) fn spawn_waiter<R: Runtime>(ctx: WaiterCtx<R>) {
             root_pid: root_pid_for_wait,
         #[cfg(unix)]
             kill_password: kill_password_for_wait,
+        #[cfg(unix)]
+        clear_ssh_oneshot,
     } = ctx;
 
     tokio::spawn(async move {
@@ -265,6 +275,23 @@ pub(super) fn spawn_waiter<R: Runtime>(ctx: WaiterCtx<R>) {
         {
             let mut map = running_arc.lock().await;
             map.remove(&id_for_wait);
+        }
+
+        // Clear the throwaway one-shot SSH password entry for this run, if the
+        // remote password path parked one. Idempotent (a missing entry is not
+        // an error) and runs on EVERY terminal outcome — finished, error,
+        // cancelled, or timed out — so the secret never outlives its run, even
+        // when key auth ultimately succeeded and the askpass helper never read
+        // it. Only the password path sets the flag, so a local / key-auth run
+        // skips the keychain entirely.
+        #[cfg(unix)]
+        if clear_ssh_oneshot {
+            if let Err(e) = crate::security::ssh_oneshot::clear(&id_for_wait) {
+                // The value is never in the error; log the failure so an
+                // orphaned entry is at least diagnosable. `eprintln!` matches
+                // the executor's existing logging (this crate has no `tracing`).
+                eprintln!("failed to clear one-shot ssh password for {id_for_wait}: {e}");
+            }
         }
 
         // Run output extraction (when a schema was declared) on the FULL
@@ -696,7 +723,8 @@ mod kill_tree_tests {
     use super::*;
     use crate::core::executor::command_build::{libc_getpgid, libc_setsid, SIGKILL, SIGTERM};
     use crate::core::executor::{
-        cancel_execution, spawn_execution_with_completion, ExecuteRequest, ExecutorState,
+        cancel_execution, spawn_execution_with_completion, ExecuteRequest, ExecutionTarget,
+        ExecutorState,
     };
     use std::collections::BTreeMap;
     use std::os::unix::process::ExitStatusExt;
@@ -883,6 +911,8 @@ mod kill_tree_tests {
             id.clone(),
             RunningEntry {
                 cancel_tx: Some(cancel_tx),
+                #[cfg(unix)]
+                pgid,
             },
         );
 
@@ -948,6 +978,8 @@ mod kill_tree_tests {
             output_schema: None,
             capture_output: false,
             silent: false,
+            target: ExecutionTarget::Local,
+            ssh_password: None,
         };
 
         let started = std::time::Instant::now();
@@ -1013,6 +1045,8 @@ mod kill_tree_tests {
             output_schema: None,
             capture_output: false,
             silent: false,
+            target: ExecutionTarget::Local,
+            ssh_password: None,
         };
 
         let started = std::time::Instant::now();

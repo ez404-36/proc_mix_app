@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
   ChangeEvent,
-  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactElement,
 } from "react";
@@ -21,6 +20,7 @@ import type {
   WorkflowCondition,
 } from "../../types";
 import { getCommandDescription, getCommandName } from "../../utils/commandLabels";
+import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 import { dataSourceId, dataSourceOptions } from "../../utils/dataSourceOptions";
 import {
   dominatingDataNodeVariableNames,
@@ -498,6 +498,17 @@ function NodeConfigForm({
             <div className="wf-inspector__local-row">
               <span className="wf-palette__local-badge">
                 {t("editor.palette.localBadge")}
+              </span>
+            </div>
+          ) : null}
+          {/* Read-only: a workflow command node inherits the command's
+              execution target, so a remote-targeted command runs over SSH as
+              a step too. Surfaced here so it's visible without opening the
+              command form. */}
+          {selectedCommand && isRemoteTarget(selectedCommand.target) ? (
+            <div className="wf-inspector__local-row">
+              <span className="target-badge">
+                {formatTargetBadge(selectedCommand.target, t)}
               </span>
             </div>
           ) : null}
@@ -1186,13 +1197,6 @@ export function NodeInspector({
     applyRef.current?.focus();
   }, []);
 
-  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onClose();
-    }
-  };
-
   const handleBackdropClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
     if (e.target === e.currentTarget) onClose();
   };
@@ -1200,11 +1204,7 @@ export function NodeInspector({
   const kindLabel = t(`editor.nodes.${kind}`);
 
   const modal = (
-    <div
-      className="command-form__backdrop"
-      onClick={handleBackdropClick}
-      onKeyDown={handleKeyDown}
-    >
+    <div className="command-form__backdrop" onClick={handleBackdropClick}>
       <div
         className="command-form wf-node-modal"
         role="dialog"

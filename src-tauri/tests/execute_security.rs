@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use procmix_lib::core::executor::{
-    spawn_execution, ExecuteRequest, ExecutionEvent, ExecutorState, ERR_INVALID_WORKING_DIR,
+    spawn_execution, ExecuteRequest, ExecutionEvent, ExecutionTarget, ExecutorState,
+    ERR_INVALID_WORKING_DIR,
     EXECUTION_EVENT,
 };
 use procmix_lib::storage::commands::VariableSpec;
@@ -111,6 +112,8 @@ async fn sensitive_variable_value_is_redacted_in_stdout() {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     spawn_execution(app, state, req)
@@ -162,6 +165,8 @@ async fn non_sensitive_variable_value_is_not_redacted() {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     spawn_execution(app, state, req)
@@ -199,6 +204,8 @@ async fn nonexistent_working_dir_fails_fast() {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     let result = spawn_execution(app, state, req).await;
@@ -240,6 +247,8 @@ async fn existing_working_dir_runs() {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     spawn_execution(app, state, req)

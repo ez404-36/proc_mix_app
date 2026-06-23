@@ -22,7 +22,11 @@
 //!
 //! `-o BatchMode=yes` disables every interactive prompt (password,
 //! passphrase, host-key confirmation), so the child exits promptly instead
-//! of blocking on a TTY. `ConnectTimeout` bounds the TCP connect, and an
+//! of blocking on a TTY. Because of this a host that uses password or
+//! passphrase auth exits non-zero with an auth error even though it is fully
+//! reachable; [`is_auth_failure`] recognises those and reports the host as
+//! reachable, since a credential rejection still proves we talked to an sshd.
+//! `ConnectTimeout` bounds the TCP connect, and an
 //! outer [`tokio::time::timeout`] is a hard backstop so a misbehaving `ssh`
 //! can never stall the IPC handler. `StrictHostKeyChecking=accept-new`
 //! avoids failing purely because a first-seen host isn't yet in
@@ -95,9 +99,39 @@ fn build_args(alias: &str) -> Vec<String> {
     ]
 }
 
+/// `true` when `stderr` from a non-zero `ssh` exit indicates the server was
+/// **reached** but declined *non-interactive* authentication.
+///
+/// In `BatchMode=yes` every prompt is suppressed, so a host that uses
+/// password or passphrase-protected key auth (e.g. you normally type a
+/// password interactively) makes `ssh` exit non-zero with an auth error —
+/// even though the TCP connection and the SSH transport handshake both
+/// succeeded. For a *reachability* probe that outcome is a success: we
+/// definitively talked to an sshd. Only genuine connectivity faults
+/// (timeout, refused, DNS, host-key mismatch) are truly unreachable.
+///
+/// The match is on the stable English text produced under `LC_ALL=C`.
+fn is_auth_failure(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    // "Permission denied (publickey,password)." — server refused our creds.
+    s.contains("permission denied")
+        // Generic auth failures / too many attempts.
+        || s.contains("authentication failed")
+        || s.contains("too many authentication failures")
+        // Key needs a passphrase BatchMode can't prompt for.
+        || s.contains("enter passphrase")
+        || s.contains("passphrase for key")
+        // Server offers only keyboard-interactive / password we can't answer.
+        || s.contains("keyboard-interactive")
+}
+
 /// Probe `alias` for reachability. Never returns an error to the caller — a
 /// failed/unreachable host is a *successful* check with `reachable: false`,
 /// so the UI always gets a definitive answer to render.
+///
+/// A non-interactive **auth** failure counts as reachable (see
+/// [`is_auth_failure`]): reaching an sshd that declines batch-mode auth still
+/// proves the host is up and connectable.
 pub async fn check_alias(alias: &str) -> SshCheckResult {
     if !is_safe_alias(alias) {
         return SshCheckResult {
@@ -163,15 +197,26 @@ pub async fn check_alias(alias: &str) -> SshCheckResult {
         }
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        SshCheckResult {
-            reachable: false,
-            message: if stderr.is_empty() {
-                "host unreachable".to_string()
-            } else {
-                // ssh's stderr (e.g. "Permission denied (publickey).",
-                // "Connection timed out") is the most useful detail.
-                stderr
-            },
+        // A non-interactive auth failure proves we reached the sshd: TCP
+        // connect + transport handshake succeeded, the server merely declined
+        // credentials BatchMode can't supply. Report that as reachable so a
+        // password/passphrase host isn't falsely shown as "unreachable".
+        if is_auth_failure(&stderr) {
+            SshCheckResult {
+                reachable: true,
+                message: "reachable (authentication required)".to_string(),
+            }
+        } else {
+            SshCheckResult {
+                reachable: false,
+                message: if stderr.is_empty() {
+                    "host unreachable".to_string()
+                } else {
+                    // ssh's stderr (e.g. "Connection timed out",
+                    // "Connection refused") is the most useful detail.
+                    stderr
+                },
+            }
         }
     }
 }
@@ -249,6 +294,38 @@ mod tests {
         assert!(args.iter().any(|a| a == "BatchMode=yes"));
         // A connect timeout must be set.
         assert!(args.iter().any(|a| a.starts_with("ConnectTimeout=")));
+    }
+
+    #[test]
+    fn auth_failures_count_as_reachable() {
+        for stderr in [
+            "Permission denied (publickey,password).",
+            "Permission denied (publickey).",
+            "user@host: Permission denied (password).",
+            "Authentication failed.",
+            "Received disconnect from 10.0.0.1 port 22:2: Too many authentication failures",
+            "host_key_verification ... keyboard-interactive failed",
+            "Enter passphrase for key '/home/u/.ssh/id_ed25519':",
+        ] {
+            assert!(is_auth_failure(stderr), "should be auth failure: {stderr:?}");
+        }
+    }
+
+    #[test]
+    fn connectivity_failures_are_not_auth_failures() {
+        for stderr in [
+            "ssh: connect to host eist_astra port 22: Connection refused",
+            "ssh: connect to host eist_astra port 22: Connection timed out",
+            "ssh: Could not resolve hostname eist_astra: Name or service not known",
+            "kex_exchange_identification: Connection closed by remote host",
+            "@@@ REMOTE HOST IDENTIFICATION HAS CHANGED! @@@",
+            "",
+        ] {
+            assert!(
+                !is_auth_failure(stderr),
+                "should NOT be auth failure: {stderr:?}"
+            );
+        }
     }
 
     #[tokio::test]

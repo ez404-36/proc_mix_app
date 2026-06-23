@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use procmix_lib::core::executor::{
-    spawn_execution, ExecuteRequest, ExecutionEvent, ExecutorState, EXECUTION_EVENT,
+    spawn_execution, ExecuteRequest, ExecutionEvent, ExecutionTarget, ExecutorState,
+    EXECUTION_EVENT,
 };
 use tauri::test::mock_builder;
 use tauri::Listener;
@@ -91,6 +92,8 @@ async fn timeout_kills_long_running_command() {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     let start = Instant::now();
@@ -166,6 +169,8 @@ async fn fast_command_with_timeout_completes_normally() {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     spawn_execution(app, state, req)
@@ -234,6 +239,8 @@ async fn no_timeout_command_completes_normally() {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     spawn_execution(app, state, req)

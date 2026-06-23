@@ -74,6 +74,7 @@ interface CommandInfo {
   name: string;
   script: string;
   shell?: string;
+  target?: import("../types").ExecutionTarget;
 }
 
 function lookupCommandInfo(commandId: string | undefined): CommandInfo {
@@ -88,6 +89,7 @@ function lookupCommandInfo(commandId: string | undefined): CommandInfo {
     name: getCommandName(cmd, i18n.t),
     script: cmd.script,
     shell: cmd.shell,
+    target: cmd.target,
   };
 }
 
@@ -184,6 +186,9 @@ function handleEvent(event: ExecutionEvent): void {
         info.script,
         info.shell,
         event.variables,
+        undefined,
+        undefined,
+        info.target,
       );
       return;
     }

@@ -804,10 +804,42 @@
       "adminPasswordWillAsk": "You'll be asked for your administrator password on the first run."
     },
     "hints": {
-      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script. Admin mode is required and can't be disabled until you remove the escalation prefix."
+      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script. Admin mode is required and can't be disabled until you remove the escalation prefix.",
+      "runAsAdminRemote": "Run as administrator is not available for remote commands."
     },
     "tooltips": {
-      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script — admin mode is required."
+      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script — admin mode is required.",
+      "runAsAdminRemote": "Run as administrator is not available for remote commands."
+    },
+    "target": {
+      "label": "Where to run",
+      "local": "Local",
+      "remote": "Remote host",
+      "prompt": "Ask at run time",
+      "host": "SSH host",
+      "hostUnavailableSuffix": "(not in connections)",
+      "check": "Check",
+      "checking": "Checking…",
+      "reachable": "Host is reachable",
+      "unreachable": "Host is unreachable: {{message}}",
+      "noHosts": "No SSH connections found. Add one in Environment → Connections.",
+      "remoteLimitations": "Remote runs ignore the working directory and environment variables, can't run as administrator, and use a POSIX shell (sh) on the host.",
+      "promptSshPassword": "Ask for a password at run time",
+      "promptSshPasswordHint": "You'll be asked for the SSH password before each run. It is used once and never saved — prefer SSH keys for repeated runs. (Unix only.)",
+      "sshPasswordLabel": "Saved SSH password",
+      "sshPasswordInputLabel": "SSH password for {{alias}}",
+      "sshPasswordSet": "Set password…",
+      "sshPasswordChange": "Change…",
+      "sshPasswordSave": "Save",
+      "sshPasswordCancel": "Cancel",
+      "sshPasswordClear": "Clear",
+      "sshPasswordStatusSaved": "Saved ✓",
+      "sshPasswordStatusNone": "Not saved — keys/agent will be used.",
+      "sshPasswordSaved": "SSH password saved",
+      "sshPasswordSaveError": "Failed to save SSH password",
+      "sshPasswordCleared": "SSH password cleared",
+      "sshPasswordClearError": "Failed to clear SSH password",
+      "sshPasswordHint": "Stored in your OS keychain for this host so it can run unattended. SSH keys are preferred; the password is a fallback. (Unix only.)"
     },
     "scriptEditor": {
       "insertVariable": "Insert variable"
@@ -840,6 +872,10 @@
     "defaultValue": "Default: {{value}}",
     "sensitiveValue": "Sensitive — value hidden"
   },
+  "commandTarget": {
+    "badgeRemote": "Remote: {{alias}}",
+    "badgePrompt": "Remote (ask at run time)"
+  },
   "seeds": {
     "listHomeDir": {
       "name": "List home directory",
@@ -868,7 +904,13 @@
   "runCommand": {
     "adminPasswordSaveFailed": "Failed to save administrator password",
     "adminPasswordRejected": "Wrong administrator password — please try again",
-    "inlineEscalationHint": "This command runs sudo internally but isn't elevated. Move sudo to the start of the script, or enable “Run as administrator”."
+    "inlineEscalationHint": "This command runs sudo internally but isn't elevated. Move sudo to the start of the script, or enable “Run as administrator”.",
+    "remote": {
+      "invalidHost": "Invalid SSH host \"{{alias}}\"",
+      "elevationUnsupported": "“Run as administrator” is not available for remote commands",
+      "targetUnresolved": "No remote host selected for this run",
+      "passwordBackend": "Couldn't store the SSH password securely"
+    }
   },
   "variablePrompt": {
     "title": "Provide variables",
@@ -880,6 +922,22 @@
     "label": "Directory",
     "hint": "Leave empty to use the default (home directory).",
     "placeholder": "e.g. /home/user/project",
+    "submit": "Run",
+    "cancel": "Cancel"
+  },
+  "remoteHostPrompt": {
+    "title": "Choose a remote host",
+    "label": "SSH host",
+    "noHosts": "No SSH connections found. Add one in Environment → Connections.",
+    "submit": "Run",
+    "cancel": "Cancel"
+  },
+  "sshPasswordPrompt": {
+    "title": "SSH password for {{alias}}",
+    "label": "Password",
+    "hint": "Used for this run only and never saved. Consider SSH keys for repeated runs.",
+    "reveal": "Show",
+    "hide": "Hide",
     "submit": "Run",
     "cancel": "Cancel"
   },
@@ -1136,14 +1194,28 @@
         "aliasInvalid": "Use letters, digits and . _ - : @ * ? (no leading dash).",
         "hostNamePlaceholder": "e.g. 203.0.113.10 or host.example.com",
         "portInvalid": "Port must be 1-65535.",
-        "renameWarning": "Changing a pattern name reassigns these settings to a different group of hosts."
+        "renameWarning": "Changing a pattern name reassigns these settings to a different group of hosts.",
+        "sshPasswordLabel": "Saved password",
+        "sshPasswordInputLabel": "SSH password for {{alias}}",
+        "sshPasswordSet": "Set password…",
+        "sshPasswordChange": "Change…",
+        "sshPasswordSave": "Save password",
+        "sshPasswordClear": "Clear",
+        "sshPasswordStatusSaved": "Saved ✓",
+        "sshPasswordStatusNone": "Not saved — keys/agent will be used.",
+        "sshPasswordSaved": "SSH password saved",
+        "sshPasswordSaveError": "Failed to save SSH password",
+        "sshPasswordCleared": "SSH password cleared",
+        "sshPasswordClearError": "Failed to clear SSH password",
+        "sshPasswordHint": "Stored in your OS keychain for this host so connections (run & file transfer) can authenticate without a prompt. SSH keys are preferred; the password is a fallback. (Unix only.)"
       },
       "source": {
         "open-ssh-config": "OpenSSH",
         "putty": "PuTTY",
         "wsl": "WSL",
         "system-config": "System"
-      }
+      },
+      "openFiles": "Open files"
     },
     "userLoadFailed": "Failed to load environment variables.",
     "rootNoPassword": "To view the root environment, an administrator password is required.",
@@ -1202,5 +1274,44 @@
     "dismissBuilder": "Close flag builder",
     "useShortFlag": "short form",
     "flagSearchPlaceholder": "Search flag…"
+  },
+  "sftp": {
+    "title": "Files — {{alias}}",
+    "localhost": "localhost",
+    "pathLabel": "Current path (Enter to go)",
+    "pathSuggestLabel": "Folders",
+    "showHidden": "Show hidden",
+    "showHiddenHint": "{{count}} hidden item(s)",
+    "dragCopyBadge": "Copy",
+    "dropHere": "Copy here",
+    "dropToFolder": "Copy to this folder",
+    "log": {
+      "toggle": "Transfer history",
+      "title": "Transfers",
+      "clear": "Clear history",
+      "failed": "Failed",
+      "summaryOk": "{{ok}} transferred",
+      "summaryErrors": "{{ok}} done, {{errors}} failed",
+      "dir": {
+        "upload": "uploaded",
+        "download": "downloaded",
+        "local": "moved (local)",
+        "remote": "moved (remote)"
+      }
+    },
+    "transferring": "Transferring…",
+    "newFolderTitle": "New folder",
+    "renameTitle": "Rename",
+    "deleteTitle": "Delete",
+    "deleteConfirm": "Delete {{count}} item(s)? This cannot be undone.",
+    "actions": {
+      "copy": "Copy",
+      "cut": "Cut",
+      "paste": "Paste",
+      "delete": "Delete",
+      "rename": "Rename",
+      "newFolder": "New folder",
+      "refresh": "Refresh"
+    }
   }
 }

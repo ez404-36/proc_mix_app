@@ -80,9 +80,21 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
 
+      # The procmix-askpass sidecar is gated behind the `ssh-askpass` feature,
+      # so the default clippy/test above never compile `src/bin/askpass.rs`.
+      # Lint + test it explicitly (on the Linux runner, where it actually ships)
+      # so its code isn't merged unchecked.
+      - name: Clippy (Rust, ssh-askpass)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --features ssh-askpass -- -D warnings
+
       - name: Test (Rust)
         working-directory: src-tauri
         run: cargo test
+
+      - name: Test (Rust, ssh-askpass)
+        working-directory: src-tauri
+        run: cargo test --features ssh-askpass
 
   build-windows:
     needs: check
@@ -208,6 +220,14 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      # Build the procmix-askpass SSH helper (release) BEFORE the bundle step.
+      # It's gated behind the `ssh-askpass` Cargo feature (off by default), so a
+      # plain `tauri build` wouldn't produce it. The bundle step ships it via
+      # the `tauri.bundle-askpass.conf.json` overlay (applied with --config
+      # below). Unix-only — no equivalent on the Windows job.
+      - name: Build procmix-askpass helper (release)
+        run: npm run build:askpass:release
+
       - name: Build Linux installers (deb + AppImage)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -220,7 +240,10 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: '1'
         with:
           # Emit the Debian package and the portable AppImage; skip RPM.
-          args: --bundles deb,appimage
+          # The --config overlay ships `procmix-askpass` as a bundle resource so
+          # remote SSH password auth works in the installed app. The path is
+          # resolved relative to projectPath (the repo root), per tauri-action.
+          args: --bundles deb,appimage --config src-tauri/tauri.bundle-askpass.conf.json
           # On tag pushes, attach to the same draft GitHub Release as the
           # Windows job. Empty for workflow_dispatch runs (no tag ref).
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}

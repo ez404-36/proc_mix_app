@@ -1,9 +1,5 @@
 import { useEffect, useRef } from "react";
-import type {
-  KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactElement,
-} from "react";
+import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { Command, VariableSpec } from "../../types";
@@ -12,6 +8,7 @@ import {
   getCommandName,
 } from "../../utils/commandLabels";
 import { CancelIcon, EditIcon, RunIcon, TrashIcon } from "../icons";
+import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 
 interface CommandViewProps {
   /** The command to display, or `null` when the view is closed. */
@@ -67,23 +64,12 @@ export function CommandView({
   const displayDesc = getCommandDescription(command, t);
   const variables = command.variables ?? [];
 
-  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onClose();
-    }
-  };
-
   const handleBackdropClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
     if (e.target === e.currentTarget) onClose();
   };
 
   const modal = (
-    <div
-      className="command-form__backdrop"
-      onClick={handleBackdropClick}
-      onKeyDown={handleKeyDown}
-    >
+    <div className="command-form__backdrop" onClick={handleBackdropClick}>
       <div
         className="command-form command-form--view command-view"
         role="dialog"
@@ -93,6 +79,11 @@ export function CommandView({
         <div className="workflow-view__header">
           <h2 className="command-form__title">{displayName}</h2>
           <div className="list-tile__meta">
+            {isRemoteTarget(command.target) ? (
+              <span className="target-badge">
+                {formatTargetBadge(command.target, t)}
+              </span>
+            ) : null}
             {command.shell ? (
               <span className="shell-badge">{command.shell}</span>
             ) : null}
@@ -132,6 +123,17 @@ export function CommandView({
                     count: command.timeoutSeconds,
                   })
                 : t("commandView.noTimeout")}
+            </p>
+          </section>
+
+          <section className="command-view__field">
+            <h3 className="command-view__label">
+              {t("commandForm.target.label", { defaultValue: "Where to run" })}
+            </h3>
+            <p className="command-view__value">
+              {isRemoteTarget(command.target)
+                ? formatTargetBadge(command.target, t)
+                : t("commandForm.target.local", { defaultValue: "Local" })}
             </p>
           </section>
 

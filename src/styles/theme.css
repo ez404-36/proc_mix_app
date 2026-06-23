@@ -571,6 +571,21 @@ select {
   color: #fff;
 }
 
+/* Remote-target badge on a list tile / table row / view header / console.
+ * Set apart from the outlined shell/tag chips with the accent-subtle wash so
+ * "this runs on a remote host" reads at a glance. Only shown for remote
+ * targets (local renders no badge). */
+.target-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-accent-subtle);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
 /* Clickable tag-filter chips in the Library toolbar. Reuses the
  * `.tag-chip` look but adds a button affordance + active state. */
 .library-filter-tags {
@@ -1470,6 +1485,13 @@ body.is-editor-fullscreen .output-panel {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--console-text-muted);
+}
+
+/* Remote-target badge in the console script header: keep it inline-sized
+ * (the script container is a column flex, so without this the pill would
+ * stretch the full width). */
+.output-panel__script-target {
+  align-self: flex-start;
 }
 
 .output-panel__script-body {
@@ -3221,6 +3243,20 @@ body.is-editor-fullscreen .output-panel {
   cursor: not-allowed;
 }
 
+/* "Where to run" host row (CommandForm TargetSelector): the host dropdown
+ * takes a constrained share of the row (it never needs the full width), the
+ * Check button sits beside it. Reuses the same gap rhythm as other inline
+ * field rows. */
+.command-form__target-host {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.command-form__target-host .dropdown {
+  flex: 0 1 280px;
+  min-width: 0;
+}
+
 /* Tag chip editor (CommandForm). A flex container that looks like the
  * `.input` field, holding chips followed by a borderless text field that
  * grows to fill the row. Clicking anywhere focuses the inner input via the
@@ -3671,6 +3707,49 @@ body.is-editor-fullscreen .output-panel {
 }
 
 .admin-password-prompt__reveal:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* One-shot SSH password prompt (SshPasswordPrompt). Same overlay-toggle
+ * layout as the admin-password input, but the reveal control is a small text
+ * button ("Show"/"Hide") rather than an icon. */
+.ssh-password-prompt__input-wrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+.ssh-password-prompt__input {
+  /* Room for the text reveal button on the right. */
+  padding-right: 64px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.05em;
+}
+.ssh-password-prompt__reveal {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+.ssh-password-prompt__reveal:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+.ssh-password-prompt__reveal:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }
@@ -7104,6 +7183,25 @@ body.is-editor-fullscreen .output-panel {
   color: var(--color-warning, #b45309);
 }
 
+/* The saved-password controls row: status/input on the left, action buttons
+   inline to the right. The input flexes to fill the available width. */
+.ssh-host-form__password-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ssh-host-form__password-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ssh-host-form__password-row .form-hint {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
 /* ---------------------------------------------------------------------------
    ssh-host-change — diff body inside an SSH "edited" history row
    --------------------------------------------------------------------------- */
@@ -7641,4 +7739,448 @@ body.is-editor-fullscreen .output-panel {
   font-size: 13px;
   color: var(--color-danger);
   line-height: 1.4;
+}
+
+/* ------------------------------------------------------------------ */
+/* SFTP dual-pane file manager                                         */
+/* ------------------------------------------------------------------ */
+
+.command-form--sftp.sftp-manager {
+  width: min(1100px, 94vw);
+  max-width: 94vw;
+  height: min(720px, 88vh);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.sftp-manager__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sftp-manager__header .command-form__title {
+  flex: 1;
+  margin: 0;
+}
+
+.sftp-manager__status {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* ---- Transfer status bar (header) -------------------------------------- */
+.sftp-log {
+  position: relative;
+}
+
+/* Compact summary pill; colour reflects overall outcome. */
+.sftp-log__summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.sftp-log__summary--ok {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.sftp-log__summary--error {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.sftp-log__summary-icon {
+  display: inline-flex;
+}
+
+.sftp-log__chevron {
+  display: inline-flex;
+  transition: transform 0.12s ease;
+}
+
+.sftp-log__chevron.is-open {
+  transform: rotate(180deg);
+}
+
+/* Expanded list, anchored under the summary pill. */
+.sftp-log__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 380px;
+  max-width: 70vw;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated, var(--color-bg));
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.sftp-log__panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 6px 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.sftp-log__list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.sftp-log__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-left: 3px solid transparent;
+}
+
+.sftp-log__item--ok {
+  border-left-color: var(--color-success);
+}
+
+.sftp-log__item--error {
+  border-left-color: var(--color-danger);
+  background: var(--color-danger-subtle, rgba(220, 38, 38, 0.08));
+}
+
+.sftp-log__item-status {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.sftp-log__item--ok .sftp-log__item-status {
+  color: var(--color-success);
+}
+
+.sftp-log__item--error .sftp-log__item-status {
+  color: var(--color-danger);
+}
+
+.sftp-log__item-dir {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.sftp-log__item-name {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 45%;
+}
+
+.sftp-log__item-msg {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: auto;
+}
+
+.sftp-log__item-msg--error {
+  color: var(--color-danger);
+}
+
+.sftp-manager__panes {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  min-height: 0;
+  background: var(--color-border);
+}
+
+/* Green "Copy" badge centered on the divider between the two panes, shown only
+   while a drag is in flight — communicates that drag-and-drop copies. */
+.sftp-manager__drag-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 30;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--color-success, #16a34a);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+}
+
+.sftp-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-surface);
+}
+
+.sftp-pane__header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sftp-pane__host {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+/* The current-path field is a real text input the user can edit: style it like
+   a normal `.input` (visible border + input background) so it's clearly
+   editable, not plain text. Kept compact (mono, small) to fit the pane header. */
+.sftp-pane__path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  padding: 7px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.sftp-pane__path:hover:not(:disabled):not(:focus) {
+  border-color: var(--color-text-muted);
+}
+
+.sftp-pane__path:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+/* Before a pane has loaded (cwd === null) the field is disabled and shows a
+   muted placeholder — looks inert so the user doesn't try to type into it. */
+.sftp-pane__path:disabled {
+  cursor: default;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border-style: dashed;
+}
+
+/* Positioning context for the path field's folder-suggestion dropdown. */
+.sftp-pane__path-wrap {
+  position: relative;
+  width: 100%;
+}
+
+/* Folder suggestions shown while typing a path. Visual style matches the
+ * other dropdown popups; the rows use the mono font like the path field. */
+.sftp-pane__path-suggest {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated, var(--color-bg));
+  box-shadow: var(--shadow-sm);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.sftp-pane__path-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sftp-pane__path-option--active {
+  background: var(--color-bg-subtle);
+  color: var(--color-primary);
+}
+
+.sftp-pane__path-option-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.sftp-pane__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* "Show hidden" checkbox, pushed to the right edge of the toolbar. */
+.sftp-pane__hidden-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sftp-pane__hidden-toggle input {
+  cursor: pointer;
+}
+
+.sftp-pane__hidden-toggle:has(input:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sftp-pane__body {
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sftp-pane__body.is-drop-target {
+  background: var(--color-accent-subtle);
+  outline: 2px dashed var(--color-success);
+  outline-offset: -4px;
+}
+
+/* "Copy here" hint floated at the top of the pane body when the empty area is
+   the drop target (copy into the current directory). */
+.sftp-pane__drop-hint {
+  position: sticky;
+  top: 6px;
+  z-index: 5;
+  margin: 6px auto;
+  width: fit-content;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--color-success);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+}
+
+/* Per-folder-row hint ("Copy to this folder"), replacing the size column on the
+   hovered directory during a drag. */
+.sftp-row__drop-hint {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-success);
+  white-space: nowrap;
+}
+
+.sftp-pane__error {
+  margin: 12px 14px;
+  font-size: 13px;
+  color: var(--color-danger);
+}
+
+.sftp-pane__list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.sftp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  cursor: default;
+  user-select: none;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.sftp-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.sftp-row.is-selected {
+  background: var(--color-accent-subtle);
+}
+
+.sftp-row--dir {
+  cursor: pointer;
+}
+
+.sftp-row.sftp-row--drop-target {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  background: var(--color-accent-subtle);
+}
+
+.sftp-row__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.sftp-row--dir .sftp-row__icon {
+  color: var(--color-primary);
+}
+
+.sftp-row__name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sftp-row__size {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
