@@ -1194,14 +1194,28 @@
         "aliasInvalid": "Use letters, digits and . _ - : @ * ? (no leading dash).",
         "hostNamePlaceholder": "e.g. 203.0.113.10 or host.example.com",
         "portInvalid": "Port must be 1-65535.",
-        "renameWarning": "Changing a pattern name reassigns these settings to a different group of hosts."
+        "renameWarning": "Changing a pattern name reassigns these settings to a different group of hosts.",
+        "sshPasswordLabel": "Saved password",
+        "sshPasswordInputLabel": "SSH password for {{alias}}",
+        "sshPasswordSet": "Set password…",
+        "sshPasswordChange": "Change…",
+        "sshPasswordSave": "Save password",
+        "sshPasswordClear": "Clear",
+        "sshPasswordStatusSaved": "Saved ✓",
+        "sshPasswordStatusNone": "Not saved — keys/agent will be used.",
+        "sshPasswordSaved": "SSH password saved",
+        "sshPasswordSaveError": "Failed to save SSH password",
+        "sshPasswordCleared": "SSH password cleared",
+        "sshPasswordClearError": "Failed to clear SSH password",
+        "sshPasswordHint": "Stored in your OS keychain for this host so connections (run & file transfer) can authenticate without a prompt. SSH keys are preferred; the password is a fallback. (Unix only.)"
       },
       "source": {
         "open-ssh-config": "OpenSSH",
         "putty": "PuTTY",
         "wsl": "WSL",
         "system-config": "System"
-      }
+      },
+      "openFiles": "Open files"
     },
     "userLoadFailed": "Failed to load environment variables.",
     "rootNoPassword": "To view the root environment, an administrator password is required.",
@@ -1260,5 +1274,44 @@
     "dismissBuilder": "Close flag builder",
     "useShortFlag": "short form",
     "flagSearchPlaceholder": "Search flag…"
+  },
+  "sftp": {
+    "title": "Files — {{alias}}",
+    "localhost": "localhost",
+    "pathLabel": "Current path (Enter to go)",
+    "pathSuggestLabel": "Folders",
+    "showHidden": "Show hidden",
+    "showHiddenHint": "{{count}} hidden item(s)",
+    "dragCopyBadge": "Copy",
+    "dropHere": "Copy here",
+    "dropToFolder": "Copy to this folder",
+    "log": {
+      "toggle": "Transfer history",
+      "title": "Transfers",
+      "clear": "Clear history",
+      "failed": "Failed",
+      "summaryOk": "{{ok}} transferred",
+      "summaryErrors": "{{ok}} done, {{errors}} failed",
+      "dir": {
+        "upload": "uploaded",
+        "download": "downloaded",
+        "local": "moved (local)",
+        "remote": "moved (remote)"
+      }
+    },
+    "transferring": "Transferring…",
+    "newFolderTitle": "New folder",
+    "renameTitle": "Rename",
+    "deleteTitle": "Delete",
+    "deleteConfirm": "Delete {{count}} item(s)? This cannot be undone.",
+    "actions": {
+      "copy": "Copy",
+      "cut": "Cut",
+      "paste": "Paste",
+      "delete": "Delete",
+      "rename": "Rename",
+      "newFolder": "New folder",
+      "refresh": "Refresh"
+    }
   }
 }

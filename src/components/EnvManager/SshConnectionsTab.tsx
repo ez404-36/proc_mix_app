@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ReactElement } from 'react';
 import { useTranslation } from 'react-i18next';
-import { EditIcon, PlusIcon, RerunIcon, TrashIcon, ViewIcon } from '../icons';
+import { EditIcon, FolderIcon, PlusIcon, RerunIcon, TrashIcon, ViewIcon } from '../icons';
 import { ConfirmDialog } from '../ConfirmDialog';
+import { SftpManager } from '../Sftp/SftpManager';
 import { useSshHostStore, selectCheckState } from '../../stores/sshHostStore';
 import type { HostCheckState } from '../../stores/sshHostStore';
 import { subscribeSshConfigChanges } from '../../services/sshConnectionService';
@@ -42,6 +43,8 @@ export function SshConnectionsTab(): ReactElement {
   const [form, setForm] = useState<FormState>(null);
   const [pendingDelete, setPendingDelete] = useState<SshHostView | null>(null);
   const [viewing, setViewing] = useState<SshHostView | null>(null);
+  /** Alias whose SFTP file manager is open, or `null`. */
+  const [filesAlias, setFilesAlias] = useState<string | null>(null);
 
   useEffect(() => {
     void load();
@@ -115,6 +118,7 @@ export function SshConnectionsTab(): ReactElement {
               onView={() => setViewing(host)}
               onEdit={() => setForm({ host })}
               onDelete={() => setPendingDelete(host)}
+              onOpenFiles={() => setFilesAlias(host.name)}
             />
           ))}
         </ul>
@@ -132,6 +136,10 @@ export function SshConnectionsTab(): ReactElement {
 
       {viewing !== null && (
         <SshHostViewModal host={viewing} onClose={() => setViewing(null)} />
+      )}
+
+      {filesAlias !== null && (
+        <SftpManager alias={filesAlias} onClose={() => setFilesAlias(null)} />
       )}
 
       {form !== null && (
@@ -179,9 +187,16 @@ interface SshHostRowProps {
   onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onOpenFiles: () => void;
 }
 
-function SshHostRow({ host, onView, onEdit, onDelete }: SshHostRowProps): ReactElement {
+function SshHostRow({
+  host,
+  onView,
+  onEdit,
+  onDelete,
+  onOpenFiles,
+}: SshHostRowProps): ReactElement {
   const { t } = useTranslation();
   const check = useSshHostStore((s) => s.check);
   const checkState = useSshHostStore((s) =>
@@ -227,6 +242,18 @@ function SshHostRow({ host, onView, onEdit, onDelete }: SshHostRowProps): ReactE
           {isChecking
             ? t('envManager.ssh.checking', { defaultValue: 'Checking…' })
             : t('envManager.ssh.check', { defaultValue: 'Check' })}
+        </button>
+
+        <button
+          type="button"
+          className="btn btn--view"
+          onClick={onOpenFiles}
+          aria-label={t('envManager.ssh.openFiles', { defaultValue: 'Open files' })}
+          title={t('envManager.ssh.openFiles', { defaultValue: 'Open files' })}
+        >
+          <span className="btn--view-icon">
+            <FolderIcon />
+          </span>
         </button>
 
         {/* Edit only for blocks ProcMix can rewrite; Delete only for

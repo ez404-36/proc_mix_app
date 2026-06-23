@@ -142,7 +142,7 @@ describe("WorkflowView", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("closes on Esc and on backdrop click", () => {
+  it("does NOT close on Esc, but closes on backdrop click", () => {
     const onClose = vi.fn();
     render(
       <WorkflowView
@@ -158,7 +158,7 @@ describe("WorkflowView", () => {
     act(() => {
       fireEvent.keyDown(dialog, { key: "Escape" });
     });
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
 
     // The backdrop is the dialog's parent; clicking it (target === backdrop)
     // closes. parentElement is the `.command-form__backdrop`.
@@ -166,6 +166,6 @@ describe("WorkflowView", () => {
     act(() => {
       fireEvent.click(backdrop);
     });
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

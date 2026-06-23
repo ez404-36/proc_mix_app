@@ -175,6 +175,21 @@ fn build_remote_argv(
         "StrictHostKeyChecking=accept-new".into(),
         "-o".into(),
         "ConnectionAttempts=1".into(),
+    ];
+    // Password auth: force the password method and stop offering public keys.
+    // Without this, a host with several keys in the agent/`~/.ssh/` offers each
+    // one first and the server cuts the connection with "Too many authentication
+    // failures" (its MaxAuthTries) before password auth is ever reached. Go
+    // straight to the prompt our askpass helper answers.
+    if auth == RemoteAuth::Password {
+        argv.push("-o".into());
+        argv.push("PubkeyAuthentication=no".into());
+        argv.push("-o".into());
+        argv.push("IdentitiesOnly=yes".into());
+        argv.push("-o".into());
+        argv.push("PreferredAuthentications=password,keyboard-interactive".into());
+    }
+    argv.extend([
         // Destination alias: a single standalone token. Validated upstream by
         // is_safe_alias (no leading '-', no shell metacharacters).
         alias.to_string(),
@@ -182,7 +197,7 @@ fn build_remote_argv(
         // command, forwarded to the server.
         "--".into(),
         remote_shell_program.to_string(),
-    ];
+    ]);
     for prefix in remote_shell_prefix {
         argv.push((*prefix).to_string());
     }
@@ -210,7 +225,9 @@ fn build_remote_argv(
 /// Returns an error string when neither exists, so the caller fails the run
 /// with a clear message instead of spawning `ssh` with a broken `SSH_ASKPASS`.
 #[cfg(unix)]
-fn askpass_helper_path(resource_candidate: Option<&std::path::Path>) -> Result<PathBuf, String> {
+pub(crate) fn askpass_helper_path(
+    resource_candidate: Option<&std::path::Path>,
+) -> Result<PathBuf, String> {
     // 1. Bundled resource location (when the caller could resolve one).
     if let Some(cand) = resource_candidate {
         if cand.is_file() {
@@ -1141,6 +1158,28 @@ mod remote_argv_tests {
         // The rest of the contract is unchanged.
         assert!(argv.iter().any(|a| a.starts_with("ConnectTimeout=")));
         assert!(argv.iter().any(|a| a == "--"));
+    }
+
+    /// Password auth must disable pubkey and prefer the password method so a
+    /// multi-key host does not exhaust the server's MaxAuthTries with key offers
+    /// ("Too many authentication failures") before password auth is reached.
+    /// Key auth must NOT carry these (it relies on keys/agent).
+    #[test]
+    fn password_auth_disables_pubkey_and_prefers_password() {
+        let pw = build_remote_argv("h", RemoteAuth::Password, "sh", &["-c"], "x", &[]);
+        assert!(pw.iter().any(|a| a == "PubkeyAuthentication=no"), "{pw:?}");
+        assert!(pw.iter().any(|a| a == "IdentitiesOnly=yes"), "{pw:?}");
+        assert!(
+            pw.iter()
+                .any(|a| a == "PreferredAuthentications=password,keyboard-interactive"),
+            "{pw:?}"
+        );
+
+        let keys = build_remote_argv("h", RemoteAuth::Keys, "sh", &["-c"], "x", &[]);
+        assert!(!keys.iter().any(|a| a == "PubkeyAuthentication=no"));
+        assert!(!keys
+            .iter()
+            .any(|a| a.starts_with("PreferredAuthentications=")));
     }
 
     /// The alias must be a single standalone token, never concatenated with an

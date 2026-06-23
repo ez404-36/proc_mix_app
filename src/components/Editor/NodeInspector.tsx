@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
   ChangeEvent,
-  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactElement,
 } from "react";
@@ -1198,13 +1197,6 @@ export function NodeInspector({
     applyRef.current?.focus();
   }, []);
 
-  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onClose();
-    }
-  };
-
   const handleBackdropClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
     if (e.target === e.currentTarget) onClose();
   };
@@ -1212,11 +1204,7 @@ export function NodeInspector({
   const kindLabel = t(`editor.nodes.${kind}`);
 
   const modal = (
-    <div
-      className="command-form__backdrop"
-      onClick={handleBackdropClick}
-      onKeyDown={handleKeyDown}
-    >
+    <div className="command-form__backdrop" onClick={handleBackdropClick}>
       <div
         className="command-form wf-node-modal"
         role="dialog"

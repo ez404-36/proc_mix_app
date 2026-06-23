@@ -5,7 +5,6 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
@@ -158,13 +157,6 @@ export function AdminPasswordPrompt(): React.ReactElement | null {
     }
   };
 
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      handleCancel();
-    }
-  };
-
   if (!visible) return null;
 
   const titleId = "admin-password-prompt-title";
@@ -182,7 +174,6 @@ export function AdminPasswordPrompt(): React.ReactElement | null {
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        onKeyDown={handleKeyDown}
       >
         <div className="command-form__header">
           <h2 id={titleId} className="command-form__title">

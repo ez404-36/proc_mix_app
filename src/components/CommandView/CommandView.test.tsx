@@ -118,7 +118,7 @@ describe("CommandView", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("closes on Esc and on backdrop click", () => {
+  it("does NOT close on Esc, but closes on backdrop click", () => {
     const onClose = vi.fn();
     render(
       <CommandView
@@ -134,12 +134,12 @@ describe("CommandView", () => {
     act(() => {
       fireEvent.keyDown(dialog, { key: "Escape" });
     });
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
 
     const backdrop = dialog.parentElement as HTMLElement;
     act(() => {
       fireEvent.click(backdrop);
     });
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

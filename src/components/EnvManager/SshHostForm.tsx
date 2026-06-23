@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
-import type {
-  KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactElement,
-} from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { Message } from '@arco-design/web-react';
 import type { SshHostDraft, SshHostView } from '../../types/sshHost';
+import { getCachedPlatform } from '../../utils/platform';
+import {
+  clearSshPassword,
+  hasSshPassword,
+  setSshPassword,
+} from '../../services/sshConnectionService';
 
 interface SshHostFormProps {
   /** The host being edited, or `null` for a create. */
@@ -60,15 +63,96 @@ export function SshHostForm({ host, onClose, onSave }: SshHostFormProps): ReactE
     setTimeout(() => nameRef.current?.focus(), 0);
   }, []);
 
+  // ---- Saved SSH password (Unix only) ------------------------------------
+  // Password auth is Unix-only (the askpass transport is unreliable on
+  // Win32-OpenSSH), so the control is hidden on Windows. A saved password is
+  // keyed by the host's PERSISTED alias (`host.name`) — so it is only offered
+  // when EDITING a concrete (non-pattern) host, not while creating one or for a
+  // wildcard rule. Once saved it is used by BOTH `ssh` remote runs and SFTP.
+  // The value never crosses back to the frontend; we only learn whether one
+  // exists and can set/clear it.
+  const isWindows = getCachedPlatform() === 'windows';
+  const passwordAlias = isEdit && host !== null ? host.name : '';
+  const canManagePassword =
+    !isWindows && passwordAlias !== '' && !isPattern(passwordAlias);
+
+  const [passwordStored, setPasswordStored] = useState(false);
+  const [editingPassword, setEditingPassword] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordBusy, setPasswordBusy] = useState(false);
+
+  // Refresh the "is a password saved?" indicator for the host being edited. A
+  // read failure (keychain unavailable) is treated as "not saved" rather than
+  // surfaced — the user can still attempt to set one, which reports the real
+  // error. Guard against a late resolve after the modal closed.
+  useEffect(() => {
+    if (!canManagePassword) {
+      setPasswordStored(false);
+      return;
+    }
+    let active = true;
+    void hasSshPassword(passwordAlias)
+      .then((stored) => {
+        if (active) setPasswordStored(stored);
+      })
+      .catch(() => {
+        if (active) setPasswordStored(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [canManagePassword, passwordAlias]);
+
+  const handleSavePassword = useCallback(async (): Promise<void> => {
+    if (passwordInput === '' || passwordAlias === '') return;
+    setPasswordBusy(true);
+    try {
+      await setSshPassword(passwordAlias, passwordInput);
+      setPasswordStored(true);
+      setEditingPassword(false);
+      setPasswordInput('');
+      Message.success(
+        t('envManager.ssh.form.sshPasswordSaved', {
+          defaultValue: 'SSH password saved',
+        }),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Message.error(
+        `${t('envManager.ssh.form.sshPasswordSaveError', {
+          defaultValue: 'Failed to save SSH password',
+        })}: ${msg}`,
+      );
+    } finally {
+      setPasswordBusy(false);
+    }
+  }, [passwordAlias, passwordInput, t]);
+
+  const handleClearPassword = useCallback(async (): Promise<void> => {
+    if (passwordAlias === '') return;
+    setPasswordBusy(true);
+    try {
+      await clearSshPassword(passwordAlias);
+      setPasswordStored(false);
+      Message.success(
+        t('envManager.ssh.form.sshPasswordCleared', {
+          defaultValue: 'SSH password cleared',
+        }),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Message.error(
+        `${t('envManager.ssh.form.sshPasswordClearError', {
+          defaultValue: 'Failed to clear SSH password',
+        })}: ${msg}`,
+      );
+    } finally {
+      setPasswordBusy(false);
+    }
+  }, [passwordAlias, t]);
+
   const handleBackdropClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
     if (e.target === e.currentTarget && !saving) onClose();
-  };
-
-  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === 'Escape' && !saving) {
-      e.preventDefault();
-      onClose();
-    }
   };
 
   const validate = (): boolean => {
@@ -138,11 +222,7 @@ export function SshHostForm({ host, onClose, onSave }: SshHostFormProps): ReactE
     (isPattern(host.name) || isPattern(name.trim()));
 
   const modal = (
-    <div
-      className="command-form__backdrop"
-      onClick={handleBackdropClick}
-      onKeyDown={handleKeyDown}
-    >
+    <div className="command-form__backdrop" onClick={handleBackdropClick}>
       <div
         className="command-form command-form--meta"
         role="dialog"
@@ -242,6 +322,109 @@ export function SshHostForm({ host, onClose, onSave }: SshHostFormProps): ReactE
             placeholder="~/.ssh/id_ed25519"
           />
         </div>
+
+        {/* Saved SSH password (Unix only). Keyed by the persisted alias, so it
+            is offered only when editing a concrete host. Once saved it is used
+            by both `ssh` remote runs and SFTP file transfers. The value is held
+            in the OS keychain by the backend and never read back here. */}
+        {canManagePassword && (
+          <div className="form-field ssh-host-form__password">
+            <label className="form-field__label" htmlFor="ssh-form-password">
+              {t('envManager.ssh.form.sshPasswordLabel', {
+                defaultValue: 'Saved password',
+              })}
+            </label>
+
+            {editingPassword ? (
+              <div className="ssh-host-form__password-row">
+                <input
+                  id="ssh-form-password"
+                  type="password"
+                  className="input"
+                  autoComplete="off"
+                  aria-label={t('envManager.ssh.form.sshPasswordInputLabel', {
+                    defaultValue: 'SSH password for {{alias}}',
+                    alias: passwordAlias,
+                  })}
+                  value={passwordInput}
+                  disabled={passwordBusy}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleSavePassword();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setEditingPassword(false);
+                      setPasswordInput('');
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  disabled={passwordBusy || passwordInput === ''}
+                  onClick={() => void handleSavePassword()}
+                >
+                  {t('envManager.ssh.form.sshPasswordSave', { defaultValue: 'Save' })}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  disabled={passwordBusy}
+                  onClick={() => {
+                    setEditingPassword(false);
+                    setPasswordInput('');
+                  }}
+                >
+                  {t('common.cancel')}
+                </button>
+              </div>
+            ) : (
+              <div className="ssh-host-form__password-row">
+                <span className="form-hint" role="note">
+                  {passwordStored
+                    ? t('envManager.ssh.form.sshPasswordStatusSaved', {
+                        defaultValue: 'Saved ✓',
+                      })
+                    : t('envManager.ssh.form.sshPasswordStatusNone', {
+                        defaultValue: 'Not saved — keys/agent will be used.',
+                      })}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  disabled={passwordBusy}
+                  onClick={() => {
+                    setPasswordInput('');
+                    setEditingPassword(true);
+                  }}
+                >
+                  {passwordStored
+                    ? t('envManager.ssh.form.sshPasswordChange', { defaultValue: 'Change…' })
+                    : t('envManager.ssh.form.sshPasswordSet', { defaultValue: 'Set password…' })}
+                </button>
+                {passwordStored && (
+                  <button
+                    type="button"
+                    className="btn btn--danger"
+                    disabled={passwordBusy}
+                    onClick={() => void handleClearPassword()}
+                  >
+                    {t('envManager.ssh.form.sshPasswordClear', { defaultValue: 'Clear' })}
+                  </button>
+                )}
+              </div>
+            )}
+
+            <p className="form-hint">
+              {t('envManager.ssh.form.sshPasswordHint', {
+                defaultValue:
+                  'Stored in your OS keychain for this host so connections (run & file transfer) can authenticate without a prompt. SSH keys are preferred; the password is a fallback. (Unix only.)',
+              })}
+            </p>
+          </div>
+        )}
 
         {submitError !== null && (
           <p className="env-manager__root-error">{submitError}</p>

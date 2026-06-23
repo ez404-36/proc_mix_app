@@ -204,6 +204,16 @@ pub fn run() {
             commands::has_ssh_password,
             commands::set_ssh_password,
             commands::clear_ssh_password,
+            commands::sftp::sftp_list_dir,
+            commands::sftp::sftp_download,
+            commands::sftp::sftp_upload,
+            commands::sftp::sftp_delete,
+            commands::sftp::sftp_rename,
+            commands::sftp::sftp_mkdir,
+            commands::sftp::list_local_dir,
+            commands::sftp::local_delete,
+            commands::sftp::local_rename,
+            commands::sftp::local_mkdir,
         ])
         // Build (not `run`) so we can observe `RunEvent`s. The exit hook below
         // needs `app` and the managed `ExecutorState` to tear running children

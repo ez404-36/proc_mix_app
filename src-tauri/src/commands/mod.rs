@@ -1,5 +1,7 @@
 // Tauri commands exposed to the frontend via invoke().
 
+pub mod sftp;
+
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 

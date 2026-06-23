@@ -26,6 +26,13 @@ mod waiter;
 // `crate::core::executor::*` unchanged.
 pub use types::*;
 
+// Shared with `core::sftp`, which spawns the system `sftp` binary using the
+// same `procmix-askpass` password transport and Unix process-group setup as a
+// remote `ssh` run. Re-exported (rather than duplicated) so the askpass-helper
+// resolution and the `setsid` shim stay single-sourced.
+#[cfg(unix)]
+pub(crate) use command_build::{askpass_helper_path, libc_setsid};
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;

@@ -54,11 +54,8 @@ export function ConfirmDialog({
   if (!open) return null;
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onCancel();
-      return;
-    }
+    // Enter confirms. Escape intentionally does NOT close — the dialog closes
+    // only via an explicit button or a backdrop click.
     if (e.key === "Enter") {
       e.preventDefault();
       onConfirm();

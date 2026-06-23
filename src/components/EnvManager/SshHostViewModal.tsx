@@ -1,9 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type {
-  KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactElement,
-} from 'react';
+import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { SshHostView, SshSource } from '../../types/sshHost';
@@ -48,12 +44,6 @@ export function SshHostViewModal({ host, onClose }: SshHostViewModalProps): Reac
   const handleBackdropClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
     if (e.target === e.currentTarget) onClose();
   };
-  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-    }
-  };
 
   const rows: Array<[string, string | null]> = [
     [t('envManager.ssh.view.source', { defaultValue: 'Source' }), sourceLabel(host.id.source)],
@@ -64,11 +54,7 @@ export function SshHostViewModal({ host, onClose }: SshHostViewModalProps): Reac
   ];
 
   const modal = (
-    <div
-      className="command-form__backdrop"
-      onClick={handleBackdropClick}
-      onKeyDown={handleKeyDown}
-    >
+    <div className="command-form__backdrop" onClick={handleBackdropClick}>
       <div
         className="command-form command-form--view ssh-host-view"
         role="dialog"
