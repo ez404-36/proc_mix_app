@@ -7,6 +7,14 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // jsdom startup and module transform can take tens of seconds on a
+    // loaded / slow CI machine (observed environment setup > 60s). The
+    // default 10s test/hook timeout then trips an unrelated `afterEach`
+    // (fake-timer cleanup) with "Hook timed out in 10000ms" even though
+    // the assertions themselves pass. Raise both ceilings so a slow host
+    // does not produce spurious timeout failures.
+    testTimeout: 30000,
+    hookTimeout: 30000,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     // `vitest bench` discovers these separately from the test `include`
     // above (which is overridden, so the default bench glob would not apply).
