@@ -85,3 +85,45 @@ export function subscribeSshConfigChanges(handler: () => void): () => void {
     void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
   };
 }
+
+// ---------------------------------------------------------------------------
+// Persistent per-host SSH password (Phase 2).
+//
+// Optional password-auth credential for a remote host, stored in the OS
+// keychain by the backend (`security::ssh_password`, account
+// `ssh-password:<alias>`). The password VALUE never crosses IPC: the frontend
+// can only set it, clear it, or ask whether one exists. The actual secret is
+// read in-process by the `procmix-askpass` sidecar at run time. This mirrors
+// the admin-password contract — keys/agent auth remain the recommended default.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a password is currently stored for `alias`. Drives the command
+ * form's "Set password" / "Clear saved password" toggle and the saved
+ * indicator. The alias is allow-list validated in Rust before any keychain
+ * access; an unsafe alias rejects.
+ */
+export async function hasSshPassword(alias: string): Promise<boolean> {
+  return invoke<boolean>('has_ssh_password', { alias });
+}
+
+/**
+ * Persist `password` for `alias` in the OS keychain. The backend trims the
+ * value and rejects an empty one (after trimming). Rejects when the keychain
+ * is unavailable (e.g. Linux headless without a Secret Service) or the alias
+ * is unsafe.
+ */
+export async function setSshPassword(
+  alias: string,
+  password: string,
+): Promise<void> {
+  await invoke('set_ssh_password', { alias, password });
+}
+
+/**
+ * Remove the stored password for `alias`. Idempotent — clearing when nothing
+ * is stored succeeds, so callers need not check {@link hasSshPassword} first.
+ */
+export async function clearSshPassword(alias: string): Promise<void> {
+  await invoke('clear_ssh_password', { alias });
+}
