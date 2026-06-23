@@ -16,8 +16,30 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 use crate::core::parser::ResolvedScript;
+use crate::core::ssh::is_safe_alias;
 
-use super::types::{ExecuteRequest, ERR_INVALID_WORKING_DIR};
+use super::types::{
+    ExecuteRequest, ExecutionTarget, ERR_INVALID_REMOTE_TARGET, ERR_INVALID_WORKING_DIR,
+    ERR_REMOTE_ELEVATION_UNSUPPORTED, ERR_REMOTE_TARGET_UNRESOLVED, ERR_SSH_PASSWORD_BACKEND_PREFIX,
+};
+
+/// How a remote run authenticates, which changes the `ssh` argv + environment.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RemoteAuth {
+    /// Keys / agent / `~/.ssh/config`. `BatchMode=yes` forbids every prompt so
+    /// a non-interactive host fails fast. The default for a remote run.
+    Keys,
+    /// Password via the `SSH_ASKPASS` helper. `BatchMode` is dropped (it would
+    /// suppress askpass); a single password prompt is allowed. Unix only.
+    Password,
+}
+
+/// TCP connect budget handed to `ssh` via `-o ConnectTimeout` for a remote
+/// run. Mirrors the reachability probe's budget (`core::ssh::check`). The
+/// executor's own optional `timeout_seconds` is the wall-clock backstop for
+/// the whole run; this only bounds the initial connect so an unreachable host
+/// fails fast instead of hanging the spawn.
+const REMOTE_CONNECT_TIMEOUT_SECS: u64 = 8;
 
 /// Map a logical shell name to the (executable, prefix-arguments) pair.
 ///
@@ -55,6 +77,145 @@ pub(super) fn default_shell() -> &'static str {
     } else {
         "bash"
     }
+}
+
+/// Map a logical shell name to the (executable, prefix-arguments) pair used on
+/// the REMOTE host.
+///
+/// The OS of a remote host is unknown (it is not recorded in `~/.ssh/config`),
+/// so we assume POSIX — the overwhelmingly common SSH case. A command's
+/// declared shell is honoured when it is POSIX-invokable:
+///   - "bash" / "zsh" / "sh" / "fish" -> `<shell> -c <script>`
+///   - "pwsh"                          -> `pwsh -NoProfile -Command <script>`
+///
+/// Windows-only shells (`cmd`, `powershell`) cannot be assumed to exist on a
+/// POSIX host, so they fall back to `sh -c`. An unknown shell also falls back
+/// to `sh` (the most portable choice for a remote target — `bash` may be
+/// absent on minimal hosts, but `sh` is mandated by POSIX). The form surfaces
+/// this so the user is not surprised on a Windows-SSH target.
+pub(super) fn remote_shell_invocation(shell: &str) -> (&'static str, &'static [&'static str]) {
+    match shell {
+        "pwsh" => ("pwsh", &["-NoProfile", "-Command"]),
+        "fish" => ("fish", &["-c"]),
+        "zsh" => ("zsh", &["-c"]),
+        "bash" => ("bash", &["-c"]),
+        "sh" => ("sh", &["-c"]),
+        // `cmd` / `powershell` (Windows-only) and any unknown value fall back to
+        // the portable POSIX `sh`.
+        _ => ("sh", &["-c"]),
+    }
+}
+
+/// Build the argv for a REMOTE run over the system `ssh` binary.
+///
+/// Shape (key auth):
+/// ```text
+/// ssh -o BatchMode=yes -o ConnectTimeout=<N> -o StrictHostKeyChecking=accept-new
+///     -o ConnectionAttempts=1 <alias> -- <remote_shell> <prefix...> <script> [extra...]
+/// ```
+///
+/// For [`RemoteAuth::Password`] the leading `BatchMode=yes` is replaced with
+/// `NumberOfPasswordPrompts=1`: `BatchMode` suppresses the `SSH_ASKPASS`
+/// helper, so it must be off, but we still allow only a SINGLE password prompt
+/// so a wrong password fails fast instead of retrying. The askpass env vars are
+/// set on the `Command` by the caller, not here.
+///
+/// Invariants (locked by unit tests):
+///   - `ssh` is spawned directly; there is NO local shell, so the script body
+///     is never interpreted locally.
+///   - `alias` is a single standalone token (validated by `is_safe_alias`
+///     before this is called), never concatenated with a flag.
+///   - `--` separates ssh's own options/destination from the remote command,
+///     so a remote shell name starting with `-` can't be misread as an ssh
+///     option.
+///   - `script` is exactly ONE argv element. `ssh` re-quotes each remote
+///     argument as a single token when it builds the command line sent to the
+///     server, so the remote shell receives the script verbatim — exactly one
+///     remote interpretation, no local one.
+///   - key auth carries `BatchMode=yes` (never blocks on a prompt); password
+///     auth carries `NumberOfPasswordPrompts=1` (exactly one attempt).
+///
+/// Pure `Vec<String>` so tests assert the exact shape without spawning.
+fn build_remote_argv(
+    alias: &str,
+    auth: RemoteAuth,
+    remote_shell_program: &str,
+    remote_shell_prefix: &[&str],
+    script: &str,
+    extra_args: &[String],
+) -> Vec<String> {
+    // First option pair depends on auth: keys forbid every prompt; password
+    // allows exactly one (BatchMode would suppress the askpass helper).
+    let (first_opt, first_val): (&str, String) = match auth {
+        RemoteAuth::Keys => ("-o", "BatchMode=yes".to_string()),
+        RemoteAuth::Password => ("-o", "NumberOfPasswordPrompts=1".to_string()),
+    };
+    let mut argv: Vec<String> = vec![
+        first_opt.into(),
+        first_val,
+        "-o".into(),
+        format!("ConnectTimeout={REMOTE_CONNECT_TIMEOUT_SECS}"),
+        "-o".into(),
+        "StrictHostKeyChecking=accept-new".into(),
+        "-o".into(),
+        "ConnectionAttempts=1".into(),
+        // Destination alias: a single standalone token. Validated upstream by
+        // is_safe_alias (no leading '-', no shell metacharacters).
+        alias.to_string(),
+        // End ssh's options + destination; everything after is the remote
+        // command, forwarded to the server.
+        "--".into(),
+        remote_shell_program.to_string(),
+    ];
+    for prefix in remote_shell_prefix {
+        argv.push((*prefix).to_string());
+    }
+    // The script is a SINGLE argv element — ssh quotes it as one token when it
+    // assembles the remote command line, so the remote shell sees it verbatim.
+    argv.push(script.to_string());
+    for a in extra_args {
+        argv.push(a.clone());
+    }
+    argv
+}
+
+/// Resolve the absolute path to the `procmix-askpass` sidecar.
+///
+/// Checked in order:
+///   1. `resource_candidate` — the bundled location, resolved by the caller
+///      from the Tauri `PathResolver` (`BaseDirectory::Resource`). In an
+///      installed app the helper ships via `bundle.resources`, which lands in
+///      the platform resource dir (macOS `Contents/Resources`, Linux
+///      `/usr/lib/<app>`), NOT next to the executable — so this must be tried.
+///   2. `current_exe()`-sibling — the dev/`cargo build` layout, where both
+///      binaries sit in `target/<profile>/`. Also covers any packager that
+///      happens to co-locate them.
+///
+/// Returns an error string when neither exists, so the caller fails the run
+/// with a clear message instead of spawning `ssh` with a broken `SSH_ASKPASS`.
+#[cfg(unix)]
+fn askpass_helper_path(resource_candidate: Option<&std::path::Path>) -> Result<PathBuf, String> {
+    // 1. Bundled resource location (when the caller could resolve one).
+    if let Some(cand) = resource_candidate {
+        if cand.is_file() {
+            return Ok(cand.to_path_buf());
+        }
+    }
+    // 2. Sibling of the current executable (dev / co-located packaging).
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("cannot locate the askpass helper (current_exe): {e}"))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| "cannot locate the askpass helper (no parent dir)".to_string())?;
+    let helper = dir.join("procmix-askpass");
+    if helper.is_file() {
+        return Ok(helper);
+    }
+    Err(format!(
+        "askpass helper not found (resource: {:?}, sibling: {})",
+        resource_candidate,
+        helper.display()
+    ))
 }
 
 /// PowerShell-safe single-quoted string escape.
@@ -226,14 +387,166 @@ fn build_elevated_unix_argv(
 /// applies env overrides, wires stdout/stderr to pipes, sets stdin per
 /// platform/elevation, and on Unix installs the `setsid()` pre_exec so
 /// the child becomes a session leader (own process group) for tree kill.
+/// `askpass_resource_path` is the bundled `procmix-askpass` location resolved
+/// by the caller from the Tauri `PathResolver` (Resource base dir). It is only
+/// consulted on the remote password-auth path; pass `None` when there is no
+/// resolver (tests) or it could not be resolved — the resolver then falls back
+/// to the `current_exe()`-sibling layout.
 pub(super) fn build_command(
     program: &str,
     prefix_args: &[&str],
     resolved: &ResolvedScript,
     req: &ExecuteRequest,
     global_env: &std::collections::BTreeMap<String, String>,
+    #[cfg_attr(not(unix), allow(unused_variables))] askpass_resource_path: Option<
+        &std::path::Path,
+    >,
 ) -> Result<Command, String> {
     let extra_args: Vec<String> = resolved.args.clone();
+
+    // ------------------------------------------------------------------
+    // Remote branch (SSH). Handled first and returns early: a remote run
+    // shares none of the local working-dir validation, env application, or
+    // sudo/UAC elevation below. It spawns the system `ssh` binary directly
+    // (no local shell) with a fixed argv.
+    // ------------------------------------------------------------------
+    match &req.target {
+        ExecutionTarget::Local => { /* fall through to the local build below */ }
+        ExecutionTarget::RemotePrompt => {
+            // The frontend must resolve a "choose host at run time" target into
+            // a concrete Remote before invoking. Reaching the spawn path with it
+            // unresolved is a contract violation, not something we can run.
+            return Err(ERR_REMOTE_TARGET_UNRESOLVED.to_string());
+        }
+        ExecutionTarget::Remote { alias } => {
+            // Local sudo/UAC does not map onto a remote host; reject rather than
+            // silently dropping the user's elevation request.
+            if req.elevated {
+                return Err(ERR_REMOTE_ELEVATION_UNSUPPORTED.to_string());
+            }
+            // The alias is the only user-derived value reaching the local argv.
+            // Validate it with the SAME allow-list the reachability probe uses
+            // (no leading '-', no shell metacharacters) BEFORE it is spawned.
+            if !is_safe_alias(alias) {
+                return Err(format!("{ERR_INVALID_REMOTE_TARGET}{alias}"));
+            }
+
+            // Decide the auth path. A one-shot SSH password (blank treated as
+            // absent) selects password auth via the SSH_ASKPASS helper — Unix
+            // only. On Windows the field is ignored and we always use key auth.
+            let has_password = req
+                .ssh_password
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            #[cfg(unix)]
+            let auth = if has_password {
+                RemoteAuth::Password
+            } else {
+                RemoteAuth::Keys
+            };
+            #[cfg(not(unix))]
+            let auth = {
+                // Windows: remote password auth is unsupported; ignore the field.
+                let _ = has_password;
+                RemoteAuth::Keys
+            };
+
+            // The command's declared shell is the LOCAL logical name; map it to
+            // a POSIX remote invocation (falling back to `sh`). `program` here
+            // is the local shell program we'd have used; we re-derive the remote
+            // shell from its name so `sh`/`bash`/… stay consistent.
+            let (remote_program, remote_prefix) = remote_shell_invocation(program);
+            let argv = build_remote_argv(
+                alias,
+                auth,
+                remote_program,
+                remote_prefix,
+                &resolved.script,
+                &extra_args,
+            );
+
+            let mut c = Command::new("ssh");
+            c.args(&argv);
+            // English ssh diagnostics regardless of the user's locale, matching
+            // the reachability probe so surfaced messages stay stable.
+            c.env("LC_ALL", "C");
+            c.stdout(Stdio::piped()).stderr(Stdio::piped());
+            // No stdin: the remote script must not block waiting on input it
+            // cannot receive. Password auth is delivered via SSH_ASKPASS (a
+            // separate helper process), NOT stdin, so this holds for both auth
+            // paths.
+            c.stdin(Stdio::null());
+
+            // Password auth (Unix): park the one-shot password in a throwaway
+            // keychain entry keyed by the run id, and point `ssh` at the askpass
+            // helper. The password itself never enters `ssh`'s argv or env —
+            // only the opaque run id does (PROCMIX_ASKPASS_RUN_ID). The helper
+            // reads-and-deletes the entry; the run finalizer clears it too.
+            #[cfg(unix)]
+            if auth == RemoteAuth::Password {
+                // The run id is the execution id. `mod.rs` sets it on `req`
+                // before calling us, so it is always present here for a remote
+                // run; guard anyway rather than spawn with a bogus key.
+                let run_id = req
+                    .execution_id
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        format!("{ERR_SSH_PASSWORD_BACKEND_PREFIX}missing run id for password auth")
+                    })?;
+                let password = req
+                    .ssh_password
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .expect("has_password implies a non-blank ssh_password");
+
+                let helper = askpass_helper_path(askpass_resource_path)
+                    .map_err(|e| format!("{ERR_SSH_PASSWORD_BACKEND_PREFIX}{e}"))?;
+
+                // Park the secret BEFORE setting env, so a keychain failure
+                // aborts the run without ever spawning `ssh`.
+                crate::security::ssh_oneshot::put(run_id, password)
+                    .map_err(|e| format!("{ERR_SSH_PASSWORD_BACKEND_PREFIX}{e}"))?;
+
+                c.env("SSH_ASKPASS", &helper);
+                // OpenSSH >= 8.4: call askpass even though a TTY may be present
+                // /absent; combined with stdin=null + setsid (no controlling
+                // TTY) this reliably routes the prompt to our helper.
+                c.env("SSH_ASKPASS_REQUIRE", "force");
+                c.env("PROCMIX_ASKPASS_RUN_ID", run_id);
+                // DISPLAY is required by some older OpenSSH builds before they
+                // will invoke askpass at all; set a dummy value so the helper is
+                // reached even on a headless box. Harmless when unused.
+                c.env("DISPLAY", ":0");
+            }
+
+            // NOTE (limitations, see docs/ssh-remote-execution.md):
+            //   - `working_dir` is intentionally NOT applied — it would refer to
+            //     a path on THIS machine, not the remote host.
+            //   - `env` (per-command and global .env) is intentionally NOT
+            //     forwarded — ssh does not propagate env without server-side
+            //     SendEnv/AcceptEnv config.
+            // Both are surfaced as hints in the command form.
+            let _ = global_env;
+
+            // On Unix, put the LOCAL ssh process in its own group so cancel /
+            // timeout can kill it (closing the channel). The remote process is
+            // best-effort — killing ssh closes the connection but a detached
+            // remote process may outlive it (no PTY in this version).
+            #[cfg(unix)]
+            unsafe {
+                c.pre_exec(|| {
+                    let _ = libc_setsid();
+                    Ok(())
+                });
+            }
+
+            return Ok(c);
+        }
+    }
+
     // Only the Unix `sudo -E` path (and the no-elevation-support fallback)
     // reads this; the Windows UAC wrapper does not, where it would be unused.
     // `-E` (preserve env) matters when EITHER the command declares env OR a
@@ -694,5 +1007,322 @@ mod elevated_windows_argv_tests {
         assert_eq!(ps_single_quote("foo"), "'foo'");
         assert_eq!(ps_single_quote("foo'bar"), "'foo''bar'");
         assert_eq!(ps_single_quote(""), "''");
+    }
+}
+
+#[cfg(test)]
+mod remote_shell_invocation_tests {
+    use super::remote_shell_invocation;
+
+    #[test]
+    fn posix_shells_map_natively() {
+        assert_eq!(remote_shell_invocation("bash"), ("bash", &["-c"][..]));
+        assert_eq!(remote_shell_invocation("zsh"), ("zsh", &["-c"][..]));
+        assert_eq!(remote_shell_invocation("sh"), ("sh", &["-c"][..]));
+        assert_eq!(remote_shell_invocation("fish"), ("fish", &["-c"][..]));
+    }
+
+    #[test]
+    fn pwsh_maps_with_noprofile_command() {
+        assert_eq!(
+            remote_shell_invocation("pwsh"),
+            ("pwsh", &["-NoProfile", "-Command"][..])
+        );
+    }
+
+    /// Windows-only shells can't be assumed on a POSIX remote host, so they
+    /// fall back to `sh -c` rather than failing the run.
+    #[test]
+    fn windows_shells_fall_back_to_sh() {
+        assert_eq!(remote_shell_invocation("cmd"), ("sh", &["-c"][..]));
+        assert_eq!(remote_shell_invocation("powershell"), ("sh", &["-c"][..]));
+    }
+
+    /// Unknown shells fall back to the portable POSIX `sh` (NOT `bash`, which
+    /// the local fallback uses — a minimal remote host may lack bash).
+    #[test]
+    fn unknown_shell_falls_back_to_sh_not_bash() {
+        let (exe, args) = remote_shell_invocation("nushell-not-in-union");
+        assert_eq!(exe, "sh", "remote fallback must be sh, not bash");
+        assert_eq!(args, &["-c"]);
+    }
+}
+
+#[cfg(test)]
+mod remote_argv_tests {
+    use super::{build_remote_argv, RemoteAuth};
+
+    /// Baseline shape: the alias is a standalone token, `--` separates ssh
+    /// options from the remote command, and the remote shell + script follow.
+    #[test]
+    fn baseline_bash_shape() {
+        let argv = build_remote_argv("prod", RemoteAuth::Keys, "bash", &["-c"], "uptime", &[]);
+        let dd = argv.iter().position(|s| s == "--").expect("-- present");
+        // Alias appears exactly once, immediately before `--`.
+        assert_eq!(argv[dd - 1], "prod");
+        assert_eq!(argv[dd + 1], "bash");
+        assert_eq!(argv[dd + 2], "-c");
+        assert_eq!(argv[dd + 3], "uptime");
+    }
+
+    /// Key auth: BatchMode, ConnectTimeout and StrictHostKeyChecking must all be
+    /// present so a remote spawn never blocks on an interactive prompt.
+    #[test]
+    fn carries_batchmode_and_connect_timeout() {
+        let argv = build_remote_argv("h", RemoteAuth::Keys, "sh", &["-c"], "echo hi", &[]);
+        assert!(argv.iter().any(|a| a == "BatchMode=yes"));
+        assert!(argv.iter().any(|a| a.starts_with("ConnectTimeout=")));
+        assert!(argv.iter().any(|a| a == "StrictHostKeyChecking=accept-new"));
+        assert!(argv.iter().any(|a| a == "--"), "must end options with --");
+    }
+
+    /// Password auth: `BatchMode=yes` must NOT be present (it would suppress the
+    /// askpass helper); `NumberOfPasswordPrompts=1` replaces it so a wrong
+    /// password fails after a single attempt.
+    #[test]
+    fn password_auth_drops_batchmode_and_limits_prompts() {
+        let argv = build_remote_argv("h", RemoteAuth::Password, "sh", &["-c"], "echo hi", &[]);
+        assert!(
+            !argv.iter().any(|a| a == "BatchMode=yes"),
+            "BatchMode must be off for password auth (it suppresses askpass)"
+        );
+        assert!(
+            argv.iter().any(|a| a == "NumberOfPasswordPrompts=1"),
+            "password auth must cap prompts at 1"
+        );
+        // The rest of the contract is unchanged.
+        assert!(argv.iter().any(|a| a.starts_with("ConnectTimeout=")));
+        assert!(argv.iter().any(|a| a == "--"));
+    }
+
+    /// The alias must be a single standalone token, never concatenated with an
+    /// option flag — the core injection guard. Holds for both auth paths.
+    #[test]
+    fn alias_is_a_standalone_token() {
+        for auth in [RemoteAuth::Keys, RemoteAuth::Password] {
+            let argv = build_remote_argv("db-1", auth, "sh", &["-c"], "x", &[]);
+            assert_eq!(
+                argv.iter().filter(|s| s.as_str() == "db-1").count(),
+                1,
+                "alias must appear once as its own token ({auth:?})"
+            );
+            // No element merges the alias into a flag (e.g. `-odb-1`).
+            assert!(argv.iter().all(|s| !s.contains("db-1") || s == "db-1"));
+        }
+    }
+
+    /// Regression mirror of the local path: the script body is ONE argv
+    /// element. ssh re-quotes it as a single token, so the remote shell sees
+    /// it verbatim — no local interpretation, exactly one remote one.
+    #[test]
+    fn script_with_spaces_stays_a_single_argv_element() {
+        let script = "echo hello world && uname -a";
+        let argv = build_remote_argv("h", RemoteAuth::Keys, "bash", &["-c"], script, &[]);
+        assert_eq!(
+            argv.iter().filter(|s| s.as_str() == script).count(),
+            1,
+            "script must appear verbatim as one argv element"
+        );
+    }
+
+    /// Trailing extra args are appended AFTER the script, past the remote
+    /// shell — matching the local positional contract.
+    #[test]
+    fn extra_args_follow_the_script() {
+        let argv = build_remote_argv(
+            "h",
+            RemoteAuth::Keys,
+            "sh",
+            &["-c"],
+            "run",
+            &["one".to_string(), "two".to_string()],
+        );
+        let pos = argv.iter().position(|s| s == "run").expect("script present");
+        assert_eq!(argv[pos + 1], "one");
+        assert_eq!(argv[pos + 2], "two");
+    }
+
+    /// A multi-token remote prefix (pwsh) survives in order after `--`.
+    #[test]
+    fn pwsh_prefix_preserved_after_double_dash() {
+        let argv = build_remote_argv(
+            "h",
+            RemoteAuth::Keys,
+            "pwsh",
+            &["-NoProfile", "-Command"],
+            "Get-Process",
+            &[],
+        );
+        let dd = argv.iter().position(|s| s == "--").unwrap();
+        assert_eq!(argv[dd + 1], "pwsh");
+        assert_eq!(argv[dd + 2], "-NoProfile");
+        assert_eq!(argv[dd + 3], "-Command");
+        assert_eq!(argv[dd + 4], "Get-Process");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod askpass_path_tests {
+    use super::askpass_helper_path;
+
+    /// When the bundled resource candidate IS a real file, the resolver returns
+    /// it verbatim — without falling through to the `current_exe()` sibling.
+    /// (We use this very test binary as a stand-in "existing file".)
+    #[test]
+    fn prefers_existing_resource_candidate() {
+        let me = std::env::current_exe().unwrap();
+        let got = askpass_helper_path(Some(&me)).expect("resource candidate should resolve");
+        assert_eq!(got, me);
+    }
+
+    /// A non-existent resource candidate is skipped; the resolver falls through
+    /// to the sibling check. In the test harness the sibling
+    /// `procmix-askpass` doesn't exist next to the test binary, so we get the
+    /// clear "not found" error naming BOTH probed locations.
+    #[test]
+    fn missing_everywhere_errors_with_both_locations() {
+        let bogus = std::path::Path::new("/nonexistent/procmix-askpass-xyz");
+        let err = askpass_helper_path(Some(bogus)).expect_err("nothing should resolve");
+        assert!(err.contains("askpass helper not found"), "got: {err}");
+        // The error mentions the resource candidate we tried.
+        assert!(err.contains("procmix-askpass-xyz"), "got: {err}");
+    }
+
+    /// `None` resource candidate skips straight to the sibling probe (the dev
+    /// path). Here that also fails (no sibling helper in the test dir), but the
+    /// error must still be the clear not-found message.
+    #[test]
+    fn none_candidate_falls_back_to_sibling() {
+        let err = askpass_helper_path(None).expect_err("no sibling in test dir");
+        assert!(err.contains("askpass helper not found"), "got: {err}");
+    }
+}
+
+#[cfg(test)]
+mod build_command_remote_tests {
+    use super::*;
+    use crate::core::parser::ResolvedScript;
+    use std::collections::BTreeMap;
+
+    fn resolved(script: &str) -> ResolvedScript {
+        ResolvedScript {
+            script: script.to_string(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            working_dir: None,
+        }
+    }
+
+    fn remote_request(alias: &str, elevated: bool) -> ExecuteRequest {
+        let mut req: ExecuteRequest =
+            serde_json::from_value(serde_json::json!({ "script": "ignored" })).unwrap();
+        req.target = ExecutionTarget::Remote {
+            alias: alias.to_string(),
+        };
+        req.elevated = elevated;
+        req
+    }
+
+    /// A valid remote target builds an `ssh` command (program == "ssh"), not a
+    /// local shell — proving there is no local interpretation layer.
+    #[test]
+    fn remote_target_spawns_ssh_not_local_shell() {
+        let req = remote_request("prod", false);
+        let cmd = build_command("bash", &["-c"], &resolved("uptime"), &req, &BTreeMap::new(), None)
+            .expect("remote build ok");
+        let program = cmd.as_std().get_program().to_string_lossy().to_string();
+        assert_eq!(program, "ssh");
+    }
+
+    /// A remote run with NO password uses key auth — the argv carries
+    /// `BatchMode=yes` and there is no `SSH_ASKPASS` env. (The password path is
+    /// exercised at the `build_remote_argv` level since it requires a real
+    /// keychain + the bundled helper, neither present in a unit test.)
+    #[test]
+    fn remote_without_password_uses_key_auth_argv() {
+        let req = remote_request("prod", false);
+        let cmd = build_command("bash", &["-c"], &resolved("uptime"), &req, &BTreeMap::new(), None)
+            .expect("remote build ok");
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(
+            args.iter().any(|a| a == "BatchMode=yes"),
+            "key-auth remote must carry BatchMode=yes: {args:?}"
+        );
+        // No askpass env on the key path.
+        let has_askpass = cmd
+            .as_std()
+            .get_envs()
+            .any(|(k, _)| k == std::ffi::OsStr::new("SSH_ASKPASS"));
+        assert!(!has_askpass, "key-auth remote must not set SSH_ASKPASS");
+    }
+
+    /// An unsafe alias (leading '-', option injection) is rejected before any
+    /// spawn, with the pinned sentinel + the offending alias.
+    #[test]
+    fn unsafe_alias_is_rejected() {
+        for bad in ["-oProxyCommand=evil", "a b", "host;rm", "h$(x)", "*"] {
+            let req = remote_request(bad, false);
+            let err = build_command("bash", &["-c"], &resolved("x"), &req, &BTreeMap::new(), None)
+                .expect_err("must reject unsafe alias");
+            assert!(
+                err.starts_with(ERR_INVALID_REMOTE_TARGET),
+                "expected invalid-target sentinel for {bad:?}, got {err}"
+            );
+        }
+    }
+
+    /// Remote + elevation is unsupported in this version; reject with the
+    /// pinned sentinel rather than silently dropping elevation.
+    #[test]
+    fn remote_with_elevation_is_rejected() {
+        let req = remote_request("prod", true);
+        let err = build_command("bash", &["-c"], &resolved("x"), &req, &BTreeMap::new(), None)
+            .expect_err("must reject remote elevation");
+        assert_eq!(err, ERR_REMOTE_ELEVATION_UNSUPPORTED);
+    }
+
+    /// An unresolved `RemotePrompt` reaching the spawn path is a frontend
+    /// contract violation; reject with the pinned sentinel.
+    #[test]
+    fn remote_prompt_is_rejected_as_unresolved() {
+        let mut req: ExecuteRequest =
+            serde_json::from_value(serde_json::json!({ "script": "x" })).unwrap();
+        req.target = ExecutionTarget::RemotePrompt;
+        let err = build_command("bash", &["-c"], &resolved("x"), &req, &BTreeMap::new(), None)
+            .expect_err("must reject unresolved prompt");
+        assert_eq!(err, ERR_REMOTE_TARGET_UNRESOLVED);
+    }
+
+    /// A remote run does NOT validate `working_dir` against the LOCAL fs — a
+    /// path that doesn't exist locally must not fail the build (it refers to
+    /// the remote host). This is the visible contract of "ignore working_dir".
+    #[test]
+    fn remote_ignores_local_working_dir_validation() {
+        let mut r = resolved("ls");
+        r.working_dir = Some("/definitely/not/a/local/dir/xyz".to_string());
+        let req = remote_request("prod", false);
+        // Must succeed despite the nonexistent local dir.
+        build_command("bash", &["-c"], &r, &req, &BTreeMap::new(), None)
+            .expect("remote must ignore local working_dir");
+    }
+
+    /// A Windows-only declared shell is downgraded to `sh` on the remote host
+    /// (the argv carries `sh`, never `cmd`).
+    #[test]
+    fn remote_downgrades_cmd_to_sh() {
+        let req = remote_request("prod", false);
+        let cmd = build_command("cmd", &["/C"], &resolved("dir"), &req, &BTreeMap::new(), None)
+            .expect("remote build ok");
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.iter().any(|a| a == "sh"), "expected sh in argv: {args:?}");
+        assert!(!args.iter().any(|a| a == "cmd"), "cmd must not reach remote argv");
     }
 }

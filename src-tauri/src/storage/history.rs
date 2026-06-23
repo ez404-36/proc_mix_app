@@ -21,6 +21,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
+use crate::core::executor::ExecutionTarget;
 use crate::storage::commands::CommandRecord;
 use crate::storage::workflows::WorkflowRecord;
 use crate::storage::DbPool;
@@ -161,6 +162,12 @@ pub enum HistoryEventPayload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
         status: RunStatus,
+        /// Where the run executed. `None` (omitted from the wire) for a local
+        /// run; `Some(Remote { alias })` for a remote run. Captured at run
+        /// start so a past entry shows on which host it ran. Legacy rows have
+        /// no `target` → `None` → rendered as local.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<ExecutionTarget>,
         /// `Some(true)` when the run was killed by its configured
         /// timeout. Omitted from the wire (not `null`) for every other
         /// outcome so legacy payloads stay byte-identical.
@@ -1240,6 +1247,7 @@ mod wire_format_tests {
             output_schema: None,
             scope: None,
             workflow_id: None,
+            target: None,
         }
     }
 
@@ -1325,6 +1333,7 @@ mod wire_format_tests {
             exit_code: Some(0),
             duration_ms: Some(150),
             status: RunStatus::Succeeded,
+            target: None,
             timed_out: None,
             output: None,
             result: None,
@@ -1342,6 +1351,60 @@ mod wire_format_tests {
         assert!(json.get("duration_ms").is_none());
     }
 
+    /// A remote `target` round-trips on the wire as camelCase `target` with
+    /// the `kind` tag, and is OMITTED entirely (Rust `skip_serializing_if`)
+    /// for a local run so legacy rows stay byte-identical.
+    #[test]
+    fn command_run_target_wire_format() {
+        let remote = evt(HistoryEventPayload::CommandRun {
+            command_id: "c1".into(),
+            command_name: "n1".into(),
+            execution_id: "exec-9".into(),
+            exit_code: Some(0),
+            duration_ms: Some(10),
+            status: RunStatus::Succeeded,
+            target: Some(ExecutionTarget::Remote {
+                alias: "prod".into(),
+            }),
+            timed_out: None,
+            output: None,
+            result: None,
+        });
+        let json = serde_json::to_value(&remote).unwrap();
+        assert_eq!(json["target"]["kind"], "remote");
+        assert_eq!(json["target"]["alias"], "prod");
+
+        // Local run: target is None → key absent on the wire.
+        let local = evt(HistoryEventPayload::CommandRun {
+            command_id: "c1".into(),
+            command_name: "n1".into(),
+            execution_id: "exec-9".into(),
+            exit_code: Some(0),
+            duration_ms: Some(10),
+            status: RunStatus::Succeeded,
+            target: None,
+            timed_out: None,
+            output: None,
+            result: None,
+        });
+        let local_json = serde_json::to_value(&local).unwrap();
+        assert!(local_json.get("target").is_none());
+
+        // And a remote payload deserialises back to the same target.
+        let back: HistoryEvent = serde_json::from_value(json).unwrap();
+        match back.payload {
+            HistoryEventPayload::CommandRun { target, .. } => {
+                assert_eq!(
+                    target,
+                    Some(ExecutionTarget::Remote {
+                        alias: "prod".into()
+                    })
+                );
+            }
+            _ => panic!("expected CommandRun"),
+        }
+    }
+
     /// `exitCode`/`durationMs` must be omitted entirely (not emitted
     /// as `null`) when the run is still in flight, matching the
     /// `skip_serializing_if = "Option::is_none"` contract. If a
@@ -1355,6 +1418,7 @@ mod wire_format_tests {
             exit_code: None,
             duration_ms: None,
             status: RunStatus::Running,
+            target: None,
             timed_out: None,
             output: None,
             result: None,
@@ -1689,6 +1753,7 @@ mod wire_format_tests {
                 exit_code: Some(0),
                 duration_ms: Some(42),
                 status: RunStatus::Succeeded,
+                target: None,
                 timed_out: None,
                 output: None,
                 result: None,
@@ -1895,6 +1960,7 @@ mod sqlite_integration_tests {
             output_schema: None,
             scope: None,
             workflow_id: None,
+            target: None,
         }
     }
 
@@ -2100,6 +2166,7 @@ mod sqlite_integration_tests {
                     exit_code: None,
                     duration_ms: None,
                     status: RunStatus::Running,
+                    target: None,
                     timed_out: None,
                     output: None,
                     result: None,
@@ -2273,6 +2340,7 @@ mod sqlite_integration_tests {
                     exit_code: None,
                     duration_ms: None,
                     status: RunStatus::Running,
+                    target: None,
                     timed_out: None,
                     output: None,
                     result: None,

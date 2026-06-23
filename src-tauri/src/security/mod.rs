@@ -8,3 +8,4 @@
 
 pub mod admin_password;
 pub mod schedule_secrets;
+pub mod ssh_oneshot;

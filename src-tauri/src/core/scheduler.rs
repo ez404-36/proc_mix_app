@@ -1399,6 +1399,15 @@ fn build_command_request(
         // fires are silent, manual "Run now" is not.
         capture_output,
         silent,
+        // A scheduled command runs on whatever target it was saved with, so a
+        // remote-targeted command fires over SSH from the scheduler exactly as
+        // it would from the library. `unwrap_or_default()` maps a record with
+        // no stored target (legacy rows) to `Local`.
+        target: cmd.target.clone().unwrap_or_default(),
+        // A scheduled (headless) run cannot prompt for an SSH password — remote
+        // password auth is interactive-prompt-only. A remote-targeted scheduled
+        // command must use key/agent auth.
+        ssh_password: None,
     }
 }
 
@@ -1798,6 +1807,7 @@ mod compute_due_tests {
             output_schema: None,
             scope: None,
             workflow_id: None,
+            target: None,
         }
     }
 

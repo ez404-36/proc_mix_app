@@ -109,6 +109,13 @@ export interface CommandRunEvent extends HistoryEventBase {
   durationMs?: number;
   status: RunStatus;
   /**
+   * Where the run executed. Absent (or `{ kind: 'local' }`) for a local run;
+   * `{ kind: 'remote', alias }` when the command ran over SSH. Captured at
+   * run start so a past entry shows on which host it ran. Never `remotePrompt`
+   * — the runner resolves that to a concrete host before recording.
+   */
+  target?: import("./command").ExecutionTarget;
+  /**
    * True when the run was killed because it exceeded its configured
    * timeout. The executor reports a normal `finished` event with a
    * `timedOut` flag (exit code is usually absent because the process

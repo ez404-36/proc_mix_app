@@ -1,12 +1,14 @@
 mod commands;
 // `core` and `storage` are exposed publicly so the integration tests
-// in `tests/` can reach the executor + storage types directly. Item
+// in `tests/` can reach the executor + storage types directly. `security`
+// is public so the `procmix-askpass` sidecar binary (a sibling `[[bin]]`
+// that links this lib) can call `security::ssh_oneshot::take`. Item
 // visibility inside each module is unchanged — making the parent `pub`
 // does not widen any private item.
 pub mod core;
 mod platform;
 mod plugins;
-mod security;
+pub mod security;
 pub mod storage;
 
 use std::sync::Arc;
@@ -200,6 +202,21 @@ pub fn run() {
             commands::save_ssh_host,
             commands::delete_ssh_host,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // Build (not `run`) so we can observe `RunEvent`s. The exit hook below
+        // needs `app` and the managed `ExecutorState` to tear running children
+        // down synchronously before the process goes away.
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // On exit, synchronously SIGTERM every in-flight run's process
+            // group (so a remote run's detached `ssh` doesn't linger as an
+            // orphan) and clear any one-shot SSH-password keychain entries.
+            // `ExitRequested` fires while the app state is still available and
+            // before the runtime is fully gone — the right moment for a
+            // best-effort cleanup. We don't prevent the exit.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let executor = app_handle.state::<Arc<ExecutorState>>();
+                crate::core::executor::shutdown_all_sync(executor.inner());
+            }
+        });
 }

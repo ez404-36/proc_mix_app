@@ -571,6 +571,21 @@ select {
   color: #fff;
 }
 
+/* Remote-target badge on a list tile / table row / view header / console.
+ * Set apart from the outlined shell/tag chips with the accent-subtle wash so
+ * "this runs on a remote host" reads at a glance. Only shown for remote
+ * targets (local renders no badge). */
+.target-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-accent-subtle);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
 /* Clickable tag-filter chips in the Library toolbar. Reuses the
  * `.tag-chip` look but adds a button affordance + active state. */
 .library-filter-tags {
@@ -1470,6 +1485,13 @@ body.is-editor-fullscreen .output-panel {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--console-text-muted);
+}
+
+/* Remote-target badge in the console script header: keep it inline-sized
+ * (the script container is a column flex, so without this the pill would
+ * stretch the full width). */
+.output-panel__script-target {
+  align-self: flex-start;
 }
 
 .output-panel__script-body {
@@ -3221,6 +3243,20 @@ body.is-editor-fullscreen .output-panel {
   cursor: not-allowed;
 }
 
+/* "Where to run" host row (CommandForm TargetSelector): the host dropdown
+ * takes a constrained share of the row (it never needs the full width), the
+ * Check button sits beside it. Reuses the same gap rhythm as other inline
+ * field rows. */
+.command-form__target-host {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.command-form__target-host .dropdown {
+  flex: 0 1 280px;
+  min-width: 0;
+}
+
 /* Tag chip editor (CommandForm). A flex container that looks like the
  * `.input` field, holding chips followed by a borderless text field that
  * grows to fill the row. Clicking anywhere focuses the inner input via the
@@ -3671,6 +3707,49 @@ body.is-editor-fullscreen .output-panel {
 }
 
 .admin-password-prompt__reveal:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* One-shot SSH password prompt (SshPasswordPrompt). Same overlay-toggle
+ * layout as the admin-password input, but the reveal control is a small text
+ * button ("Show"/"Hide") rather than an icon. */
+.ssh-password-prompt__input-wrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+.ssh-password-prompt__input {
+  /* Room for the text reveal button on the right. */
+  padding-right: 64px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.05em;
+}
+.ssh-password-prompt__reveal {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+.ssh-password-prompt__reveal:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+.ssh-password-prompt__reveal:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }

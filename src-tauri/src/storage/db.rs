@@ -130,6 +130,13 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
             "workflow_id",
             "ALTER TABLE commands ADD COLUMN workflow_id TEXT",
         ),
+        (
+            // JSON-encoded `ExecutionTarget` ({"kind":"local"|"remote"|...}).
+            // NULL on existing rows → decoded as `Local`, so a pre-upgrade
+            // command keeps running locally.
+            "target",
+            "ALTER TABLE commands ADD COLUMN target TEXT",
+        ),
     ];
 
     for &(col, sql) in migrations {
@@ -596,6 +603,54 @@ mod tests {
             "existing rows must default to scope='global'"
         );
         assert!(workflow_id.is_none(), "workflow_id must default to NULL");
+
+        // Running the migration again must remain a no-op (idempotent).
+        ensure_commands_columns(&pool).await.unwrap();
+    }
+
+    /// Simulate a database created BEFORE the `target` column existed
+    /// (pre-v0.9.1). The migration must add it, leave existing rows NULL (read
+    /// back as `Local`), and remain idempotent.
+    #[tokio::test]
+    async fn ensure_commands_columns_adds_missing_target() {
+        let pool = fresh_pool().await;
+        // Schema just before the remote-execution feature: has scope/workflow_id
+        // but no `target`.
+        sqlx::raw_sql(
+            "CREATE TABLE commands (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                script TEXT NOT NULL,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                favorite INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_count INTEGER NOT NULL DEFAULT 0,
+                run_as_admin INTEGER NOT NULL DEFAULT 0,
+                variables TEXT NOT NULL DEFAULT '[]',
+                scope TEXT NOT NULL DEFAULT 'global',
+                workflow_id TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO commands (id, name, script, created_at, updated_at)
+             VALUES ('a', 'n', 'echo', '2026-06-22', '2026-06-22')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_commands_columns(&pool).await.unwrap();
+
+        let row = sqlx::query("SELECT target FROM commands WHERE id = 'a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let target: Option<String> = row.try_get("target").unwrap();
+        assert!(target.is_none(), "existing rows must have a NULL target");
 
         // Running the migration again must remain a no-op (idempotent).
         ensure_commands_columns(&pool).await.unwrap();

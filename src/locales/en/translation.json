@@ -804,10 +804,28 @@
       "adminPasswordWillAsk": "You'll be asked for your administrator password on the first run."
     },
     "hints": {
-      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script. Admin mode is required and can't be disabled until you remove the escalation prefix."
+      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script. Admin mode is required and can't be disabled until you remove the escalation prefix.",
+      "runAsAdminRemote": "Run as administrator is not available for remote commands."
     },
     "tooltips": {
-      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script — admin mode is required."
+      "runAsAdminAutoDetected": "Detected sudo/doas/pkexec at the start of the script — admin mode is required.",
+      "runAsAdminRemote": "Run as administrator is not available for remote commands."
+    },
+    "target": {
+      "label": "Where to run",
+      "local": "Local",
+      "remote": "Remote host",
+      "prompt": "Ask at run time",
+      "host": "SSH host",
+      "hostUnavailableSuffix": "(not in connections)",
+      "check": "Check",
+      "checking": "Checking…",
+      "reachable": "Host is reachable",
+      "unreachable": "Host is unreachable: {{message}}",
+      "noHosts": "No SSH connections found. Add one in Environment → Connections.",
+      "remoteLimitations": "Remote runs ignore the working directory and environment variables, can't run as administrator, and use a POSIX shell (sh) on the host.",
+      "promptSshPassword": "Ask for a password at run time",
+      "promptSshPasswordHint": "You'll be asked for the SSH password before each run. It is used once and never saved — prefer SSH keys for repeated runs. (Unix only.)"
     },
     "scriptEditor": {
       "insertVariable": "Insert variable"
@@ -840,6 +858,10 @@
     "defaultValue": "Default: {{value}}",
     "sensitiveValue": "Sensitive — value hidden"
   },
+  "commandTarget": {
+    "badgeRemote": "Remote: {{alias}}",
+    "badgePrompt": "Remote (ask at run time)"
+  },
   "seeds": {
     "listHomeDir": {
       "name": "List home directory",
@@ -868,7 +890,13 @@
   "runCommand": {
     "adminPasswordSaveFailed": "Failed to save administrator password",
     "adminPasswordRejected": "Wrong administrator password — please try again",
-    "inlineEscalationHint": "This command runs sudo internally but isn't elevated. Move sudo to the start of the script, or enable “Run as administrator”."
+    "inlineEscalationHint": "This command runs sudo internally but isn't elevated. Move sudo to the start of the script, or enable “Run as administrator”.",
+    "remote": {
+      "invalidHost": "Invalid SSH host \"{{alias}}\"",
+      "elevationUnsupported": "“Run as administrator” is not available for remote commands",
+      "targetUnresolved": "No remote host selected for this run",
+      "passwordBackend": "Couldn't store the SSH password securely"
+    }
   },
   "variablePrompt": {
     "title": "Provide variables",
@@ -880,6 +908,22 @@
     "label": "Directory",
     "hint": "Leave empty to use the default (home directory).",
     "placeholder": "e.g. /home/user/project",
+    "submit": "Run",
+    "cancel": "Cancel"
+  },
+  "remoteHostPrompt": {
+    "title": "Choose a remote host",
+    "label": "SSH host",
+    "noHosts": "No SSH connections found. Add one in Environment → Connections.",
+    "submit": "Run",
+    "cancel": "Cancel"
+  },
+  "sshPasswordPrompt": {
+    "title": "SSH password for {{alias}}",
+    "label": "Password",
+    "hint": "Used for this run only and never saved. Consider SSH keys for repeated runs.",
+    "reveal": "Show",
+    "hide": "Hide",
     "submit": "Run",
     "cancel": "Cancel"
   },

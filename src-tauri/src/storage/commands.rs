@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
+use crate::core::executor::ExecutionTarget;
 use crate::storage::DbPool;
 
 /// Specification of a user-declared variable referenced from a
@@ -256,6 +257,15 @@ pub struct CommandRecord {
     /// type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_id: Option<String>,
+    /// Where this command runs. `None` (the default for legacy rows and for
+    /// commands that never set a target) is interpreted as
+    /// [`ExecutionTarget::Local`] by the executor. Persisted as the `target`
+    /// TEXT column (JSON-encoded `ExecutionTarget`, NULL when absent).
+    /// Serialised as `target` to match the TS `Command` type.
+    /// `#[serde(default)]` keeps legacy payloads — which never sent this
+    /// field — parsing cleanly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<ExecutionTarget>,
 }
 
 /// Return every command in insertion order (oldest first).
@@ -264,7 +274,7 @@ pub async fn list_all(pool: &DbPool) -> Result<Vec<CommandRecord>, String> {
         "SELECT id, name, name_key, description, description_key, icon, script, shell, \
                 args_json, working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-                timeout_seconds, output_schema, scope, workflow_id \
+                timeout_seconds, output_schema, scope, workflow_id, target \
          FROM commands \
          ORDER BY created_at ASC",
     )
@@ -337,14 +347,21 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
         }
         None => None,
     };
+    // Persist the target as JSON. A `None` target (no remote config) is stored
+    // as NULL, which `row_to_record` decodes back to `Local` — keeping the
+    // column empty for the overwhelmingly common local command.
+    let target_json = match &cmd.target {
+        Some(t) => Some(serde_json::to_string(t).map_err(|e| format!("encode target: {e}"))?),
+        None => None,
+    };
 
     sqlx::query(
         "INSERT INTO commands ( \
             id, name, name_key, description, description_key, icon, script, shell, \
             args_json, working_dir, env_json, tags_json, category_id, favorite, \
             created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-            timeout_seconds, output_schema, scope, workflow_id \
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            timeout_seconds, output_schema, scope, workflow_id, target \
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \
             name_key = excluded.name_key, \
@@ -367,7 +384,8 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             timeout_seconds = excluded.timeout_seconds, \
             output_schema = excluded.output_schema, \
             scope = excluded.scope, \
-            workflow_id = excluded.workflow_id",
+            workflow_id = excluded.workflow_id, \
+            target = excluded.target",
     )
     .bind(&cmd.id)
     .bind(&cmd.name)
@@ -396,6 +414,7 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
     // carries its owning `workflow_id`; a global one binds NULL.
     .bind(cmd.scope.clone().unwrap_or_else(|| "global".to_string()))
     .bind(&cmd.workflow_id)
+    .bind(&target_json)
     .execute(pool.as_ref())
     .await
     .map_err(|e| format!("upsert: {e}"))?;
@@ -484,6 +503,16 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
     let workflow_id: Option<String> = row
         .try_get("workflow_id")
         .map_err(|e| format!("read workflow_id: {e}"))?;
+    let target_json: Option<String> = row
+        .try_get("target")
+        .map_err(|e| format!("read target: {e}"))?;
+    let target = match target_json {
+        Some(s) => Some(
+            serde_json::from_str::<ExecutionTarget>(&s)
+                .map_err(|e| format!("decode target: {e}"))?,
+        ),
+        None => None,
+    };
 
     Ok(CommandRecord {
         id: row.try_get("id").map_err(|e| format!("read id: {e}"))?,
@@ -532,6 +561,7 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
         output_schema,
         scope,
         workflow_id,
+        target,
     })
 }
 
@@ -593,6 +623,7 @@ mod wire_format_tests {
             }),
             scope: Some("local".into()),
             workflow_id: Some("wf-1".into()),
+            target: None,
         }
     }
 
@@ -853,6 +884,7 @@ mod sqlite_integration_tests {
             // persisted reality so the `upsert → list` equality holds.
             scope: Some("global".into()),
             workflow_id: None,
+            target: None,
         }
     }
 
@@ -1150,6 +1182,42 @@ mod sqlite_integration_tests {
         let listed = list_all(&pool).await.unwrap();
         assert_eq!(listed[0].scope.as_deref(), Some("global"));
         assert!(listed[0].workflow_id.is_none());
+    }
+
+    /// A remote target round-trips through SQLite: the `target` column is
+    /// bound on insert (JSON-encoded) and decoded back in `row_to_record`.
+    #[tokio::test]
+    async fn upsert_then_list_preserves_remote_target() {
+        let pool = make_pool().await;
+        let mut rec = fixture("remote-cmd", false);
+        rec.target = Some(ExecutionTarget::Remote {
+            alias: "prod-web".into(),
+        });
+        upsert(&pool, &rec).await.unwrap();
+        let listed = list_all(&pool).await.unwrap();
+        assert_eq!(
+            listed[0].target,
+            Some(ExecutionTarget::Remote {
+                alias: "prod-web".into()
+            })
+        );
+    }
+
+    /// A command with no target persists NULL and reads back as `None` (the
+    /// executor interprets that as `Local`). Also verifies a target can be
+    /// cleared by upserting `None` over an existing remote value.
+    #[tokio::test]
+    async fn upsert_can_clear_target_to_local() {
+        let pool = make_pool().await;
+        let mut rec = fixture("clear-target-cmd", false);
+        rec.target = Some(ExecutionTarget::Remote {
+            alias: "staging".into(),
+        });
+        upsert(&pool, &rec).await.unwrap();
+        rec.target = None;
+        upsert(&pool, &rec).await.unwrap();
+        let listed = list_all(&pool).await.unwrap();
+        assert!(listed[0].target.is_none());
     }
 
     /// Cascade-delete removes only the named workflow's `local` commands,

@@ -14,6 +14,8 @@ import type { Language } from "./i18n";
 import { AdminPasswordPrompt } from "./components/AdminPasswordPrompt";
 import { VariablePrompt } from "./components/VariablePrompt";
 import { WorkingDirPrompt } from "./components/WorkingDirPrompt/WorkingDirPrompt";
+import { RemoteHostPrompt } from "./components/RemoteHostPrompt/RemoteHostPrompt";
+import { SshPasswordPrompt } from "./components/SshPasswordPrompt/SshPasswordPrompt";
 import { Home } from "./components/Home";
 import { Library } from "./components/Library";
 import { SchedulerTab, ScheduleEditor } from "./components/Scheduler";
@@ -303,6 +305,14 @@ function App(): ReactElement {
             once so `promptForWorkingDir` (used by commandRunner.ts) has a
             handler registered. */}
         <WorkingDirPrompt />
+        {/* App-global singleton — see RemoteHostPrompt.tsx. Mounted exactly
+            once so `promptForRemoteHost` (used by commandRunner.ts for the
+            "ask at run time" target) has a handler registered. */}
+        <RemoteHostPrompt />
+        {/* App-global singleton — see SshPasswordPrompt.tsx. Mounted once so
+            `promptForSshPassword` (used by commandRunner.ts for a remote
+            command with `promptSshPassword`) has a handler registered. */}
+        <SshPasswordPrompt />
         <UpdateDialog
           open={updateModalOpen}
           onClose={closeUpdateModal}

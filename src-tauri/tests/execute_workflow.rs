@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use procmix_lib::core::executor::{
-    spawn_execution_with_completion, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus,
+    spawn_execution_with_completion, ExecuteRequest, ExecutionTarget, ExecutorState, NodeOutcome,
+    TerminalStatus,
 };
 use procmix_lib::core::workflow::{
     cancel_workflow, execute_workflow, execute_workflow_from, WorkflowEvent, WorkflowExecutorState,
@@ -117,6 +118,7 @@ fn command(id: &str, script: &str) -> CommandRecord {
         output_schema: None,
         scope: None,
         workflow_id: None,
+        target: None,
     }
 }
 
@@ -542,6 +544,8 @@ fn echo_request(script: &str) -> ExecuteRequest {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     }
 }
 

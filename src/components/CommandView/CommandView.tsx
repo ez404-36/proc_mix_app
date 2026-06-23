@@ -12,6 +12,7 @@ import {
   getCommandName,
 } from "../../utils/commandLabels";
 import { CancelIcon, EditIcon, RunIcon, TrashIcon } from "../icons";
+import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 
 interface CommandViewProps {
   /** The command to display, or `null` when the view is closed. */
@@ -93,6 +94,11 @@ export function CommandView({
         <div className="workflow-view__header">
           <h2 className="command-form__title">{displayName}</h2>
           <div className="list-tile__meta">
+            {isRemoteTarget(command.target) ? (
+              <span className="target-badge">
+                {formatTargetBadge(command.target, t)}
+              </span>
+            ) : null}
             {command.shell ? (
               <span className="shell-badge">{command.shell}</span>
             ) : null}
@@ -132,6 +138,17 @@ export function CommandView({
                     count: command.timeoutSeconds,
                   })
                 : t("commandView.noTimeout")}
+            </p>
+          </section>
+
+          <section className="command-view__field">
+            <h3 className="command-view__label">
+              {t("commandForm.target.label", { defaultValue: "Where to run" })}
+            </h3>
+            <p className="command-view__value">
+              {isRemoteTarget(command.target)
+                ? formatTargetBadge(command.target, t)
+                : t("commandForm.target.local", { defaultValue: "Local" })}
             </p>
           </section>
 

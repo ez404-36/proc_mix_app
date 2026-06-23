@@ -120,6 +120,42 @@ describe("wireToEvent", () => {
     expect(evt.exitCode).toBeUndefined();
     expect(evt.durationMs).toBeUndefined();
     expect(evt.status).toBe("running");
+    // No target on the wire → undefined (rendered as local).
+    expect(evt.target).toBeUndefined();
+  });
+
+  it("round-trips a remote commandRun target through wire <-> event", () => {
+    const event: HistoryEvent = {
+      id: "e-remote",
+      createdAt: "2026-06-22T00:00:00Z",
+      kind: "commandRun",
+      commandId: "cmd-1",
+      commandName: "Deploy",
+      executionId: "exec-r",
+      status: "running",
+      target: { kind: "remote", alias: "prod" },
+    };
+    const wire = eventToWire(event);
+    if (wire.kind !== "commandRun") throw new Error("kind narrowing");
+    expect(wire.target).toEqual({ kind: "remote", alias: "prod" });
+    const back = wireToEvent(wire);
+    if (back.kind !== "commandRun") throw new Error("kind narrowing");
+    expect(back.target).toEqual({ kind: "remote", alias: "prod" });
+  });
+
+  it("omits target from the wire for a local commandRun", () => {
+    const event: HistoryEvent = {
+      id: "e-local",
+      createdAt: "2026-06-22T00:00:00Z",
+      kind: "commandRun",
+      commandId: "cmd-1",
+      commandName: "Build",
+      executionId: "exec-l",
+      status: "running",
+    };
+    const wire = eventToWire(event);
+    if (wire.kind !== "commandRun") throw new Error("kind narrowing");
+    expect("target" in wire).toBe(false);
   });
 
   it("collapses commandRun exitCode null to undefined (defensive)", () => {

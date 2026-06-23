@@ -36,6 +36,35 @@ export type Shell =
 export type CommandScope = "local" | "global";
 
 /**
+ * Where a {@link Command} is executed.
+ *
+ *   - `{ kind: "local" }` (the default when the field is absent): the script
+ *     runs on the local machine through the existing executor path. Behaviour
+ *     is byte-identical to commands that predate this feature.
+ *   - `{ kind: "remote"; alias }`: the script runs on a remote host over SSH.
+ *     `alias` is a `Host` name from `~/.ssh/config` (the same inventory shown
+ *     in Environment → Connections). The Rust executor spawns the system
+ *     `ssh` binary with a fixed argv (`ssh <alias> -- <shell> -c <script>`);
+ *     `alias` is allow-list validated before it reaches the process.
+ *   - `{ kind: "remotePrompt" }`: the host is chosen at run time. This value
+ *     is persisted on the command, but is NEVER sent to the backend as-is —
+ *     `triggerCommandRun` opens a host picker and resolves it to a concrete
+ *     `{ kind: "remote"; alias }` before invoking. The backend rejects an
+ *     unresolved `remotePrompt` with `REMOTE_TARGET_UNRESOLVED`.
+ *
+ * Remote runs in this version do NOT apply the command's `workingDir` or
+ * `env`, and cannot be elevated (`runAsAdmin`); the form surfaces these
+ * limitations. See `docs/ssh-remote-execution.md`.
+ *
+ * Mirrors the Rust `core::executor::ExecutionTarget` (serde
+ * `tag = "kind"`, `rename_all = "camelCase"`).
+ */
+export type ExecutionTarget =
+  | { kind: "local" }
+  | { kind: "remote"; alias: string }
+  | { kind: "remotePrompt" };
+
+/**
  * A user-declared variable that may be referenced from a command's
  * `script`, `args`, `workingDir`, or `env` values using the `${name}`
  * or `${name:default}` syntax (see the Rust `core::parser` module for
@@ -113,6 +142,14 @@ export interface Command {
    * prompt is always shown even when `workingDir` is set.
    */
   promptWorkingDir?: boolean;
+  /**
+   * When true, the runner prompts for an SSH password before each REMOTE run
+   * (the host uses password auth, not keys). The password is one-shot — used
+   * for that single run and never persisted. Only meaningful when `target` is
+   * remote; ignored for local runs and on Windows (key auth only there). See
+   * `docs/plans/ssh-remote-password-transient-keychain.md`.
+   */
+  promptSshPassword?: boolean;
   env?: Record<string, string>;
   tags: string[];
   categoryId?: string;
@@ -176,6 +213,13 @@ export interface Command {
    * remapped to the new workflow id on import.
    */
   workflowId?: string;
+  /**
+   * Where this command runs. `undefined` is treated as `{ kind: "local" }`
+   * (the executor defaults a missing target to local), so existing commands
+   * and seeds need not set it. See {@link ExecutionTarget} for the remote and
+   * choose-at-run-time variants.
+   */
+  target?: ExecutionTarget;
 }
 
 /**

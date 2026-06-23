@@ -28,6 +28,15 @@ import { isTransient } from "../utils/transientExecutions";
 import { scriptReferencesEscalationTool } from "../utils/utilityName";
 import { promptForVariables } from "../utils/variablePrompt";
 import { promptForWorkingDir } from "../utils/workingDirPrompt";
+import { promptForRemoteHost } from "../utils/remoteHostPrompt";
+import { promptForSshPassword } from "../utils/sshPasswordPrompt";
+import {
+  isRemoteElevationUnsupportedError,
+  isRemoteTargetUnresolvedError,
+  parseInvalidRemoteTargetError,
+  parseSshPasswordBackendError,
+} from "../utils/remoteTarget";
+import type { ExecutionTarget } from "../types";
 
 /**
  * Generate a UUID-like id. Falls back to a timestamped pseudo-random
@@ -83,6 +92,7 @@ async function recordRunStart(
   executionId: string,
   commandId: string,
   commandName: string,
+  target?: ExecutionTarget,
 ): Promise<void> {
   if (isTransient(executionId)) return;
   const event: HistoryEvent = {
@@ -93,6 +103,10 @@ async function recordRunStart(
     commandName,
     executionId,
     status: "running",
+    // Record the host only for a remote run so a past entry shows where it
+    // ran. Omitted for local so the wire shape stays byte-identical to a
+    // pre-feature row (the backend defaults a missing target to local).
+    ...(target !== undefined && target.kind !== "local" ? { target } : {}),
   };
   await recordHistoryEventInDb(event);
 }
@@ -299,6 +313,44 @@ export async function triggerCommandRun(
     resolvedWorkingDir = prompted !== "" ? prompted : undefined;
   }
 
+  // Remote-host resolution. The effective target is the caller's override
+  // (RunOptions.target) when present, else the command's persisted target.
+  // A `remotePrompt` target means "ask which host at run time": we open the
+  // host picker and rewrite the target to a concrete `remote` so the backend
+  // never receives the unresolved value (it would reject it). Done BEFORE
+  // pre-registration so a cancel aborts silently with nothing to finalize,
+  // exactly like the variable / working-dir prompt cancels.
+  let resolvedTarget: ExecutionTarget | undefined =
+    opts?.target ?? cmd.target;
+  if (resolvedTarget?.kind === "remotePrompt") {
+    const alias = await promptForRemoteHost();
+    if (alias === null) {
+      // User cancelled the host picker — abort the run silently.
+      return null;
+    }
+    resolvedTarget = { kind: "remote", alias };
+  }
+
+  // One-shot SSH password resolution. When the (now-concrete) target is remote
+  // and the command opts into password auth (`promptSshPassword`), ask for the
+  // password before the run. The caller may also supply `opts.sshPassword`
+  // directly (e.g. a programmatic run); that wins and skips the prompt. The
+  // value is one-shot — passed to this run only, never persisted. Done BEFORE
+  // pre-registration so a cancel aborts silently, like the other prompts.
+  let resolvedSshPassword: string | undefined = opts?.sshPassword;
+  if (
+    resolvedTarget?.kind === "remote" &&
+    cmd.promptSshPassword &&
+    (resolvedSshPassword === undefined || resolvedSshPassword === "")
+  ) {
+    const password = await promptForSshPassword(resolvedTarget.alias);
+    if (password === null) {
+      // User cancelled the password prompt — abort the run silently.
+      return null;
+    }
+    resolvedSshPassword = password;
+  }
+
   // Pre-generate the execution id on the CLIENT (unless the caller
   // supplied one, e.g. the CommandForm live-run / OutputPanel re-run) so
   // we can register the store execution AND insert the history row BEFORE
@@ -358,10 +410,14 @@ export async function triggerCommandRun(
           Object.keys(mergedVariableValues as Record<string, string>).length > 0
             ? (mergedVariableValues as Record<string, string>)
             : undefined,
+          // The resolved target (local or a concrete remote host) so the
+          // console can badge a remote run. `remotePrompt` was already
+          // resolved to a concrete host above, so it never reaches here.
+          resolvedTarget,
         );
       useCommandStore.getState().markCommandRun(cmd.id);
       try {
-        await recordRunStart(executionId, cmd.id, displayName);
+        await recordRunStart(executionId, cmd.id, displayName, resolvedTarget);
       } catch (histErr: unknown) {
         console.error("failed to record commandRun history event", histErr);
       }
@@ -379,6 +435,51 @@ export async function triggerCommandRun(
   // "running" forever (the exact bug pre-registration otherwise prevents).
   // No-op when nothing was pre-registered (e.g. variable-prompt cancel,
   // which returns before `attempt`).
+  // Surface a remote-execution sentinel as a localized toast. Returns `true`
+  // when `err` was one of the remote sentinels (and a toast was shown), so the
+  // caller can stop before the generic "Failed to run" fallthrough. These are
+  // largely unreachable on the normal path (executor.ts drops elevation for
+  // remote, and the host picker resolves `remotePrompt` before invoking), but
+  // give a precise message if a mis-using caller hits them.
+  function surfaceRemoteError(err: unknown): boolean {
+    const invalidAlias = parseInvalidRemoteTargetError(err);
+    if (invalidAlias !== null) {
+      Message.error(
+        i18n.t("runCommand.remote.invalidHost", {
+          defaultValue: 'Invalid SSH host "{{alias}}"',
+          alias: invalidAlias,
+        }),
+      );
+      return true;
+    }
+    if (isRemoteElevationUnsupportedError(err)) {
+      Message.error(
+        i18n.t("runCommand.remote.elevationUnsupported", {
+          defaultValue:
+            "“Run as administrator” is not available for remote commands",
+        }),
+      );
+      return true;
+    }
+    if (isRemoteTargetUnresolvedError(err)) {
+      Message.error(
+        i18n.t("runCommand.remote.targetUnresolved", {
+          defaultValue: "No remote host selected for this run",
+        }),
+      );
+      return true;
+    }
+    if (parseSshPasswordBackendError(err) !== null) {
+      Message.error(
+        i18n.t("runCommand.remote.passwordBackend", {
+          defaultValue: "Couldn't store the SSH password securely",
+        }),
+      );
+      return true;
+    }
+    return false;
+  }
+
   function finalizeAbandonedRun(): void {
     if (!historyRecorded) return;
     useExecutionStore.getState().finishExecution(executionId, {
@@ -416,11 +517,23 @@ export async function triggerCommandRun(
     );
   }
 
-  // Merge the (possibly prompt-resolved) working dir into the options so
-  // `attempt` and any sentinel-retry branch see the same value.
+  // Merge the (possibly prompt-resolved) working dir AND remote target into
+  // the options so `attempt` and any sentinel-retry branch see the same
+  // values. The target override is set whenever it differs from the caller's
+  // (e.g. a `remotePrompt` was resolved to a concrete host, or the command
+  // carries a persisted target the caller didn't pass) so the executor's
+  // boundary resolution receives the already-resolved value.
+  const targetChanged = resolvedTarget !== opts?.target;
+  const dirChanged = resolvedWorkingDir !== opts?.workingDir;
+  const sshPasswordChanged = resolvedSshPassword !== opts?.sshPassword;
   const optsWithDir: RunOptions | undefined =
-    resolvedWorkingDir !== opts?.workingDir
-      ? { ...(opts ?? { variableValues: {} }), workingDir: resolvedWorkingDir }
+    dirChanged || targetChanged || sshPasswordChanged
+      ? {
+          ...(opts ?? { variableValues: {} }),
+          ...(dirChanged ? { workingDir: resolvedWorkingDir } : {}),
+          ...(targetChanged ? { target: resolvedTarget } : {}),
+          ...(sshPasswordChanged ? { sshPassword: resolvedSshPassword } : {}),
+        }
       : opts;
 
   try {
@@ -488,16 +601,20 @@ export async function triggerCommandRun(
           finalizeAbandonedRun();
           return null;
         }
-        const retryMsg =
-          retryErr instanceof Error ? retryErr.message : String(retryErr);
-        Message.error(`Failed to run "${displayName}": ${retryMsg}`);
+        if (!surfaceRemoteError(retryErr)) {
+          const retryMsg =
+            retryErr instanceof Error ? retryErr.message : String(retryErr);
+          Message.error(`Failed to run "${displayName}": ${retryMsg}`);
+        }
         finalizeAbandonedRun();
         return null;
       }
     }
 
-    const message = err instanceof Error ? err.message : String(err);
-    Message.error(`Failed to run "${displayName}": ${message}`);
+    if (!surfaceRemoteError(err)) {
+      const message = err instanceof Error ? err.message : String(err);
+      Message.error(`Failed to run "${displayName}": ${message}`);
+    }
     finalizeAbandonedRun();
     return null;
   }

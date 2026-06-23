@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use procmix_lib::core::executor::{
-    spawn_execution, ExecuteRequest, ExecutionEvent, ExecutorError, ExecutorState, EXECUTION_EVENT,
+    spawn_execution, ExecuteRequest, ExecutionEvent, ExecutionTarget, ExecutorError, ExecutorState,
+    EXECUTION_EVENT,
 };
 use procmix_lib::storage::commands::VariableSpec;
 use tauri::test::mock_builder;
@@ -102,6 +103,8 @@ async fn echo_substitutes_variable_from_values_and_runs_successfully() {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     let id = spawn_execution(app, state, req)
@@ -161,6 +164,8 @@ async fn missing_variable_without_default_returns_typed_error_and_does_not_spawn
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     let err = spawn_execution(app, state, req)
@@ -218,6 +223,8 @@ async fn variable_default_value_is_used_when_no_value_supplied() {
         output_schema: None,
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     };
 
     spawn_execution(app, state, req).await.expect("spawn ok");

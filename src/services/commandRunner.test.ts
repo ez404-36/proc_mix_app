@@ -41,6 +41,20 @@ vi.mock("../utils/variablePrompt", () => ({
   promptForVariables: (...args: unknown[]) => promptForVariablesMock(...args),
 }));
 
+// Mock the remote-host picker singleton. Default resolves to null (cancel),
+// which the `remotePrompt` tests override per-test with a concrete alias.
+const promptForRemoteHostMock = vi.fn().mockResolvedValue(null);
+vi.mock("../utils/remoteHostPrompt", () => ({
+  promptForRemoteHost: () => promptForRemoteHostMock(),
+}));
+
+// Mock the SSH-password prompt singleton. Default resolves to null (cancel);
+// the password tests override per-test with a concrete password.
+const promptForSshPasswordMock = vi.fn().mockResolvedValue(null);
+vi.mock("../utils/sshPasswordPrompt", () => ({
+  promptForSshPassword: (alias: string) => promptForSshPasswordMock(alias),
+}));
+
 // Mock Arco's Message so we can assert error/warning UX without
 // rendering Arco.
 const messageErrorMock = vi.fn();
@@ -102,6 +116,10 @@ beforeEach(() => {
   // without calling the mock. The prompt-flow tests below override
   // this per-test via mockResolvedValueOnce.
   promptForVariablesMock.mockResolvedValue({});
+  promptForRemoteHostMock.mockReset();
+  promptForRemoteHostMock.mockResolvedValue(null);
+  promptForSshPasswordMock.mockReset();
+  promptForSshPasswordMock.mockResolvedValue(null);
   // Reset execution store between tests for isolation.
   useExecutionStore.setState({
     executions: {},
@@ -587,5 +605,175 @@ describe("triggerCommandRun — inline-escalation advisory (Class B)", () => {
     await triggerCommandRun(cmd);
 
     expect(messageWarningMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("triggerCommandRun — remote target", () => {
+  it("forwards a command's remote target to the executor", async () => {
+    invokeRunMock.mockResolvedValueOnce(undefined);
+    const cmd = makeCommand({ target: { kind: "remote", alias: "prod" } });
+
+    await triggerCommandRun(cmd);
+
+    const opts = invokeRunMock.mock.calls[0]?.[1] as {
+      target?: { kind: string; alias?: string };
+    };
+    expect(opts.target).toEqual({ kind: "remote", alias: "prod" });
+    // The picker must NOT open for an already-concrete remote target.
+    expect(promptForRemoteHostMock).not.toHaveBeenCalled();
+  });
+
+  it("opens the host picker and resolves a remotePrompt target before invoking", async () => {
+    promptForRemoteHostMock.mockResolvedValueOnce("staging");
+    invokeRunMock.mockResolvedValueOnce(undefined);
+    const cmd = makeCommand({ target: { kind: "remotePrompt" } });
+
+    await triggerCommandRun(cmd);
+
+    expect(promptForRemoteHostMock).toHaveBeenCalledTimes(1);
+    const opts = invokeRunMock.mock.calls[0]?.[1] as {
+      target?: { kind: string; alias?: string };
+    };
+    // The unresolved prompt must be rewritten to a concrete remote target —
+    // the backend never sees `remotePrompt`.
+    expect(opts.target).toEqual({ kind: "remote", alias: "staging" });
+  });
+
+  it("aborts silently (no invoke, no toast) when the host picker is cancelled", async () => {
+    promptForRemoteHostMock.mockResolvedValueOnce(null);
+    const cmd = makeCommand({ target: { kind: "remotePrompt" } });
+
+    const result = await triggerCommandRun(cmd);
+
+    expect(result).toBeNull();
+    expect(invokeRunMock).not.toHaveBeenCalled();
+    expect(messageErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the invalid-host sentinel as a localized toast", async () => {
+    invokeRunMock.mockRejectedValueOnce(new Error("INVALID_REMOTE_TARGET:bad host"));
+    const cmd = makeCommand({ target: { kind: "remote", alias: "bad host" } });
+
+    const result = await triggerCommandRun(cmd);
+
+    expect(result).toBeNull();
+    expect(messageErrorMock).toHaveBeenCalledTimes(1);
+    const msg = String(messageErrorMock.mock.calls[0]?.[0]);
+    // The localized template includes the offending alias and must NOT leak
+    // the raw sentinel prefix.
+    expect(msg).toContain("bad host");
+    expect(msg).not.toContain("INVALID_REMOTE_TARGET:");
+  });
+
+  it("surfaces the remote-elevation-unsupported sentinel without the raw string", async () => {
+    invokeRunMock.mockRejectedValueOnce(new Error("REMOTE_ELEVATION_UNSUPPORTED"));
+    const cmd = makeCommand({ target: { kind: "remote", alias: "prod" } });
+
+    const result = await triggerCommandRun(cmd);
+
+    expect(result).toBeNull();
+    expect(messageErrorMock).toHaveBeenCalledTimes(1);
+    expect(String(messageErrorMock.mock.calls[0]?.[0])).not.toContain(
+      "REMOTE_ELEVATION_UNSUPPORTED",
+    );
+  });
+
+  it("surfaces the unresolved-target sentinel without the raw string", async () => {
+    invokeRunMock.mockRejectedValueOnce(new Error("REMOTE_TARGET_UNRESOLVED"));
+    const cmd = makeCommand({ target: { kind: "remote", alias: "prod" } });
+
+    const result = await triggerCommandRun(cmd);
+
+    expect(result).toBeNull();
+    expect(messageErrorMock).toHaveBeenCalledTimes(1);
+    expect(String(messageErrorMock.mock.calls[0]?.[0])).not.toContain(
+      "REMOTE_TARGET_UNRESOLVED",
+    );
+  });
+
+  it("prompts for the SSH password and forwards it when promptSshPassword is set", async () => {
+    promptForSshPasswordMock.mockResolvedValueOnce("hunter2");
+    invokeRunMock.mockResolvedValueOnce(undefined);
+    const cmd = makeCommand({
+      target: { kind: "remote", alias: "prod" },
+      promptSshPassword: true,
+    });
+
+    await triggerCommandRun(cmd);
+
+    expect(promptForSshPasswordMock).toHaveBeenCalledTimes(1);
+    // The prompt is told which host it's for.
+    expect(promptForSshPasswordMock).toHaveBeenCalledWith("prod");
+    const opts = invokeRunMock.mock.calls[0]?.[1] as {
+      sshPassword?: string;
+    };
+    expect(opts.sshPassword).toBe("hunter2");
+  });
+
+  it("aborts silently (no invoke, no toast) when the password prompt is cancelled", async () => {
+    promptForSshPasswordMock.mockResolvedValueOnce(null);
+    const cmd = makeCommand({
+      target: { kind: "remote", alias: "prod" },
+      promptSshPassword: true,
+    });
+
+    const result = await triggerCommandRun(cmd);
+
+    expect(result).toBeNull();
+    expect(invokeRunMock).not.toHaveBeenCalled();
+    expect(messageErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT prompt for a password when promptSshPassword is unset", async () => {
+    invokeRunMock.mockResolvedValueOnce(undefined);
+    const cmd = makeCommand({ target: { kind: "remote", alias: "prod" } });
+
+    await triggerCommandRun(cmd);
+
+    expect(promptForSshPasswordMock).not.toHaveBeenCalled();
+    const opts = invokeRunMock.mock.calls[0]?.[1] as {
+      sshPassword?: string;
+    };
+    expect(opts.sshPassword).toBeUndefined();
+  });
+
+  it("resolves a remotePrompt host THEN prompts for its password", async () => {
+    promptForRemoteHostMock.mockResolvedValueOnce("staging");
+    promptForSshPasswordMock.mockResolvedValueOnce("pw");
+    invokeRunMock.mockResolvedValueOnce(undefined);
+    const cmd = makeCommand({
+      target: { kind: "remotePrompt" },
+      promptSshPassword: true,
+    });
+
+    await triggerCommandRun(cmd);
+
+    // The password prompt is told the host the user just picked.
+    expect(promptForSshPasswordMock).toHaveBeenCalledWith("staging");
+    const opts = invokeRunMock.mock.calls[0]?.[1] as {
+      target?: { kind: string; alias?: string };
+      sshPassword?: string;
+    };
+    expect(opts.target).toEqual({ kind: "remote", alias: "staging" });
+    expect(opts.sshPassword).toBe("pw");
+  });
+
+  it("surfaces the ssh-password-backend sentinel without the raw string", async () => {
+    promptForSshPasswordMock.mockResolvedValueOnce("hunter2");
+    invokeRunMock.mockRejectedValueOnce(
+      new Error("SSH_PASSWORD_BACKEND:no secret service"),
+    );
+    const cmd = makeCommand({
+      target: { kind: "remote", alias: "prod" },
+      promptSshPassword: true,
+    });
+
+    const result = await triggerCommandRun(cmd);
+
+    expect(result).toBeNull();
+    expect(messageErrorMock).toHaveBeenCalledTimes(1);
+    expect(String(messageErrorMock.mock.calls[0]?.[0])).not.toContain(
+      "SSH_PASSWORD_BACKEND:",
+    );
   });
 });

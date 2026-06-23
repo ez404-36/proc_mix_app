@@ -21,7 +21,7 @@ pub mod registry;
 pub mod types;
 pub mod watch;
 
-pub use check::check_alias;
+pub use check::{check_alias, is_safe_alias};
 pub use provider::{SshSourceProvider, SshSourceWriter};
 pub use providers::OpenSshProvider;
 pub use registry::{load_inventory, writer_for, SshInventory, SshSourceStatus};

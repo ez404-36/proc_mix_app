@@ -21,6 +21,7 @@ import type {
   WorkflowCondition,
 } from "../../types";
 import { getCommandDescription, getCommandName } from "../../utils/commandLabels";
+import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 import { dataSourceId, dataSourceOptions } from "../../utils/dataSourceOptions";
 import {
   dominatingDataNodeVariableNames,
@@ -498,6 +499,17 @@ function NodeConfigForm({
             <div className="wf-inspector__local-row">
               <span className="wf-palette__local-badge">
                 {t("editor.palette.localBadge")}
+              </span>
+            </div>
+          ) : null}
+          {/* Read-only: a workflow command node inherits the command's
+              execution target, so a remote-targeted command runs over SSH as
+              a step too. Surfaced here so it's visible without opening the
+              command form. */}
+          {selectedCommand && isRemoteTarget(selectedCommand.target) ? (
+            <div className="wf-inspector__local-row">
+              <span className="target-badge">
+                {formatTargetBadge(selectedCommand.target, t)}
               </span>
             </div>
           ) : null}

@@ -113,6 +113,9 @@ type WireRun = WireBase & {
   exitCode?: number | null;
   durationMs?: number | null;
   status: RunStatus;
+  // Where the run executed. Absent (Rust `skip_serializing_if`) for a local
+  // run; `{ kind: 'remote', alias }` for a remote run. `| null` defensive.
+  target?: import("../types").ExecutionTarget | null;
   // Absent (not `null`) unless the run was killed by its timeout.
   timedOut?: boolean | null;
   // Persisted by `update_run_event` on completion; absent while running and
@@ -269,6 +272,7 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         exitCode: w.exitCode ?? undefined,
         durationMs: w.durationMs ?? undefined,
         status: w.status,
+        target: w.target ?? undefined,
         timedOut: w.timedOut ?? undefined,
         output: w.output ?? undefined,
         result: w.result ?? undefined,
@@ -417,6 +421,7 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         ...(e.exitCode !== undefined ? { exitCode: e.exitCode } : {}),
         ...(e.durationMs !== undefined ? { durationMs: e.durationMs } : {}),
         status: e.status,
+        ...(e.target !== undefined ? { target: e.target } : {}),
         ...(e.timedOut !== undefined ? { timedOut: e.timedOut } : {}),
         ...(e.output !== undefined ? { output: e.output } : {}),
         ...(e.result !== undefined ? { result: e.result } : {}),

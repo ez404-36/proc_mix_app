@@ -41,6 +41,7 @@ import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
 import { NumberStepper } from "../NumberStepper";
 import { OutputSchemaEditor } from "./OutputSchemaEditor";
+import { TargetSelector } from "./TargetSelector";
 import { ScriptEditor } from "./ScriptEditor";
 import { LiveRunOutput } from "./LiveRunOutput";
 import { FlagBuilder } from "./FlagBuilder";
@@ -406,8 +407,27 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     // but recomputing here makes the save path independent of effect
     // ordering and impossible to bypass by tampering with the input
     // state through devtools or future refactors.
+    // Remote runs cannot be elevated in this version (local sudo/UAC does
+    // not map onto a remote host). Force the persisted flag off for a remote
+    // target so a command can't be saved as "remote + admin" — a combination
+    // the executor would reject. The UI also disables the toggle for remote.
+    const isRemoteTarget = form.target.kind !== "local";
     const runAsAdminValue =
-      form.runAsAdmin || detectAdminEscalation(trimmedScript);
+      !isRemoteTarget &&
+      (form.runAsAdmin || detectAdminEscalation(trimmedScript));
+
+    // Persisted target: omit it entirely when local so the saved Command's
+    // wire shape stays byte-identical to a command that predates this feature
+    // (the executor defaults a missing target to local).
+    const targetValue =
+      form.target.kind === "local" ? undefined : form.target;
+
+    // Persist the password-prompt opt-in only for a remote target — it is
+    // meaningless for a local run. Switching a command back to local therefore
+    // drops the flag, so it can't silently re-arm if the command later becomes
+    // remote again.
+    const promptSshPasswordValue =
+      isRemoteTarget && form.promptSshPassword ? true : undefined;
 
     // Convert UI rows to wire-format specs. Empty list → omit the
     // field entirely from the saved Command (matches the `args` / `env`
@@ -454,6 +474,12 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
         // Explicit field so clearing the working dir resets it to the default.
         workingDir: form.workingDir.trim() !== "" ? form.workingDir.trim() : undefined,
         promptWorkingDir: form.promptWorkingDir || undefined,
+        // Explicit field (including `undefined`) so switching a remote command
+        // back to local drops the stored target rather than leaving the old
+        // value behind the store's spread merge.
+        target: targetValue,
+        // Explicit field so unchecking (or switching to local) drops the flag.
+        promptSshPassword: promptSshPasswordValue,
       };
       if (command.nameKey !== undefined) patch.nameKey = undefined;
       if (command.descriptionKey !== undefined) {
@@ -484,6 +510,10 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
         ...(envValue !== undefined ? { env: envValue } : {}),
         ...(form.workingDir.trim() !== "" ? { workingDir: form.workingDir.trim() } : {}),
         ...(form.promptWorkingDir ? { promptWorkingDir: true } : {}),
+        ...(targetValue !== undefined ? { target: targetValue } : {}),
+        ...(promptSshPasswordValue !== undefined
+          ? { promptSshPassword: promptSshPasswordValue }
+          : {}),
         // A command created from within a workflow editor is scoped LOCAL to
         // that workflow (hidden from the global library). Stamp the scope +
         // owning workflow id supplied by the host. Omitted entirely for a
@@ -521,6 +551,8 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     form.envRows,
     form.workingDir,
     form.promptWorkingDir,
+    form.target,
+    form.promptSshPassword,
     errors,
     hasErrors,
     hasVariableErrors,
@@ -1076,6 +1108,15 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   const detectionResolved = getCachedAvailableShells() !== null;
   const showNoShellsWarning = detectionResolved && availableShells.length === 0;
 
+  // Remote runs can't be elevated in this version (local sudo/UAC doesn't map
+  // onto a remote host). When the target is remote, the admin checkbox is
+  // disabled + force-unchecked and a hint explains why. The save path also
+  // forces `runAsAdmin` off for a remote target.
+  const isRemoteTarget = form.target.kind !== "local";
+  // Elevation is locked when the script auto-escalates (existing behaviour)
+  // OR when the target is remote (new). Both render the checkbox disabled.
+  const elevationLocked = escalationDetected || isRemoteTarget;
+
   // Build the Category dropdown options: "No category" first, then the
   // union of persisted suggestions, any names added this session, and the
   // command's own current value (so an edited command whose category is
@@ -1418,6 +1459,21 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
           </div>
 
           {/*
+           * Where-to-run selector (Local / Remote host / Ask at run time).
+           * Sourced from the shared SSH host store so the offered hosts match
+           * Environment → Connections exactly. Remote runs disable elevation
+           * (handled on the admin checkbox below).
+           */}
+          <TargetSelector
+            value={form.target}
+            onChange={(target) => setForm((s) => ({ ...s, target }))}
+            promptSshPassword={form.promptSshPassword}
+            onPromptSshPasswordChange={(promptSshPassword) =>
+              setForm((s) => ({ ...s, promptSshPassword }))
+            }
+          />
+
+          {/*
            * Admin checkbox. When checked, the command spawns with
            * elevated privileges (sudo on Unix, UAC on Windows). The
            * label uses a `<label>` wrapper so clicking the text also
@@ -1434,21 +1490,29 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
            */}
           <label
             className={`command-form__field command-form__field--inline${
-              escalationDetected ? " command-form__field--locked" : ""
+              elevationLocked ? " command-form__field--locked" : ""
             }`}
             title={
-              escalationDetected
-                ? t("commandForm.tooltips.runAsAdminAutoDetected", {
+              isRemoteTarget
+                ? t("commandForm.tooltips.runAsAdminRemote", {
                     defaultValue:
-                      "Detected sudo/doas/pkexec at the start of the script — admin mode is required.",
+                      "Run as administrator is not available for remote commands.",
                   })
-                : undefined
+                : escalationDetected
+                  ? t("commandForm.tooltips.runAsAdminAutoDetected", {
+                      defaultValue:
+                        "Detected sudo/doas/pkexec at the start of the script — admin mode is required.",
+                    })
+                  : undefined
             }
           >
             <input
               type="checkbox"
-              checked={form.runAsAdmin}
-              disabled={escalationDetected}
+              // Remote runs can't be elevated: force the checkbox off
+              // regardless of the persisted flag so the UI matches what the
+              // executor will actually do.
+              checked={!isRemoteTarget && form.runAsAdmin}
+              disabled={elevationLocked}
               onChange={(e) =>
                 setForm((s) => ({ ...s, runAsAdmin: e.target.checked }))
               }
@@ -1459,7 +1523,14 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
               })}
             </span>
           </label>
-          {escalationDetected ? (
+          {isRemoteTarget ? (
+            <span className="command-form__hint" role="note">
+              {t("commandForm.hints.runAsAdminRemote", {
+                defaultValue:
+                  "Run as administrator is not available for remote commands.",
+              })}
+            </span>
+          ) : escalationDetected ? (
             <span className="command-form__hint" role="note">
               {t("commandForm.hints.runAsAdminAutoDetected", {
                 defaultValue:
@@ -1467,7 +1538,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
               })}
             </span>
           ) : null}
-          {form.runAsAdmin && platform === "windows" ? (
+          {!isRemoteTarget && form.runAsAdmin && platform === "windows" ? (
             <span className="command-form__hint" role="note">
               {t("commandForm.warnings.windowsAdmin", {
                 defaultValue:
@@ -1475,7 +1546,8 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
               })}
             </span>
           ) : null}
-          {form.runAsAdmin &&
+          {!isRemoteTarget &&
+          form.runAsAdmin &&
           platform !== "windows" &&
           !adminPasswordStored ? (
             <span className="command-form__hint" role="note">

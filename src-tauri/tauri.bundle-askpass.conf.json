@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "_comment": "Bundle-time-only overlay that ships the procmix-askpass SSH helper as a resource. Applied via `--config` ONLY when bundling (npm run tauri:build), NOT auto-merged like tauri.<platform>.conf.json — otherwise tauri-build would validate the resource path at every `cargo build`/`cargo test` and fail because the (release) helper isn't built yet. The helper is Unix-only, so this overlay is only used on Linux/macOS bundles; the npm script builds the release helper first.",
+  "bundle": {
+    "resources": {
+      "../target/release/procmix-askpass": "procmix-askpass"
+    }
+  }
+}

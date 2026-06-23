@@ -16,7 +16,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use procmix_lib::core::executor::{
-    spawn_execution, ExecuteRequest, ExecutionEvent, ExecutorState, EXECUTION_EVENT,
+    spawn_execution, ExecuteRequest, ExecutionEvent, ExecutionTarget, ExecutorState,
+    EXECUTION_EVENT,
 };
 use procmix_lib::storage::commands::{
     OutputFieldRecord, OutputPipelineStepRecord, OutputSchemaRecord,
@@ -90,6 +91,8 @@ fn request_with_schema(script: &str, schema: OutputSchemaRecord) -> ExecuteReque
         output_schema: Some(schema),
         capture_output: false,
         silent: false,
+        target: ExecutionTarget::Local,
+        ssh_password: None,
     }
 }
 

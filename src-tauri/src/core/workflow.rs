@@ -378,6 +378,14 @@ fn build_request(
         // stream each node's stdout to the live console even though the
         // workflow-level events are suppressed.
         silent,
+        // A workflow node inherits its command's target, so a remote-targeted
+        // command runs over SSH whether invoked directly or as a workflow step.
+        // `unwrap_or_default()` maps a command with no stored target to `Local`.
+        target: cmd.target.clone().unwrap_or_default(),
+        // A workflow node runs without an interactive password prompt, so a
+        // remote-targeted node must use key/agent auth (remote password auth is
+        // interactive-prompt-only).
+        ssh_password: None,
     }
 }
 

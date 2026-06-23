@@ -195,6 +195,55 @@ describe("runCommand", () => {
     expect(payload.req.workingDir).toBe("/cmd-dir");
   });
 
+  it("includes sshPassword in the payload for a remote run with a password", async () => {
+    invokeMock.mockResolvedValueOnce("exec-ssh-1");
+    const cmd = makeCommand({ target: { kind: "remote", alias: "prod" } });
+
+    await runCommand(cmd, {
+      variableValues: {},
+      sshPassword: "hunter2",
+    });
+
+    const [, payload] = invokeMock.mock.calls[0] as [
+      string,
+      { req: { sshPassword?: string; target?: { kind: string } } },
+    ];
+    expect(payload.req.sshPassword).toBe("hunter2");
+    expect(payload.req.target).toEqual({ kind: "remote", alias: "prod" });
+  });
+
+  it("omits sshPassword for a local run even if one is passed", async () => {
+    invokeMock.mockResolvedValueOnce("exec-ssh-2");
+    const cmd = makeCommand(); // local
+
+    await runCommand(cmd, {
+      variableValues: {},
+      sshPassword: "hunter2",
+    });
+
+    const [, payload] = invokeMock.mock.calls[0] as [
+      string,
+      { req: Record<string, unknown> },
+    ];
+    expect("sshPassword" in payload.req).toBe(false);
+  });
+
+  it("omits a blank sshPassword for a remote run", async () => {
+    invokeMock.mockResolvedValueOnce("exec-ssh-3");
+    const cmd = makeCommand({ target: { kind: "remote", alias: "prod" } });
+
+    await runCommand(cmd, {
+      variableValues: {},
+      sshPassword: "   ",
+    });
+
+    const [, payload] = invokeMock.mock.calls[0] as [
+      string,
+      { req: Record<string, unknown> },
+    ];
+    expect("sshPassword" in payload.req).toBe(false);
+  });
+
   it("should propagate rejection from invoke", async () => {
     invokeMock.mockRejectedValueOnce(new Error("backend down"));
     await expect(

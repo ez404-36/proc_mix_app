@@ -10,6 +10,7 @@ import type { TFunction } from "i18next";
 import { useContextMenu } from "../ContextMenu";
 import type { ContextMenuEntry } from "../ContextMenu";
 import { buildConsoleCopyMenu } from "../../utils/consoleClipboard";
+import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 import { useExecutionStore } from "../../stores/executionStore";
 import type { ConsoleDockPosition } from "../../stores/executionStore";
 import { Dropdown } from "../Dropdown";
@@ -684,6 +685,11 @@ export function OutputPanel(): ReactElement | null {
           <span className="output-panel__script-shell">
             {active.shell ?? t("outputPanel.defaultShell")}
           </span>
+          {isRemoteTarget(active.target) ? (
+            <span className="target-badge output-panel__script-target">
+              {formatTargetBadge(active.target, t)}
+            </span>
+          ) : null}
           <pre className="output-panel__script-body">{active.script}</pre>
         </div>
       ) : null}
