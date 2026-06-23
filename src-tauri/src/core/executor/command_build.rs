@@ -34,6 +34,22 @@ enum RemoteAuth {
     Password,
 }
 
+/// Where the askpass helper should read the password from, when password auth
+/// is selected (Unix only). Determines which env var the executor sets on the
+/// `ssh` child and whether it parks a one-shot secret beforehand.
+#[cfg(unix)]
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum PasswordSource {
+    /// A one-shot password supplied with THIS run (`req.ssh_password`). Parked
+    /// in a throwaway keychain entry keyed by the run id before spawn; the
+    /// helper reads it via `PROCMIX_ASKPASS_RUN_ID` and deletes it.
+    OneShot,
+    /// A password saved persistently for the host (`security::ssh_password`,
+    /// account `ssh-password:<alias>`). Nothing is parked; the helper reads it
+    /// via `PROCMIX_ASKPASS_ALIAS` and leaves it in place for reuse.
+    Persistent,
+}
+
 /// TCP connect budget handed to `ssh` via `-o ConnectTimeout` for a remote
 /// run. Mirrors the reachability probe's budget (`core::ssh::check`). The
 /// executor's own optional `timeout_seconds` is the wall-clock backstop for
@@ -431,26 +447,44 @@ pub(super) fn build_command(
                 return Err(format!("{ERR_INVALID_REMOTE_TARGET}{alias}"));
             }
 
-            // Decide the auth path. A one-shot SSH password (blank treated as
-            // absent) selects password auth via the SSH_ASKPASS helper — Unix
-            // only. On Windows the field is ignored and we always use key auth.
-            let has_password = req
-                .ssh_password
-                .as_deref()
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
+            // Decide the auth path + (on Unix) where the password comes from.
+            //
+            // Password auth (via the SSH_ASKPASS helper) is selected when EITHER
+            //   (a) a one-shot password was supplied with this run
+            //       (`req.ssh_password`, blank treated as absent), OR
+            //   (b) the host has a password saved persistently
+            //       (`security::ssh_password::has(alias)`).
+            // One-shot takes priority: it is the just-entered intent for this
+            // run. Both are Unix only — on Windows the askpass transport is
+            // unreliable, so we ignore any password and always use key auth.
             #[cfg(unix)]
-            let auth = if has_password {
+            let password_source: Option<PasswordSource> = {
+                let one_shot = req
+                    .ssh_password
+                    .as_deref()
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false);
+                if one_shot {
+                    Some(PasswordSource::OneShot)
+                } else if crate::security::ssh_password::has(alias).unwrap_or(false) {
+                    // A keychain read failure here is treated as "no saved
+                    // password" (fall back to keys) rather than aborting: an
+                    // unavailable keychain shouldn't block a key-auth host. A
+                    // genuinely password-only host will then fail fast on the
+                    // key path, which is the correct, visible outcome.
+                    Some(PasswordSource::Persistent)
+                } else {
+                    None
+                }
+            };
+            #[cfg(unix)]
+            let auth = if password_source.is_some() {
                 RemoteAuth::Password
             } else {
                 RemoteAuth::Keys
             };
             #[cfg(not(unix))]
-            let auth = {
-                // Windows: remote password auth is unsupported; ignore the field.
-                let _ = has_password;
-                RemoteAuth::Keys
-            };
+            let auth = RemoteAuth::Keys;
 
             // The command's declared shell is the LOCAL logical name; map it to
             // a POSIX remote invocation (falling back to `sh`). `program` here
@@ -478,44 +512,58 @@ pub(super) fn build_command(
             // paths.
             c.stdin(Stdio::null());
 
-            // Password auth (Unix): park the one-shot password in a throwaway
-            // keychain entry keyed by the run id, and point `ssh` at the askpass
-            // helper. The password itself never enters `ssh`'s argv or env —
-            // only the opaque run id does (PROCMIX_ASKPASS_RUN_ID). The helper
-            // reads-and-deletes the entry; the run finalizer clears it too.
+            // Password auth (Unix): point `ssh` at the askpass helper and tell
+            // it which keychain source to read. The password itself NEVER enters
+            // `ssh`'s argv or env — only an opaque run id (one-shot) or the
+            // already-validated alias (persistent) does. The helper reads the
+            // secret in-process and pipes it to `ssh` on demand.
             #[cfg(unix)]
-            if auth == RemoteAuth::Password {
-                // The run id is the execution id. `mod.rs` sets it on `req`
-                // before calling us, so it is always present here for a remote
-                // run; guard anyway rather than spawn with a bogus key.
-                let run_id = req
-                    .execution_id
-                    .as_deref()
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| {
-                        format!("{ERR_SSH_PASSWORD_BACKEND_PREFIX}missing run id for password auth")
-                    })?;
-                let password = req
-                    .ssh_password
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .expect("has_password implies a non-blank ssh_password");
-
+            if let Some(source) = password_source {
                 let helper = askpass_helper_path(askpass_resource_path)
                     .map_err(|e| format!("{ERR_SSH_PASSWORD_BACKEND_PREFIX}{e}"))?;
 
-                // Park the secret BEFORE setting env, so a keychain failure
-                // aborts the run without ever spawning `ssh`.
-                crate::security::ssh_oneshot::put(run_id, password)
-                    .map_err(|e| format!("{ERR_SSH_PASSWORD_BACKEND_PREFIX}{e}"))?;
+                match source {
+                    PasswordSource::OneShot => {
+                        // The run id is the execution id. `mod.rs` sets it on
+                        // `req` before calling us, so it is always present for a
+                        // remote run; guard anyway rather than park a bogus key.
+                        let run_id = req
+                            .execution_id
+                            .as_deref()
+                            .filter(|s| !s.is_empty())
+                            .ok_or_else(|| {
+                                format!(
+                                    "{ERR_SSH_PASSWORD_BACKEND_PREFIX}missing run id for password auth"
+                                )
+                            })?;
+                        let password = req
+                            .ssh_password
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .expect("OneShot source implies a non-blank ssh_password");
+
+                        // Park the secret BEFORE setting env, so a keychain
+                        // failure aborts the run without ever spawning `ssh`.
+                        crate::security::ssh_oneshot::put(run_id, password)
+                            .map_err(|e| format!("{ERR_SSH_PASSWORD_BACKEND_PREFIX}{e}"))?;
+                        c.env("PROCMIX_ASKPASS_RUN_ID", run_id);
+                    }
+                    PasswordSource::Persistent => {
+                        // Nothing to park: the password already lives under
+                        // `ssh-password:<alias>`. The helper reads it by alias
+                        // (re-validated by `is_safe_alias` inside `get`) and
+                        // leaves it in place for reuse across runs. The alias is
+                        // already `is_safe_alias`-validated above.
+                        c.env("PROCMIX_ASKPASS_ALIAS", alias);
+                    }
+                }
 
                 c.env("SSH_ASKPASS", &helper);
                 // OpenSSH >= 8.4: call askpass even though a TTY may be present
                 // /absent; combined with stdin=null + setsid (no controlling
                 // TTY) this reliably routes the prompt to our helper.
                 c.env("SSH_ASKPASS_REQUIRE", "force");
-                c.env("PROCMIX_ASKPASS_RUN_ID", run_id);
                 // DISPLAY is required by some older OpenSSH builds before they
                 // will invoke askpass at all; set a dummy value so the helper is
                 // reached even on a headless box. Harmless when unused.
@@ -1252,12 +1300,15 @@ mod build_command_remote_tests {
             args.iter().any(|a| a == "BatchMode=yes"),
             "key-auth remote must carry BatchMode=yes: {args:?}"
         );
-        // No askpass env on the key path.
-        let has_askpass = cmd
-            .as_std()
-            .get_envs()
-            .any(|(k, _)| k == std::ffi::OsStr::new("SSH_ASKPASS"));
-        assert!(!has_askpass, "key-auth remote must not set SSH_ASKPASS");
+        // No askpass env on the key path — neither the helper pointer nor
+        // EITHER password-source selector (one-shot run id or persistent alias).
+        for k in ["SSH_ASKPASS", "PROCMIX_ASKPASS_RUN_ID", "PROCMIX_ASKPASS_ALIAS"] {
+            let present = cmd
+                .as_std()
+                .get_envs()
+                .any(|(key, _)| key == std::ffi::OsStr::new(k));
+            assert!(!present, "key-auth remote must not set {k}");
+        }
     }
 
     /// An unsafe alias (leading '-', option injection) is rejected before any
