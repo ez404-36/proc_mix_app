@@ -9,6 +9,7 @@ import {
   useSshHostStore,
 } from "../../stores/sshHostStore";
 import type { HostCheckState } from "../../stores/sshHostStore";
+import { getCachedPlatform } from "../../utils/platform";
 
 /** The three target modes the selector exposes, as stable option values. */
 const MODE_LOCAL = "local";
@@ -76,6 +77,22 @@ export function TargetSelector({
 
   const mode = value.kind;
   const selectedAlias = value.kind === "remote" ? value.alias : "";
+
+  // Password auth is Unix-only: the askpass transport (SSH_ASKPASS + throwaway
+  // keychain) is unreliable on Win32-OpenSSH, so the executor ignores a remote
+  // password on Windows. Hide the opt-in there entirely rather than offer a
+  // control that silently does nothing — Windows users authenticate with keys.
+  const isWindows = getCachedPlatform() === "windows";
+
+  // Keep the opt-in consistent with where its checkbox is shown: clear it when
+  // the target is local or when password auth is unavailable (Windows). Without
+  // this, a command saved with the flag on Unix would carry a dangling
+  // `promptSshPassword` after being edited on Windows or switched to local.
+  useEffect(() => {
+    if (promptSshPassword && (mode === "local" || isWindows)) {
+      onPromptSshPasswordChange(false);
+    }
+  }, [promptSshPassword, mode, isWindows, onPromptSshPasswordChange]);
 
   const modeOptions: DropdownOption[] = [
     { value: MODE_LOCAL, label: t("commandForm.target.local", { defaultValue: "Local" }) },
@@ -216,11 +233,11 @@ export function TargetSelector({
         </span>
       ) : null}
 
-      {/* Password-auth opt-in. Only shown for a remote target. When checked the
-          runner prompts for a one-shot SSH password before each run; otherwise
-          the run relies on keys / the SSH agent. The password is never saved.
-          Unix only — ignored on Windows by the executor. */}
-      {mode !== "local" ? (
+      {/* Password-auth opt-in. Only shown for a remote target on Unix. When
+          checked the runner prompts for a one-shot SSH password before each
+          run; otherwise the run relies on keys / the SSH agent. The password is
+          never saved. Hidden on Windows (the executor ignores it there). */}
+      {mode !== "local" && !isWindows ? (
         <>
           <label className="command-form__field command-form__field--inline">
             <input
