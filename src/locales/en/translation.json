@@ -825,7 +825,21 @@
       "noHosts": "No SSH connections found. Add one in Environment → Connections.",
       "remoteLimitations": "Remote runs ignore the working directory and environment variables, can't run as administrator, and use a POSIX shell (sh) on the host.",
       "promptSshPassword": "Ask for a password at run time",
-      "promptSshPasswordHint": "You'll be asked for the SSH password before each run. It is used once and never saved — prefer SSH keys for repeated runs. (Unix only.)"
+      "promptSshPasswordHint": "You'll be asked for the SSH password before each run. It is used once and never saved — prefer SSH keys for repeated runs. (Unix only.)",
+      "sshPasswordLabel": "Saved SSH password",
+      "sshPasswordInputLabel": "SSH password for {{alias}}",
+      "sshPasswordSet": "Set password…",
+      "sshPasswordChange": "Change…",
+      "sshPasswordSave": "Save",
+      "sshPasswordCancel": "Cancel",
+      "sshPasswordClear": "Clear",
+      "sshPasswordStatusSaved": "Saved ✓",
+      "sshPasswordStatusNone": "Not saved — keys/agent will be used.",
+      "sshPasswordSaved": "SSH password saved",
+      "sshPasswordSaveError": "Failed to save SSH password",
+      "sshPasswordCleared": "SSH password cleared",
+      "sshPasswordClearError": "Failed to clear SSH password",
+      "sshPasswordHint": "Stored in your OS keychain for this host so it can run unattended. SSH keys are preferred; the password is a fallback. (Unix only.)"
     },
     "scriptEditor": {
       "insertVariable": "Insert variable"

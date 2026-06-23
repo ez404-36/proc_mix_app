@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+import { Message } from "@arco-design/web-react";
 import type { ExecutionTarget } from "../../types";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
@@ -10,6 +11,11 @@ import {
 } from "../../stores/sshHostStore";
 import type { HostCheckState } from "../../stores/sshHostStore";
 import { getCachedPlatform } from "../../utils/platform";
+import {
+  clearSshPassword,
+  hasSshPassword,
+  setSshPassword,
+} from "../../services/sshConnectionService";
 
 /** The three target modes the selector exposes, as stable option values. */
 const MODE_LOCAL = "local";
@@ -93,6 +99,93 @@ export function TargetSelector({
       onPromptSshPasswordChange(false);
     }
   }, [promptSshPassword, mode, isWindows, onPromptSshPasswordChange]);
+
+  // ---- Persistent per-host SSH password (Phase 2) -------------------------
+  // A saved password lets a password host run unattended (no run-time prompt).
+  // It is keyed by the concrete selected alias, so it is only meaningful for a
+  // "Remote host" target with a chosen host, on Unix. The value never reaches
+  // the frontend — we only learn whether one exists and can set/clear it.
+  const passwordHostAlias =
+    mode === "remote" && selectedAlias !== "" ? selectedAlias : "";
+  const canManagePassword = !isWindows && passwordHostAlias !== "";
+
+  const [passwordStored, setPasswordStored] = useState(false);
+  const [editingPassword, setEditingPassword] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
+
+  // Refresh the "is a password saved?" indicator whenever the manageable host
+  // changes. A read failure (keychain unavailable) is treated as "not saved"
+  // rather than surfaced — the user can still attempt to set one, which will
+  // report the real error. Guard against a late resolve after the alias
+  // changed by capturing the alias the effect ran for.
+  useEffect(() => {
+    if (!canManagePassword) {
+      setPasswordStored(false);
+      setEditingPassword(false);
+      setPasswordInput("");
+      return;
+    }
+    let active = true;
+    void hasSshPassword(passwordHostAlias)
+      .then((stored) => {
+        if (active) setPasswordStored(stored);
+      })
+      .catch(() => {
+        if (active) setPasswordStored(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [canManagePassword, passwordHostAlias]);
+
+  const handleSavePassword = useCallback(async (): Promise<void> => {
+    if (passwordInput === "" || passwordHostAlias === "") return;
+    setPasswordBusy(true);
+    try {
+      await setSshPassword(passwordHostAlias, passwordInput);
+      setPasswordStored(true);
+      setEditingPassword(false);
+      setPasswordInput("");
+      Message.success(
+        t("commandForm.target.sshPasswordSaved", {
+          defaultValue: "SSH password saved",
+        }),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Message.error(
+        `${t("commandForm.target.sshPasswordSaveError", {
+          defaultValue: "Failed to save SSH password",
+        })}: ${msg}`,
+      );
+    } finally {
+      setPasswordBusy(false);
+    }
+  }, [passwordHostAlias, passwordInput, t]);
+
+  const handleClearPassword = useCallback(async (): Promise<void> => {
+    if (passwordHostAlias === "") return;
+    setPasswordBusy(true);
+    try {
+      await clearSshPassword(passwordHostAlias);
+      setPasswordStored(false);
+      Message.success(
+        t("commandForm.target.sshPasswordCleared", {
+          defaultValue: "SSH password cleared",
+        }),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Message.error(
+        `${t("commandForm.target.sshPasswordClearError", {
+          defaultValue: "Failed to clear SSH password",
+        })}: ${msg}`,
+      );
+    } finally {
+      setPasswordBusy(false);
+    }
+  }, [passwordHostAlias, t]);
 
   const modeOptions: DropdownOption[] = [
     { value: MODE_LOCAL, label: t("commandForm.target.local", { defaultValue: "Local" }) },
@@ -260,6 +353,118 @@ export function TargetSelector({
             </span>
           ) : null}
         </>
+      ) : null}
+
+      {/* Persistent per-host SSH password (Phase 2). Only for a remote target
+          with a chosen host, on Unix. Lets a password host run unattended (no
+          run-time prompt). The value is stored in the OS keychain by the
+          backend and never read back here — we only show whether one exists. */}
+      {canManagePassword ? (
+        <div className="command-form__field">
+          <span className="command-form__label">
+            {t("commandForm.target.sshPasswordLabel", {
+              defaultValue: "Saved SSH password",
+            })}
+          </span>
+
+          {editingPassword ? (
+            <div className="command-form__target-host">
+              <input
+                className="input"
+                type="password"
+                autoComplete="off"
+                aria-label={t("commandForm.target.sshPasswordInputLabel", {
+                  defaultValue: "SSH password for {{alias}}",
+                  alias: passwordHostAlias,
+                })}
+                value={passwordInput}
+                disabled={passwordBusy}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleSavePassword();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    setEditingPassword(false);
+                    setPasswordInput("");
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={passwordBusy || passwordInput === ""}
+                onClick={() => void handleSavePassword()}
+              >
+                {t("commandForm.target.sshPasswordSave", {
+                  defaultValue: "Save",
+                })}
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost"
+                disabled={passwordBusy}
+                onClick={() => {
+                  setEditingPassword(false);
+                  setPasswordInput("");
+                }}
+              >
+                {t("commandForm.target.sshPasswordCancel", {
+                  defaultValue: "Cancel",
+                })}
+              </button>
+            </div>
+          ) : (
+            <div className="command-form__target-host">
+              <span className="command-form__hint" role="note">
+                {passwordStored
+                  ? t("commandForm.target.sshPasswordStatusSaved", {
+                      defaultValue: "Saved ✓",
+                    })
+                  : t("commandForm.target.sshPasswordStatusNone", {
+                      defaultValue: "Not saved — keys/agent will be used.",
+                    })}
+              </span>
+              <button
+                type="button"
+                className="btn btn--ghost"
+                disabled={passwordBusy}
+                onClick={() => {
+                  setPasswordInput("");
+                  setEditingPassword(true);
+                }}
+              >
+                {passwordStored
+                  ? t("commandForm.target.sshPasswordChange", {
+                      defaultValue: "Change…",
+                    })
+                  : t("commandForm.target.sshPasswordSet", {
+                      defaultValue: "Set password…",
+                    })}
+              </button>
+              {passwordStored ? (
+                <button
+                  type="button"
+                  className="btn btn--danger"
+                  disabled={passwordBusy}
+                  onClick={() => void handleClearPassword()}
+                >
+                  {t("commandForm.target.sshPasswordClear", {
+                    defaultValue: "Clear",
+                  })}
+                </button>
+              ) : null}
+            </div>
+          )}
+
+          <span className="command-form__hint" role="note">
+            {t("commandForm.target.sshPasswordHint", {
+              defaultValue:
+                "Stored in your OS keychain for this host so it can run unattended. SSH keys are preferred; the password is a fallback. (Unix only.)",
+            })}
+          </span>
+        </div>
       ) : null}
     </div>
   );
