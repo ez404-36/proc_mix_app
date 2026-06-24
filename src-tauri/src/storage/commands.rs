@@ -266,6 +266,19 @@ pub struct CommandRecord {
     /// field — parsing cleanly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ExecutionTarget>,
+    /// Optional stable slug used to address this command over the built-in HTTP
+    /// API. `None` (the default) means no slug — the API can still address the
+    /// command by `id`. Persisted as the `api_slug` TEXT column (NULL when
+    /// absent); uniqueness among non-NULL slugs is enforced by a partial unique
+    /// index. Serialised as `apiSlug`. `#[serde(default)]` keeps legacy payloads
+    /// parsing cleanly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_slug: Option<String>,
+    /// Whether this command may be run over the built-in HTTP API. `false` (the
+    /// default) keeps it invisible to the API until the user opts in. Persisted
+    /// as the `api_enabled` INTEGER column. Serialised as `apiEnabled`.
+    #[serde(default)]
+    pub api_enabled: bool,
 }
 
 /// Return every command in insertion order (oldest first).
@@ -274,7 +287,8 @@ pub async fn list_all(pool: &DbPool) -> Result<Vec<CommandRecord>, String> {
         "SELECT id, name, name_key, description, description_key, icon, script, shell, \
                 args_json, working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-                timeout_seconds, output_schema, scope, workflow_id, target \
+                timeout_seconds, output_schema, scope, workflow_id, target, \
+                api_slug, api_enabled \
          FROM commands \
          ORDER BY created_at ASC",
     )
@@ -360,8 +374,9 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             id, name, name_key, description, description_key, icon, script, shell, \
             args_json, working_dir, env_json, tags_json, category_id, favorite, \
             created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-            timeout_seconds, output_schema, scope, workflow_id, target \
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            timeout_seconds, output_schema, scope, workflow_id, target, \
+            api_slug, api_enabled \
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \
             name_key = excluded.name_key, \
@@ -385,7 +400,9 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             output_schema = excluded.output_schema, \
             scope = excluded.scope, \
             workflow_id = excluded.workflow_id, \
-            target = excluded.target",
+            target = excluded.target, \
+            api_slug = excluded.api_slug, \
+            api_enabled = excluded.api_enabled",
     )
     .bind(&cmd.id)
     .bind(&cmd.name)
@@ -415,6 +432,11 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
     .bind(cmd.scope.clone().unwrap_or_else(|| "global".to_string()))
     .bind(&cmd.workflow_id)
     .bind(&target_json)
+    // An empty slug from the UI is normalised to NULL so "no slug" is a single
+    // representation (NULL) — never an empty string that would also collide in
+    // the partial unique index if two commands sent "".
+    .bind(cmd.api_slug.as_deref().filter(|s| !s.is_empty()))
+    .bind(if cmd.api_enabled { 1_i64 } else { 0_i64 })
     .execute(pool.as_ref())
     .await
     .map_err(|e| format!("upsert: {e}"))?;
@@ -513,6 +535,12 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
         ),
         None => None,
     };
+    let api_slug: Option<String> = row
+        .try_get("api_slug")
+        .map_err(|e| format!("read api_slug: {e}"))?;
+    let api_enabled_i: i64 = row
+        .try_get("api_enabled")
+        .map_err(|e| format!("read api_enabled: {e}"))?;
 
     Ok(CommandRecord {
         id: row.try_get("id").map_err(|e| format!("read id: {e}"))?,
@@ -562,7 +590,50 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
         scope,
         workflow_id,
         target,
+        api_slug,
+        api_enabled: api_enabled_i != 0,
     })
+}
+
+/// Resolve a command for the HTTP API by `reference`, which is matched first
+/// against `api_slug` and then (as a fallback) against `id`. Returns the record
+/// ONLY when it is API-enabled (`api_enabled = 1`); an existing-but-not-opted-in
+/// command resolves to `None` so the API endpoint returns 404 (it must be
+/// indistinguishable from a non-existent one — opting in is the gate). A
+/// non-empty `reference` is required; empty input resolves to `None`.
+pub async fn find_by_api_ref(
+    pool: &DbPool,
+    reference: &str,
+) -> Result<Option<CommandRecord>, String> {
+    if reference.is_empty() {
+        return Ok(None);
+    }
+    // Slug match first (the canonical address), then id fallback. Both are
+    // gated on `api_enabled = 1` directly in SQL so a disabled command is never
+    // even returned to the caller. Parameterised — `reference` is bound, never
+    // interpolated.
+    let row = sqlx::query(
+        "SELECT id, name, name_key, description, description_key, icon, script, shell, \
+                args_json, working_dir, env_json, tags_json, category_id, favorite, \
+                created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
+                timeout_seconds, output_schema, scope, workflow_id, target, \
+                api_slug, api_enabled \
+         FROM commands \
+         WHERE api_enabled = 1 AND (api_slug = ? OR id = ?) \
+         ORDER BY (api_slug = ?) DESC \
+         LIMIT 1",
+    )
+    .bind(reference)
+    .bind(reference)
+    .bind(reference)
+    .fetch_optional(pool.as_ref())
+    .await
+    .map_err(|e| format!("find_by_api_ref: {e}"))?;
+
+    match row {
+        Some(row) => Ok(Some(row_to_record(row)?)),
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -624,6 +695,8 @@ mod wire_format_tests {
             scope: Some("local".into()),
             workflow_id: Some("wf-1".into()),
             target: None,
+            api_slug: Some("deploy".into()),
+            api_enabled: true,
         }
     }
 
@@ -885,6 +958,10 @@ mod sqlite_integration_tests {
             scope: Some("global".into()),
             workflow_id: None,
             target: None,
+            // Round-trips: `None`/`false` survive upsert → list unchanged
+            // (empty slug normalises to NULL, default disabled).
+            api_slug: None,
+            api_enabled: false,
         }
     }
 

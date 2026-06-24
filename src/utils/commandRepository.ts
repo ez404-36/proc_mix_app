@@ -107,6 +107,18 @@ export interface CommandRecord {
    * `"local"` command. `null` / absent for global commands.
    */
   workflowId?: string | null;
+  /**
+   * Mirror of the Rust `api_slug` field — the optional HTTP-API slug. `null` /
+   * absent when the command has no slug. {@link commandToRecord} omits it when
+   * the UI has no slug so the wire stays byte-identical to legacy payloads.
+   */
+  apiSlug?: string | null;
+  /**
+   * Mirror of the Rust `api_enabled` field. Optional/absent on the wire for
+   * legacy records (the Rust side deserialises with `#[serde(default)]` to
+   * `false`); {@link recordToCommand} normalises a missing value to `false`.
+   */
+  apiEnabled?: boolean;
 }
 
 /**
@@ -151,6 +163,14 @@ export function commandToRecord(c: Command): CommandRecord {
     ...(c.scope !== undefined ? { scope: c.scope } : {}),
     // Owning workflow id for a local command. Omitted entirely for globals.
     ...(c.workflowId !== undefined ? { workflowId: c.workflowId } : {}),
+    // HTTP-API slug: omit when absent so the wire stays byte-identical to
+    // legacy payloads. An empty string is normalised to `null` (no slug) so the
+    // backend's partial unique index never sees a "" collision.
+    ...(c.apiSlug !== undefined
+      ? { apiSlug: c.apiSlug.trim() === "" ? null : c.apiSlug.trim() }
+      : {}),
+    // HTTP-API opt-in. Always send so toggling it off persists.
+    apiEnabled: c.apiEnabled ?? false,
   };
 }
 
@@ -206,6 +226,11 @@ export function recordToCommand(r: CommandRecord): Command {
       : "global",
     // A local command's owning workflow id; `undefined` for globals.
     workflowId: r.workflowId ?? undefined,
+    // HTTP-API slug; `undefined` when the command has none.
+    apiSlug: r.apiSlug ?? undefined,
+    // Default to `false` so commands loaded from old DBs (no column) are not
+    // accidentally treated as API-enabled.
+    apiEnabled: r.apiEnabled ?? false,
   };
 }
 

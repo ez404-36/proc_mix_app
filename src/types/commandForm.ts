@@ -71,4 +71,14 @@ export interface FormState {
    * `Command.promptSshPassword`.
    */
   promptSshPassword: boolean;
+  /**
+   * When true, this command may be run over the built-in HTTP API. Persisted
+   * as `Command.apiEnabled`.
+   */
+  apiEnabled: boolean;
+  /**
+   * Optional HTTP-API slug. Empty string means "no slug" (the API can still
+   * address the command by id). Persisted as `Command.apiSlug`.
+   */
+  apiSlug: string;
 }

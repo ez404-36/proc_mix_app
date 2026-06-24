@@ -183,6 +183,12 @@ pub enum HistoryEventPayload {
         /// schema. `None` otherwise.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result: Option<HistoryExtractedResult>,
+        /// What triggered this run: `Some("api")` for a run started over the
+        /// built-in HTTP API. `None` (omitted from the wire) for an interactive
+        /// "manual" run, so legacy rows and UI-triggered runs stay byte-identical
+        /// and the History filter can distinguish API runs without a new variant.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     CommandRestored {
@@ -1218,6 +1224,8 @@ mod wire_format_tests {
             updated_at: "2026-05-28T00:00:00Z".into(),
             last_run_at: None,
             run_count: 0,
+            api_slug: None,
+            api_enabled: false,
         }
     }
 
@@ -1248,6 +1256,8 @@ mod wire_format_tests {
             scope: None,
             workflow_id: None,
             target: None,
+            api_slug: None,
+            api_enabled: false,
         }
     }
 
@@ -1337,6 +1347,7 @@ mod wire_format_tests {
             timed_out: None,
             output: None,
             result: None,
+            source: None,
         });
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["kind"], "commandRun");
@@ -1369,6 +1380,7 @@ mod wire_format_tests {
             timed_out: None,
             output: None,
             result: None,
+            source: None,
         });
         let json = serde_json::to_value(&remote).unwrap();
         assert_eq!(json["target"]["kind"], "remote");
@@ -1386,6 +1398,7 @@ mod wire_format_tests {
             timed_out: None,
             output: None,
             result: None,
+            source: None,
         });
         let local_json = serde_json::to_value(&local).unwrap();
         assert!(local_json.get("target").is_none());
@@ -1422,6 +1435,7 @@ mod wire_format_tests {
             timed_out: None,
             output: None,
             result: None,
+            source: None,
         });
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["status"], "running");
@@ -1757,6 +1771,7 @@ mod wire_format_tests {
                 timed_out: None,
                 output: None,
                 result: None,
+                source: None,
             },
             HistoryEventPayload::CommandRestored {
                 command_id: "c1".into(),
@@ -1931,6 +1946,8 @@ mod sqlite_integration_tests {
             updated_at: "2026-05-28T00:00:00Z".into(),
             last_run_at: None,
             run_count: 0,
+            api_slug: None,
+            api_enabled: false,
         }
     }
 
@@ -1961,6 +1978,8 @@ mod sqlite_integration_tests {
             scope: None,
             workflow_id: None,
             target: None,
+            api_slug: None,
+            api_enabled: false,
         }
     }
 
@@ -2170,6 +2189,7 @@ mod sqlite_integration_tests {
                     timed_out: None,
                     output: None,
                     result: None,
+                    source: None,
                 },
             },
         )
@@ -2344,6 +2364,7 @@ mod sqlite_integration_tests {
                     timed_out: None,
                     output: None,
                     result: None,
+                    source: None,
                 },
             },
         )

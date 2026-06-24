@@ -90,6 +90,7 @@ describe("applyImport", () => {
       renamed: 0,
       workflows: 1,
       demotedAdmin: 0,
+      clearedApiSlugs: 0,
     });
   });
 
@@ -222,6 +223,7 @@ describe("applyImport", () => {
       renamed: 0,
       workflows: 1,
       demotedAdmin: 0,
+      clearedApiSlugs: 0,
     });
   });
 
@@ -259,6 +261,7 @@ describe("applyImport", () => {
       renamed: 1,
       workflows: 1,
       demotedAdmin: 0,
+      clearedApiSlugs: 0,
     });
   });
 
@@ -323,6 +326,7 @@ describe("applyImport", () => {
       renamed: 0,
       workflows: 0,
       demotedAdmin: 0,
+      clearedApiSlugs: 0,
     });
   });
 });

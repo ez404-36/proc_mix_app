@@ -68,6 +68,32 @@ tempfile = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1.52.3", features = ["full"] }
+# Built-in HTTP server for the optional REST API (`POST /api/command/{ref}/run`,
+# `POST /api/workflow/{ref}/run`). Runs as a Tokio task on the SAME runtime tauri
+# already uses (tokio with `features = ["full"]`), so no second runtime is
+# introduced. `axum` is chosen over a hand-rolled hyper service for its typed
+# extractors and built-in graceful shutdown. Bound to localhost by default; see
+# docs/http-server.md and core::http_server. Default features cover routing,
+# JSON, and the `tokio` TCP listener used by `axum::serve`.
+axum = "0.7"
+# Constant-time byte comparison for the Bearer-token check in
+# core::http_server::auth — defeats timing side-channels that a naive `==`
+# would leak. Tiny, pure-Rust, no_std-friendly.
+subtle = "2"
+# CSPRNG used ONLY to generate the API Bearer token (security::api_token::generate).
+# `getrandom` would also work but `rand` gives a clearer `rng.fill_bytes` API and
+# is already in the transitive tree via other crates.
+rand = "0.8"
+# Zero-config LAN discovery (mDNS / DNS-SD). When the HTTP server starts it
+# announces a `procmix.local` hostname + an `_http._tcp` service so other
+# machines on the same subnet can reach it by name (macOS/Windows resolve
+# `.local` out of the box; Linux via avahi). Pure-Rust, cross-platform, no
+# native dependency. See core::http_server::mdns and docs/http-server.md.
+mdns-sd = "0.11"
+# Enumerate local network interfaces to pick the machine's LAN IPv4 for the
+# mDNS A-record and the "reachable at" address shown in the UI. `local-ip-address`
+# is tiny and cross-platform (no `ifconfig`/`ip` shelling out).
+local-ip-address = "0.6"
 # Cooperative cancellation token for the workflow runner. A `oneshot` cannot
 # fan a cancel signal out to N concurrent fork branches (it is single-consumer
 # and not clonable), so the engine uses a `CancellationToken`: it is cheaply
@@ -205,6 +231,11 @@ windows = { version = "0.57", features = [
 # into release builds.
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+
+# `ServiceExt::oneshot` lets the HTTP-server integration tests drive the axum
+# `Router` directly (one request → one response) WITHOUT binding a real TCP
+# port or a live keychain — see tests/http_server_api.rs. Dev-only.
+tower = { version = "0.5", features = ["util"] }
 
 # Statistical micro-benchmark harness for the output-extraction hot path
 # (`core::extractor`) and the sandboxed JS parser (`core::js_parser`).

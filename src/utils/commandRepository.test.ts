@@ -37,6 +37,8 @@ const fullCommand: Command = {
   runCount: 3,
   runAsAdmin: true,
   scope: "global",
+  apiSlug: "deploy",
+  apiEnabled: true,
 };
 
 const fullRecord: CommandRecord = {
@@ -60,6 +62,8 @@ const fullRecord: CommandRecord = {
   runCount: 3,
   runAsAdmin: true,
   scope: "global",
+  apiSlug: "deploy",
+  apiEnabled: true,
 };
 
 const minimalCommand: Command = {
@@ -73,6 +77,7 @@ const minimalCommand: Command = {
   runCount: 0,
   runAsAdmin: false,
   scope: "global",
+  apiEnabled: false,
 };
 
 const minimalRecord: CommandRecord = {
@@ -96,6 +101,7 @@ const minimalRecord: CommandRecord = {
   runCount: 0,
   runAsAdmin: false,
   scope: "global",
+  apiEnabled: false,
 };
 
 beforeEach(() => {

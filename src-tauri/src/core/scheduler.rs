@@ -1808,6 +1808,8 @@ mod compute_due_tests {
             scope: None,
             workflow_id: None,
             target: None,
+            api_slug: None,
+            api_enabled: false,
         }
     }
 

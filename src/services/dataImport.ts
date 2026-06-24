@@ -14,6 +14,8 @@
 
 import { createCommand, updateCommand } from "./commandActions";
 import { createWorkflow } from "./workflowActions";
+import { useCommandStore } from "../stores/commandStore";
+import { useWorkflowStore } from "../stores/workflowStore";
 import type {
   ExportedCommand,
   ExportedWorkflow,
@@ -42,6 +44,14 @@ export interface ImportResult {
    * count so the demotion is never silent.
    */
   demotedAdmin: number;
+  /**
+   * How many imported items (commands + workflows) had an API slug that
+   * collided with an existing entity of the same type. Their slug was cleared
+   * and HTTP API access turned off on the imported copy so the import never
+   * fails on the backend's unique-slug index. The user can set a new slug
+   * afterwards. Surfaced in the Settings status so the change is never silent.
+   */
+  clearedApiSlugs: number;
 }
 
 /**
@@ -71,8 +81,12 @@ type CarriedState = Partial<
  */
 function toCommandInput(
   cmd: ExportedCommand,
-  nameOverride?: string,
-): [Parameters<typeof createCommand>[0], { wasAdmin: boolean }] {
+  nameOverride: string | undefined,
+  existingSlugs: ReadonlySet<string>,
+): [
+  Parameters<typeof createCommand>[0],
+  { wasAdmin: boolean; clearedSlug: boolean },
+] {
   const {
     id: _id,
     favorite: _favorite,
@@ -85,6 +99,10 @@ function toCommandInput(
     ...rest
   } = cmd as ExportedCommand & CarriedState;
   const wasAdmin = rest.runAsAdmin === true;
+  // A slug that collides with an existing command is cleared (and API access
+  // disabled) so the import never trips the backend's unique-slug index.
+  const clearedSlug =
+    rest.apiSlug !== undefined && existingSlugs.has(rest.apiSlug);
   return [
     {
       ...rest,
@@ -92,8 +110,9 @@ function toCommandInput(
       name: nameOverride ?? rest.name,
       favorite: false,
       runAsAdmin: false,
+      ...(clearedSlug ? { apiSlug: undefined, apiEnabled: false } : {}),
     },
-    { wasAdmin },
+    { wasAdmin, clearedSlug },
   ];
 }
 
@@ -121,7 +140,8 @@ function remapNode(
 function toWorkflowInput(
   wf: ExportedWorkflow,
   idMap: ReadonlyMap<string, string>,
-): Parameters<typeof createWorkflow>[0] {
+  existingSlugs: ReadonlySet<string>,
+): [Parameters<typeof createWorkflow>[0], { clearedSlug: boolean }] {
   const {
     id: _id,
     favorite: _favorite,
@@ -131,11 +151,17 @@ function toWorkflowInput(
     updatedAt: _updatedAt,
     ...rest
   } = wf as ExportedWorkflow & CarriedState;
-  return {
-    ...rest,
-    favorite: false,
-    nodes: rest.nodes.map((n: WorkflowNode) => remapNode(n, idMap)),
-  };
+  const clearedSlug =
+    rest.apiSlug !== undefined && existingSlugs.has(rest.apiSlug);
+  return [
+    {
+      ...rest,
+      favorite: false,
+      nodes: rest.nodes.map((n: WorkflowNode) => remapNode(n, idMap)),
+      ...(clearedSlug ? { apiSlug: undefined, apiEnabled: false } : {}),
+    },
+    { clearedSlug },
+  ];
 }
 
 /**
@@ -184,6 +210,23 @@ export function applyImport(
 ): ImportResult {
   const { commands, workflows, rename } = resolveSelection(parsed, selection);
 
+  // API slugs already in use, per type (separate namespaces). A colliding
+  // imported slug is cleared so the backend's unique-slug index never rejects
+  // the import. Read once up front from the live stores.
+  const existingCommandSlugs = new Set<string>(
+    useCommandStore
+      .getState()
+      .commands.map((c) => c.apiSlug)
+      .filter((s): s is string => s !== undefined),
+  );
+  const existingWorkflowSlugs = new Set<string>(
+    useWorkflowStore
+      .getState()
+      .workflows.map((w) => w.apiSlug)
+      .filter((s): s is string => s !== undefined),
+  );
+  let clearedApiSlugs = 0;
+
   const commandIdMap = new Map<string, string>();
   // For each imported command that is `local`, remember its NEW id and the
   // OLD workflow id it referenced — so a second pass can re-point it at the
@@ -197,8 +240,13 @@ export function applyImport(
 
   for (const cmd of commands) {
     const newName = rename.get(cmd.id);
-    const [input, { wasAdmin }] = toCommandInput(cmd, newName);
+    const [input, { wasAdmin, clearedSlug }] = toCommandInput(
+      cmd,
+      newName,
+      existingCommandSlugs,
+    );
     if (wasAdmin) demotedAdmin += 1;
+    if (clearedSlug) clearedApiSlugs += 1;
 
     const record = createCommand(input);
     commandIdMap.set(cmd.id, record.id);
@@ -216,7 +264,13 @@ export function applyImport(
   // commands can be re-pointed at the imported workflow's new id.
   const workflowIdMap = new Map<string, string>();
   for (const wf of workflows) {
-    const record = createWorkflow(toWorkflowInput(wf, commandIdMap));
+    const [input, { clearedSlug }] = toWorkflowInput(
+      wf,
+      commandIdMap,
+      existingWorkflowSlugs,
+    );
+    if (clearedSlug) clearedApiSlugs += 1;
+    const record = createWorkflow(input);
     workflowIdMap.set(wf.id, record.id);
   }
 
@@ -236,5 +290,6 @@ export function applyImport(
     renamed,
     workflows: workflows.length,
     demotedAdmin,
+    clearedApiSlugs,
   };
 }

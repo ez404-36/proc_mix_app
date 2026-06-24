@@ -1,6 +1,7 @@
 export * from "./command";
 export * from "./execution";
 export * from "./history";
+export * from "./httpServer";
 export * from "./listView";
 export * from "./outputSchema";
 export * from "./platform";

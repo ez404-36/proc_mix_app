@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { Workflow } from "../../types";
 import { CancelIcon, EditIcon, RunIcon, TrashIcon } from "../icons";
+import { IdBadge } from "../IdBadge";
 import { WorkflowPreviewCanvas } from "./WorkflowPreviewCanvas";
 
 interface WorkflowViewProps {
@@ -58,7 +59,10 @@ export function WorkflowView({
         aria-label={workflow.name}
       >
         <div className="workflow-view__header">
-          <h2 className="command-form__title">{workflow.name}</h2>
+          <div className="workflow-view__heading">
+            <h2 className="command-form__title">{workflow.name}</h2>
+            <IdBadge id={workflow.id} />
+          </div>
           <div className="list-tile__meta">
             <span className="shell-badge">
               {t("workflow.nodeCount", { count: workflow.nodes.length })}

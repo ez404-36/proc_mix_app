@@ -33,6 +33,9 @@ const sampleCommand: Command = {
   // `recordToCommand` always materialises a scope, so a command that
   // round-trips through the wire mappers comes back as `"global"`.
   scope: "global",
+  // `recordToCommand` always materialises `apiEnabled` (default false), so a
+  // round-tripped command comes back with it set explicitly.
+  apiEnabled: false,
 };
 
 const sampleRecord: CommandRecord = {
@@ -346,6 +349,9 @@ describe("eventToWire", () => {
       createdAt: "2026-05-28T00:00:00Z",
       updatedAt: "2026-05-28T00:00:00Z",
       runCount: 0,
+      // `recordToWorkflow` always materialises `apiEnabled` (default false), so a
+      // round-tripped workflow comes back with it set explicitly.
+      apiEnabled: false,
     };
     const variants: HistoryEvent[] = [
       {

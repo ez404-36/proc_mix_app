@@ -433,13 +433,21 @@ function appendImplicitEnds(
 export function flowToWorkflow(
   base: Pick<
     Workflow,
-    "name" | "description" | "icon" | "tags" | "categoryId"
+    "name" | "description" | "icon" | "tags" | "categoryId" | "apiEnabled" | "apiSlug"
   >,
   nodes: WorkflowFlowNode[],
   edges: WorkflowFlowEdge[],
 ): Pick<
   Workflow,
-  "name" | "description" | "icon" | "tags" | "categoryId" | "nodes" | "edges"
+  | "name"
+  | "description"
+  | "icon"
+  | "tags"
+  | "categoryId"
+  | "apiEnabled"
+  | "apiSlug"
+  | "nodes"
+  | "edges"
 > {
   // Re-index every parallel fork's branch edges to a dense 0..k before
   // persisting, so a fork left with index gaps (a deleted middle branch) never
@@ -455,6 +463,8 @@ export function flowToWorkflow(
     icon: base.icon,
     tags: base.tags,
     categoryId: base.categoryId,
+    apiEnabled: base.apiEnabled,
+    apiSlug: base.apiSlug,
     nodes: withEnds.nodes.map(flowNodeToNode),
     edges: withEnds.edges.map(flowEdgeToEdge),
   };

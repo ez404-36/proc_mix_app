@@ -43,6 +43,8 @@ function metaFromWorkflow(wf: Workflow): WorkflowMeta {
     tags: wf.tags,
     categoryId: wf.categoryId,
     icon: wf.icon,
+    apiEnabled: wf.apiEnabled,
+    apiSlug: wf.apiSlug,
   };
 }
 
@@ -105,6 +107,8 @@ export function fingerprintDraft(draft: EditorSnapshot): string {
       tags: draft.meta.tags,
       categoryId: draft.meta.categoryId ?? null,
       icon: draft.meta.icon ?? null,
+      apiEnabled: draft.meta.apiEnabled ?? false,
+      apiSlug: draft.meta.apiSlug ?? null,
     },
     nodes: draft.nodes.map((n) => ({
       id: n.id,

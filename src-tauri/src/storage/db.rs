@@ -56,6 +56,7 @@ pub async fn init_pool(db_path: PathBuf) -> Result<DbPool, String> {
     ensure_schedules_columns(&pool).await?;
     ensure_history_columns(&pool).await?;
     ensure_ssh_host_meta_columns(&pool).await?;
+    ensure_http_server_config(&pool).await?;
 
     Ok(Arc::new(pool))
 }
@@ -137,6 +138,17 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
             "target",
             "ALTER TABLE commands ADD COLUMN target TEXT",
         ),
+        (
+            // Optional HTTP-API slug (v0.10.0). NULL on existing rows.
+            "api_slug",
+            "ALTER TABLE commands ADD COLUMN api_slug TEXT",
+        ),
+        (
+            // HTTP-API opt-in flag (v0.10.0). Default 0 → existing commands
+            // stay invisible to the API until the user opts in.
+            "api_enabled",
+            "ALTER TABLE commands ADD COLUMN api_enabled INTEGER NOT NULL DEFAULT 0",
+        ),
     ];
 
     for &(col, sql) in migrations {
@@ -147,6 +159,22 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
                 .map_err(|e| format!("add column {col} to commands: {e}"))?;
         }
     }
+
+    // Create the PARTIAL unique index on `api_slug` HERE rather than in
+    // schema.sql: on an existing database `CREATE TABLE IF NOT EXISTS` does not
+    // add the column, and schema.sql runs before the ALTER above — so indexing
+    // `api_slug` there panics with "no such column: api_slug". By this point the
+    // column is guaranteed to exist (fresh DB: created by schema.sql; old DB:
+    // just added by the ALTER). `WHERE api_slug IS NOT NULL` makes uniqueness
+    // apply only to commands that actually have a slug — many NULLs coexist.
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_commands_api_slug \
+         ON commands(api_slug) WHERE api_slug IS NOT NULL",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("create idx_commands_api_slug: {e}"))?;
+
     Ok(())
 }
 
@@ -171,9 +199,19 @@ async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
 
     // (column_name, "ADD COLUMN …" fragment). Append future columns here.
     // The SQL must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound —
-    // a runtime-built ALTER would also invite injection bugs. Empty for
-    // the v0.5.0 initial release; see the doc comment above.
-    let migrations: &[(&str, &'static str)] = &[];
+    // a runtime-built ALTER would also invite injection bugs.
+    let migrations: &[(&str, &'static str)] = &[
+        (
+            // Optional HTTP-API slug (v0.10.0). NULL on existing rows.
+            "api_slug",
+            "ALTER TABLE workflows ADD COLUMN api_slug TEXT",
+        ),
+        (
+            // HTTP-API opt-in flag (v0.10.0). Default 0.
+            "api_enabled",
+            "ALTER TABLE workflows ADD COLUMN api_enabled INTEGER NOT NULL DEFAULT 0",
+        ),
+    ];
 
     for &(col, sql) in migrations {
         if !existing.contains(col) {
@@ -183,6 +221,18 @@ async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
                 .map_err(|e| format!("add column {col} to workflows: {e}"))?;
         }
     }
+
+    // Partial unique index on `api_slug`, created AFTER the column is guaranteed
+    // to exist (same ordering reason as idx_commands_api_slug). Uniqueness is
+    // SEPARATE from commands — a workflow and a command may share a slug string.
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_workflows_api_slug \
+         ON workflows(api_slug) WHERE api_slug IS NOT NULL",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("create idx_workflows_api_slug: {e}"))?;
+
     Ok(())
 }
 
@@ -219,6 +269,30 @@ async fn ensure_ssh_host_meta_columns(pool: &SqlitePool) -> Result<(), String> {
                 .map_err(|e| format!("add column {col} to ssh_host_meta: {e}"))?;
         }
     }
+    Ok(())
+}
+
+/// Ensure the single default row of the `http_server_config` table exists.
+///
+/// The table itself is created by `schema.sql`'s `CREATE TABLE IF NOT EXISTS`;
+/// this guarantees its one-and-only row (id = 1) is present so `storage::http_server::load`
+/// always finds a config to read. `INSERT OR IGNORE` is idempotent: on first
+/// launch it inserts the defaults (server disabled, port 48610, localhost-only,
+/// console logging on); on every later launch the row already exists and the
+/// insert is a no-op. The `CHECK(id = 1)` constraint on the table plus this
+/// fixed-id insert make a second row impossible.
+async fn ensure_http_server_config(pool: &SqlitePool) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT OR IGNORE INTO http_server_config \
+         (id, enabled, port, bind_lan, log_to_console, created_at, updated_at) \
+         VALUES (1, 0, 48610, 0, 1, ?, ?)",
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("seed http_server_config default row: {e}"))?;
     Ok(())
 }
 
@@ -941,5 +1015,134 @@ mod tests {
                 .try_get("schedule_id")
                 .unwrap();
         assert_eq!(sched2.as_deref(), Some("sched-42"));
+    }
+
+    /// A fresh database must seed exactly ONE `http_server_config` row with the
+    /// documented defaults (disabled, port 48610, localhost, console-log on).
+    /// Running the seeder twice must remain a no-op (idempotent) and must NOT
+    /// create a second row.
+    #[tokio::test]
+    async fn ensure_http_server_config_seeds_single_default_row() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_http_server_config(&pool).await.unwrap();
+        // Second pass must not duplicate the row.
+        ensure_http_server_config(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM http_server_config")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .try_get("n")
+            .unwrap();
+        assert_eq!(count, 1, "exactly one config row must exist");
+
+        let row = sqlx::query(
+            "SELECT enabled, port, bind_lan, log_to_console FROM http_server_config WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.try_get::<i64, _>("enabled").unwrap(), 0);
+        assert_eq!(row.try_get::<i64, _>("port").unwrap(), 48610);
+        assert_eq!(row.try_get::<i64, _>("bind_lan").unwrap(), 0);
+        assert_eq!(row.try_get::<i64, _>("log_to_console").unwrap(), 1);
+    }
+
+    /// Simulate a database created BEFORE the `api_slug` / `api_enabled` columns
+    /// existed (pre-v0.10.0). The migration must add both, leave the existing
+    /// row's `api_slug` NULL and `api_enabled` 0, create the partial unique
+    /// index, and remain idempotent.
+    #[tokio::test]
+    async fn ensure_commands_columns_adds_missing_api_fields() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(
+            "CREATE TABLE commands (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                script TEXT NOT NULL,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                favorite INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_count INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO commands (id, name, script, created_at, updated_at)
+             VALUES ('a', 'n', 'echo', '2026-06-24', '2026-06-24')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_commands_columns(&pool).await.unwrap();
+
+        let row = sqlx::query("SELECT api_slug, api_enabled FROM commands WHERE id = 'a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(row.try_get::<Option<String>, _>("api_slug").unwrap().is_none());
+        assert_eq!(row.try_get::<i64, _>("api_enabled").unwrap(), 0);
+
+        // The partial unique index must exist.
+        let idx = sqlx::query(
+            "SELECT name FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_commands_api_slug'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(idx.is_some(), "idx_commands_api_slug must be created");
+
+        // Idempotent on a second pass.
+        ensure_commands_columns(&pool).await.unwrap();
+    }
+
+    /// The partial unique index must REJECT two commands sharing a non-NULL
+    /// `api_slug`, while allowing many rows with NULL slug to coexist.
+    #[tokio::test]
+    async fn commands_api_slug_unique_index_rejects_duplicates() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_commands_columns(&pool).await.unwrap();
+
+        // Two NULL-slug rows are fine.
+        for id in ["a", "b"] {
+            sqlx::query(
+                "INSERT INTO commands (id, name, script, created_at, updated_at)
+                 VALUES (?, 'n', 'echo', '2026-06-24', '2026-06-24')",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        sqlx::query(
+            "INSERT INTO commands (id, name, script, created_at, updated_at, api_slug)
+             VALUES ('c', 'n', 'echo', '2026-06-24', '2026-06-24', 'deploy')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // A second row with the SAME slug must fail.
+        let dup = sqlx::query(
+            "INSERT INTO commands (id, name, script, created_at, updated_at, api_slug)
+             VALUES ('d', 'n', 'echo', '2026-06-24', '2026-06-24', 'deploy')",
+        )
+        .execute(&pool)
+        .await;
+        assert!(dup.is_err(), "duplicate api_slug must be rejected by the index");
     }
 }

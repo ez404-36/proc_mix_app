@@ -7,6 +7,7 @@
 // backend) so the module's public surface is portable.
 
 pub mod admin_password;
+pub mod api_token;
 pub mod schedule_secrets;
 pub mod ssh_oneshot;
 pub mod ssh_password;

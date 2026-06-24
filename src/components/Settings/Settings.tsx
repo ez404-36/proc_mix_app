@@ -260,6 +260,15 @@ export function Settings(): ReactElement {
             }),
           );
         }
+        // Slug collisions were cleared so the import couldn't fail on the
+        // backend's unique-slug index. Tell the user so the change isn't silent.
+        if (result.clearedApiSlugs > 0) {
+          parts.push(
+            t("settings.data.importSlugsCleared", {
+              count: result.clearedApiSlugs,
+            }),
+          );
+        }
         setDataStatus({ kind: "success", message: parts.join(" ") });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

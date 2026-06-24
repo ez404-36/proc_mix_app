@@ -1,4 +1,10 @@
 {
+  "idBadge": {
+    "label": "ID:",
+    "copy": "Copy ID",
+    "copied": "ID copied",
+    "copyFailed": "Failed to copy"
+  },
   "common": {
     "appName": "ProcMix",
     "cancel": "Cancel",
@@ -351,7 +357,16 @@
       "nameRequired": "Name is required.",
       "description": "Description",
       "tags": "Tags",
-      "tagsPlaceholder": "Comma-separated tags"
+      "tagsPlaceholder": "Comma-separated tags",
+      "httpApi": {
+        "title": "HTTP API",
+        "enabled": "Allow running this workflow over the HTTP API",
+        "slug": "API slug",
+        "slugPlaceholder": "e.g. nightly-build",
+        "slugHint": "Optional. Lowercase letters, digits, and hyphens. Used in the URL: /api/workflow/{{slug}}/run",
+        "slugInvalid": "Use lowercase letters, digits, and hyphens only.",
+        "slugConflict": "That slug is already used by another workflow. Choose a different one."
+      }
     },
     "validation": {
       "noStart": "The workflow needs exactly one Start node.",
@@ -578,7 +593,9 @@
       "importAdminDemoted_other": "{{count}} imported commands had \"Run as administrator\" turned off for safety — review each script and re-enable it if you trust it.",
       "importInvalid": "The selected file is not a valid ProcMix export",
       "importError": "Failed to import data",
-      "subhint": "Imported items always get new ids — importing never overwrites your existing commands or workflows."
+      "subhint": "Imported items always get new ids — importing never overwrites your existing commands or workflows.",
+      "importSlugsCleared_one": "{{count}} imported item had its API slug cleared because it was already in use — set a new slug to expose it over the HTTP API.",
+      "importSlugsCleared_other": "{{count}} imported items had their API slug cleared because it was already in use — set new slugs to expose them over the HTTP API."
     },
     "updates": {
       "title": "Updates",
@@ -862,6 +879,15 @@
     },
     "tags": {
       "remove": "Remove tag {{tag}}"
+    },
+    "httpApi": {
+      "title": "HTTP API",
+      "enabled": "Allow running this command over the HTTP API",
+      "slug": "API slug",
+      "slugPlaceholder": "e.g. deploy-prod",
+      "slugHint": "Optional. Lowercase letters, digits, and hyphens. Used in the URL: /api/command/{{slug}}/run",
+      "slugInvalid": "Use lowercase letters, digits, and hyphens only.",
+      "slugConflict": "That slug is already used by another command. Choose a different one."
     }
   },
   "commandView": {
@@ -1312,6 +1338,61 @@
       "rename": "Rename",
       "newFolder": "New folder",
       "refresh": "Refresh"
+    }
+  },
+  "httpServer": {
+    "title": "HTTP API server",
+    "manual": {
+      "label": "How to call the API",
+      "body": "Run saved commands and workflows over HTTP.\n\nAuth: send the access token on every request:\n  Authorization: Bearer <token>\n\nRun a command (by its API slug or id):\n  curl -X POST http://{{host}}:{{port}}/api/command/<slug>/run \\\n    -H \"Authorization: Bearer <token>\"\n\nRun a workflow:\n  curl -X POST http://{{host}}:{{port}}/api/workflow/<slug>/run \\\n    -H \"Authorization: Bearer <token>\"\n\nPass variables (and wait for the result):\n  curl -X POST \"http://{{host}}:{{port}}/api/command/<slug>/run?wait=true\" \\\n    -H \"Authorization: Bearer <token>\" \\\n    -H \"Content-Type: application/json\" \\\n    -d '{\"variables\":{\"name\":\"value\"}}'\n\nList what is exposed (returns each id + slug):\n  GET /api/commands   GET /api/workflows\n\nNo slug? Run by id instead — take the id from the list above and use it in place of the slug:\n  POST /api/command/<id>/run\n\nOnly commands/workflows with the API toggle enabled are reachable. Without ?wait the call returns 202 immediately; with ?wait=true it blocks and returns the exit code/status."
+    },
+    "indicator": {
+      "label": "HTTP API"
+    },
+    "status": {
+      "running": "Running (port: {{port}})",
+      "stopped": "Stopped"
+    },
+    "actions": {
+      "start": "Start",
+      "stop": "Stop"
+    },
+    "address": {
+      "title": "Reachable at",
+      "copy": "Copy",
+      "copied": "Address copied",
+      "hint": "Other machines on your network can use these addresses. `procmix.local` works on macOS/Windows out of the box (Linux needs avahi); the IP always works."
+    },
+    "settings": {
+      "title": "Settings",
+      "port": "Port",
+      "portStepUp": "Increase port",
+      "portStepDown": "Decrease port",
+      "bindLan": "Allow LAN access (bind 0.0.0.0)",
+      "bindLanWarning": "The server will be reachable from other machines on your network. Anyone with the token can run your commands. Keep the token secret.",
+      "bindLocalHint": "The server is reachable only from this machine (127.0.0.1).",
+      "logToConsole": "Show API runs in the console"
+    },
+    "token": {
+      "title": "Access token",
+      "hint": "Send this token as `Authorization: Bearer <token>` on every request. It is shown only once when generated.",
+      "present": "A token is set.",
+      "absent": "No token set. Generate one before starting the server.",
+      "generate": "Generate token",
+      "regenerate": "Regenerate token",
+      "clear": "Clear token",
+      "copy": "Copy",
+      "copied": "Token copied to clipboard",
+      "copyFailed": "Failed to copy token"
+    },
+    "log": {
+      "title": "Recent requests",
+      "empty": "No requests yet.",
+      "clear": "Clear"
+    },
+    "errors": {
+      "portInUse": "That port is already in use. Choose a different port.",
+      "invalidPort": "Port must be between {{min}} and {{max}}."
     }
   }
 }
