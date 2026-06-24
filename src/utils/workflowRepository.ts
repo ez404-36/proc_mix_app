@@ -133,6 +133,17 @@ export interface WorkflowRecord {
   updatedAt: string;
   lastRunAt: string | null;
   runCount: number;
+  /**
+   * Mirror of the Rust `api_slug` field — the optional HTTP-API slug. `null` /
+   * absent when the workflow has no slug. {@link workflowToRecord} omits it
+   * when absent so the wire stays byte-identical to legacy payloads.
+   */
+  apiSlug?: string | null;
+  /**
+   * Mirror of the Rust `api_enabled` field. Optional/absent on the wire for
+   * legacy records (Rust `#[serde(default)]` → `false`); decoded to `false`.
+   */
+  apiEnabled?: boolean;
 }
 
 function nodeToRecord(n: WorkflowNode): WorkflowNodeRecord {
@@ -216,6 +227,13 @@ export function workflowToRecord(w: Workflow): WorkflowRecord {
     updatedAt: w.updatedAt,
     lastRunAt: w.lastRunAt ?? null,
     runCount: w.runCount,
+    // HTTP-API slug: omit when absent; an empty string normalises to `null`
+    // (no slug) so the backend's partial unique index never sees a "" clash.
+    ...(w.apiSlug !== undefined
+      ? { apiSlug: w.apiSlug.trim() === "" ? null : w.apiSlug.trim() }
+      : {}),
+    // HTTP-API opt-in. Always sent so toggling it off persists.
+    apiEnabled: w.apiEnabled ?? false,
   };
 }
 
@@ -239,6 +257,10 @@ export function recordToWorkflow(r: WorkflowRecord): Workflow {
     updatedAt: r.updatedAt,
     lastRunAt: r.lastRunAt ?? undefined,
     runCount: r.runCount,
+    // HTTP-API slug; `undefined` when the workflow has none.
+    apiSlug: r.apiSlug ?? undefined,
+    // Default to `false` for legacy rows (no column).
+    apiEnabled: r.apiEnabled ?? false,
   };
 }
 

@@ -241,13 +241,22 @@ pub struct WorkflowRecord {
     pub updated_at: String,
     pub last_run_at: Option<String>,
     pub run_count: i64,
+    /// Optional stable slug used to address this workflow over the built-in HTTP
+    /// API. `None` means no slug (id fallback still works). Serialised `apiSlug`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_slug: Option<String>,
+    /// Whether this workflow may be run over the built-in HTTP API. `false`
+    /// (default) keeps it invisible to the API. Serialised `apiEnabled`.
+    #[serde(default)]
+    pub api_enabled: bool,
 }
 
 /// Return every workflow in insertion order (oldest first).
 pub async fn list_all(pool: &DbPool) -> Result<Vec<WorkflowRecord>, String> {
     let rows = sqlx::query(
         "SELECT id, name, description, icon, nodes_json, edges_json, tags_json, \
-                category_id, favorite, created_at, updated_at, last_run_at, run_count \
+                category_id, favorite, created_at, updated_at, last_run_at, run_count, \
+                api_slug, api_enabled \
          FROM workflows \
          ORDER BY created_at ASC",
     )
@@ -290,8 +299,9 @@ pub async fn upsert(pool: &DbPool, wf: &WorkflowRecord) -> Result<(), String> {
     sqlx::query(
         "INSERT INTO workflows ( \
             id, name, description, icon, nodes_json, edges_json, tags_json, \
-            category_id, favorite, created_at, updated_at, last_run_at, run_count \
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            category_id, favorite, created_at, updated_at, last_run_at, run_count, \
+            api_slug, api_enabled \
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \
             description = excluded.description, \
@@ -303,7 +313,9 @@ pub async fn upsert(pool: &DbPool, wf: &WorkflowRecord) -> Result<(), String> {
             favorite = excluded.favorite, \
             updated_at = excluded.updated_at, \
             last_run_at = excluded.last_run_at, \
-            run_count = excluded.run_count",
+            run_count = excluded.run_count, \
+            api_slug = excluded.api_slug, \
+            api_enabled = excluded.api_enabled",
     )
     .bind(&wf.id)
     .bind(&wf.name)
@@ -318,6 +330,8 @@ pub async fn upsert(pool: &DbPool, wf: &WorkflowRecord) -> Result<(), String> {
     .bind(&wf.updated_at)
     .bind(&wf.last_run_at)
     .bind(wf.run_count)
+    .bind(wf.api_slug.as_deref().filter(|s| !s.is_empty()))
+    .bind(if wf.api_enabled { 1_i64 } else { 0_i64 })
     .execute(pool.as_ref())
     .await
     .map_err(|e| format!("upsert: {e}"))?;
@@ -383,7 +397,46 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<WorkflowRecord, String>
         run_count: row
             .try_get("run_count")
             .map_err(|e| format!("read run_count: {e}"))?,
+        api_slug: row
+            .try_get("api_slug")
+            .map_err(|e| format!("read api_slug: {e}"))?,
+        api_enabled: row
+            .try_get::<i64, _>("api_enabled")
+            .map_err(|e| format!("read api_enabled: {e}"))?
+            != 0,
     })
+}
+
+/// Resolve a workflow for the HTTP API by `reference` (slug first, then id),
+/// returning it ONLY when API-enabled. Mirrors `commands::find_by_api_ref`;
+/// uniqueness of `api_slug` is SEPARATE from commands (its own index).
+pub async fn find_by_api_ref(
+    pool: &DbPool,
+    reference: &str,
+) -> Result<Option<WorkflowRecord>, String> {
+    if reference.is_empty() {
+        return Ok(None);
+    }
+    let row = sqlx::query(
+        "SELECT id, name, description, icon, nodes_json, edges_json, tags_json, \
+                category_id, favorite, created_at, updated_at, last_run_at, run_count, \
+                api_slug, api_enabled \
+         FROM workflows \
+         WHERE api_enabled = 1 AND (api_slug = ? OR id = ?) \
+         ORDER BY (api_slug = ?) DESC \
+         LIMIT 1",
+    )
+    .bind(reference)
+    .bind(reference)
+    .bind(reference)
+    .fetch_optional(pool.as_ref())
+    .await
+    .map_err(|e| format!("find_by_api_ref: {e}"))?;
+
+    match row {
+        Some(row) => Ok(Some(row_to_record(row)?)),
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -443,6 +496,8 @@ mod wire_format_tests {
             updated_at: "2026-05-28T00:00:01Z".into(),
             last_run_at: Some("2026-05-28T00:00:02Z".into()),
             run_count: 3,
+            api_slug: Some("deploy-wf".into()),
+            api_enabled: true,
         }
     }
 
@@ -741,6 +796,8 @@ mod sqlite_integration_tests {
             updated_at: "2026-05-28T00:00:00Z".into(),
             last_run_at: None,
             run_count: 0,
+            api_slug: None,
+            api_enabled: false,
         }
     }
 

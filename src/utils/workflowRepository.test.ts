@@ -58,6 +58,8 @@ const fullWorkflow: Workflow = {
   updatedAt: "2026-05-28T00:00:01Z",
   lastRunAt: "2026-05-28T00:00:02Z",
   runCount: 4,
+  apiSlug: "nightly",
+  apiEnabled: true,
 };
 
 describe("workflowRepository conversions", () => {

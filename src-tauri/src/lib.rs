@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use crate::core::executor::ExecutorState;
+use crate::core::http_server::{self, HttpServerState};
 use crate::core::scheduler::{self, SchedulerState};
 use crate::core::workflow::WorkflowExecutorState;
 use crate::platform::process_watch::WatcherState;
@@ -59,6 +60,11 @@ pub fn run() {
         // setup hook once the DB pool exists; this holds the reload signal
         // the schedule commands pulse on every mutation.
         .manage(Arc::new(SchedulerState::new()))
+        // Built-in HTTP API server state (v0.10.0). The server task itself is
+        // spawned in the setup hook (autostart) once the DB pool exists; this
+        // holds the running handle + shutdown signal + request log the Tauri
+        // commands operate on.
+        .manage(Arc::new(HttpServerState::new()))
         // Shared SSH inventory baseline: the watcher diffs against it and the
         // save/delete commands advance it to echo-suppress ProcMix's own
         // writes (so they aren't logged as external changes).
@@ -128,6 +134,19 @@ pub fn run() {
                 );
             }
 
+            // Autostart the built-in HTTP API server when the persisted config
+            // has it enabled. Spawned AFTER `app.manage(pool)` so the pool /
+            // executor states exist (same ordering discipline as the scheduler).
+            // Best-effort: a bind failure is logged inside `autostart_if_enabled`
+            // and never blocks startup.
+            {
+                let http_state = app.state::<Arc<HttpServerState>>().inner().clone();
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    http_server::autostart_if_enabled(&app_handle, &http_state).await;
+                });
+            }
+
             // Start the SSH config watcher: polls ~/.ssh/config for changes
             // made outside ProcMix (terminal/VS Code) and emits an event so
             // the Connections tab auto-refreshes. Runs for the process
@@ -174,6 +193,16 @@ pub fn run() {
             commands::admin_password_status,
             commands::set_admin_password,
             commands::clear_admin_password,
+            commands::http_server_status,
+            commands::start_http_server,
+            commands::stop_http_server,
+            commands::get_http_server_config,
+            commands::set_http_server_config,
+            commands::api_token_status,
+            commands::regenerate_api_token,
+            commands::clear_api_token,
+            commands::list_request_log,
+            commands::clear_request_log,
             commands::list_history,
             commands::get_history_event,
             commands::record_history_event,

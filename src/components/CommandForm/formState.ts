@@ -132,6 +132,8 @@ export type FormTab = "main" | "script" | "output" | "env";
 export interface FormErrors {
   name?: string;
   script?: string;
+  /** Set when the API slug is malformed or collides with another command. */
+  apiSlug?: string;
 }
 
 /** Regex enforced on every variable row's `name` field. */
@@ -279,6 +281,8 @@ export function buildInitialState(
       // default). Carry it verbatim otherwise so an edit preserves the host.
       target: command.target ?? { kind: "local" },
       promptSshPassword: command.promptSshPassword ?? false,
+      apiEnabled: command.apiEnabled ?? false,
+      apiSlug: command.apiSlug ?? "",
     };
   }
   return {
@@ -303,6 +307,9 @@ export function buildInitialState(
     // execution explicitly via the "where to run" selector.
     target: { kind: "local" },
     promptSshPassword: false,
+    // New commands are not API-exposed until the user opts in.
+    apiEnabled: false,
+    apiSlug: "",
   };
 }
 
@@ -340,5 +347,7 @@ export function fingerprintForm(form: FormState): string {
     promptWorkingDir: form.promptWorkingDir,
     target: form.target,
     promptSshPassword: form.promptSshPassword,
+    apiEnabled: form.apiEnabled,
+    apiSlug: form.apiSlug,
   });
 }

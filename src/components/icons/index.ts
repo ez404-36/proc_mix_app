@@ -30,6 +30,7 @@ export { RerunIcon } from "./RerunIcon";
 export { RestoreIcon } from "./RestoreIcon";
 export { RunIcon } from "./RunIcon";
 export { SaveIcon } from "./SaveIcon";
+export { ServerIcon } from "./ServerIcon";
 export { SpinnerIcon } from "./SpinnerIcon";
 export { StatusCheckIcon } from "./StatusCheckIcon";
 export { StatusCrossIcon } from "./StatusCrossIcon";

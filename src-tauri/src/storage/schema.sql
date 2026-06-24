@@ -58,11 +58,30 @@ CREATE TABLE IF NOT EXISTS commands (
   -- ({"kind":"local"} / {"kind":"remote","alias":...} / {"kind":"remotePrompt"}).
   -- NULL means local (legacy rows / commands that never set a target). Added
   -- in v0.9.1; see docs/ssh-remote-execution.md and core::executor::ExecutionTarget.
-  target          TEXT
+  target          TEXT,
+  -- Optional stable slug used to address this command over the built-in HTTP
+  -- API (`POST /api/command/{ref}/run`). NULL = no slug (the endpoint can still
+  -- address the command by `id` as a fallback). Uniqueness among non-NULL slugs
+  -- is enforced by a PARTIAL unique index created in db.rs::ensure_commands_columns
+  -- (AFTER the column is guaranteed to exist — same ordering reason as the
+  -- history schedule_id index). Added in v0.10.0; see docs/http-server.md.
+  api_slug        TEXT,
+  -- Whether this command may be run over the built-in HTTP API. Default 0 —
+  -- a command is invisible to the API until the user explicitly opts in. The
+  -- companion idempotent ALTER in db.rs::ensure_commands_columns handles
+  -- databases created before this column existed. Added in v0.10.0.
+  api_enabled     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_commands_favorite ON commands(favorite);
 CREATE INDEX IF NOT EXISTS idx_commands_last_run_at ON commands(last_run_at);
+-- NOTE: the partial unique index `idx_commands_api_slug` is intentionally NOT
+-- created here. On a database that predates the `api_slug` column the CREATE
+-- TABLE IF NOT EXISTS above is a no-op, so the column is still missing when this
+-- script runs (before the ALTER in db.rs::ensure_commands_columns) and indexing
+-- it would panic with "no such column: api_slug". The index is created in
+-- ensure_commands_columns instead, AFTER the column is guaranteed to exist
+-- (same pattern as idx_history_schedule_id).
 
 -- Action history. Records create/edit/delete/run events for commands so the
 -- "History" view can show a paginated, filterable timeline AND so the user
@@ -125,11 +144,24 @@ CREATE TABLE IF NOT EXISTS workflows (
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   last_run_at   TEXT,
-  run_count     INTEGER NOT NULL DEFAULT 0
+  run_count     INTEGER NOT NULL DEFAULT 0,
+  -- Optional stable slug used to address this workflow over the built-in HTTP
+  -- API (`POST /api/workflow/{ref}/run`). NULL = no slug (the endpoint can still
+  -- address it by `id` as a fallback). Uniqueness among non-NULL slugs is
+  -- enforced by a PARTIAL unique index created in db.rs::ensure_workflows_columns
+  -- (AFTER the column is guaranteed to exist). Added in v0.10.0.
+  api_slug      TEXT,
+  -- Whether this workflow may be run over the built-in HTTP API. Default 0 —
+  -- invisible to the API until the user explicitly opts in. The companion ALTER
+  -- in db.rs::ensure_workflows_columns handles older databases. Added in v0.10.0.
+  api_enabled   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_workflows_favorite ON workflows(favorite);
 CREATE INDEX IF NOT EXISTS idx_workflows_last_run_at ON workflows(last_run_at);
+-- NOTE: the partial unique index `idx_workflows_api_slug` is created in
+-- ensure_workflows_columns (AFTER the column is guaranteed to exist), NOT here —
+-- same ordering reason as idx_commands_api_slug above.
 
 -- Schedules: cron-driven automatic runs of a command OR a workflow (v0.2.0).
 -- The Scheduler (core/scheduler.rs) runs a single in-process Tokio loop that
@@ -198,4 +230,25 @@ CREATE TABLE IF NOT EXISTS ssh_host_meta (
   last_check_at TEXT,
   -- Last check result as INTEGER 0/1 (SQLite has no bool); NULL = never checked.
   last_check_ok INTEGER
+);
+
+-- Built-in HTTP server configuration (v0.10.0). A SINGLE-ROW table — the
+-- `CHECK(id = 1)` constraint plus the `INSERT OR IGNORE` of the default row in
+-- db.rs::ensure_http_server_config guarantee exactly one row ever exists, so the
+-- config can be loaded/saved without an id. The Bearer TOKEN is deliberately
+-- NOT stored here (nor anywhere in SQLite): it lives only in the OS keychain via
+-- security::api_token. See docs/http-server.md for the full contract.
+CREATE TABLE IF NOT EXISTS http_server_config (
+  id              INTEGER PRIMARY KEY CHECK (id = 1),
+  -- Whether the server should be running. When 1, the setup hook autostarts it.
+  enabled         INTEGER NOT NULL DEFAULT 0,
+  -- TCP port to bind. Default is a "rarely occupied" high port (48610).
+  port            INTEGER NOT NULL DEFAULT 48610,
+  -- 0 = bind 127.0.0.1 only (default, safe); 1 = bind 0.0.0.0 (LAN-exposed).
+  bind_lan        INTEGER NOT NULL DEFAULT 0,
+  -- 1 (default) = an API-triggered run streams to the live console / OutputPanel
+  -- (silent = false); 0 = runs are silent (history-only).
+  log_to_console  INTEGER NOT NULL DEFAULT 1,
+  created_at      TEXT NOT NULL DEFAULT '',
+  updated_at      TEXT NOT NULL DEFAULT ''
 );

@@ -5831,6 +5831,21 @@ body.is-editor-fullscreen .output-panel {
   margin: 0;
 }
 
+/* Title + ID stacked vertically (ID under the title), sitting as one flex item
+   in the wrapping header row so the meta badges / close button stay to its
+   right. Used by CommandView and WorkflowView. */
+.workflow-view__heading {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workflow-view__heading > .command-form__title {
+  margin: 0;
+}
+
 /* Delete icon button in the top-right corner of view modals (CommandView,
    WorkflowView, ScheduleView). `margin-left: auto` pushes it to the end of
    the flex row regardless of how many meta chips appear before it. */
@@ -8183,4 +8198,464 @@ body.is-editor-fullscreen .output-panel {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--color-text-muted);
+}
+
+/* =========================================================================
+   HTTP server feature: the sidebar indicator + the portal settings panel.
+   Own BEM family (`http-server-indicator` / `http-server-panel__*`) — it does
+   NOT reuse the modal `.command-form` classes. Tokens only, no literal hex.
+   ========================================================================= */
+
+/* --- Sidebar indicator (lives in `app-sidebar__tools`, next to the console
+       button). A subtle nav-button-like row with a status dot. --- */
+.http-server-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.http-server-indicator:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.http-server-indicator__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.http-server-indicator__label {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.http-server-indicator__dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.http-server-indicator.is-running .http-server-indicator__dot {
+  background: var(--app-color-run);
+}
+
+.http-server-indicator.is-stopped .http-server-indicator__dot {
+  background: var(--color-text-muted);
+}
+
+/* --- Portal panel (createPortal to body, like the command palette). --- */
+.http-server-panel__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+  z-index: 1000;
+}
+
+.http-server-panel {
+  width: 1040px;
+  max-width: calc(100% - 32px);
+  max-height: 84vh;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.http-server-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.http-server-panel__header-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Right side of the header: live status, the run/stop switch, and the close
+   button, in that order. */
+.http-server-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Status indicator + label shown left of the run switch in the header. */
+.http-server-panel__header-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.http-server-panel__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.http-server-panel__body {
+  padding: 16px;
+  /* Two columns: settings/status/token on the left, the live request log on
+     the right. The body itself does not scroll — each column manages its own
+     overflow so the log can scroll independently of the controls. `min-height`
+     is constrained by the panel's `max-height`, so `1fr` rows give the columns
+     a real height to scroll within. */
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  overflow: hidden;
+  min-height: 0;
+  /* Take the remaining panel height (panel is a flex column capped at 84vh) so
+     the columns have a concrete box to scroll inside of. */
+  flex: 1;
+}
+
+/* Left column — scrolls vertically when its content (settings, token, …)
+   exceeds the panel height. */
+.http-server-panel__col {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  min-height: 0;
+  /* Inner padding around the whole left-column form. The right padding is a
+     touch larger so the scrollbar (when present) doesn't sit on top of the
+     controls. */
+  padding: 4px 14px 4px 10px;
+}
+
+/* Right column — the request log. A flex column whose list (below) grows to
+   fill the height and scrolls on its own. */
+.http-server-panel__col--logs {
+  overflow: hidden;
+}
+
+/* Narrow viewports: collapse to a single column. The panel can't be 880px wide
+   on a small window (it's clamped by `max-width`), and two cramped columns read
+   worse than one. The log keeps its own scroll; the whole body scrolls. */
+@media (max-width: 900px) {
+  .http-server-panel__body {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .http-server-panel__col {
+    overflow: visible;
+    padding: 4px 10px;
+  }
+
+  .http-server-panel__col--logs {
+    overflow: visible;
+  }
+
+  .http-server-panel__log {
+    /* Re-cap the log height in the stacked layout so it doesn't push the
+       controls far off-screen. */
+    flex: none;
+    height: 220px;
+    max-height: 220px;
+  }
+}
+
+.http-server-panel__indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.http-server-panel__indicator.is-running {
+  background: var(--app-color-run);
+}
+
+.http-server-panel__status-text {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.http-server-panel__error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
+.http-server-panel__section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.http-server-panel__section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.http-server-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.http-server-panel__field-label {
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.http-server-panel__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.http-server-panel__toggle-label {
+  user-select: none;
+}
+
+.http-server-panel__warning {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-warning, #b45309);
+  color: var(--color-warning, #b45309);
+  font-size: 12px;
+}
+
+.http-server-panel__token-status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.http-server-panel__address-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.http-server-panel__address-value {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.http-server-panel__token-reveal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.http-server-panel__token-value {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.http-server-panel__token-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Log section header: the "Recent requests" title on the left, the Clear
+   button on the right. */
+.http-server-panel__log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Read-only textarea holding the request log as plain text so the user can
+   select + copy lines. Grows to fill the right column and scrolls VERTICALLY
+   only; long lines wrap (`wrap="soft"` in the TSX) instead of scrolling
+   horizontally. */
+.http-server-panel__log {
+  margin: 0;
+  /* Grow to fill the right column and scroll within it, rather than a fixed
+     cap — the two-column layout gives the log the full panel height. */
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  /* Vertical scroll only; horizontal is never needed because lines wrap. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.http-server-panel__log:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+}
+
+/* "ID: <uuid>" line with a copy button. Shown under the title in command /
+   workflow cards and editor headers (see IdBadge.tsx). Boxed with a blue
+   (primary-tinted) border so the id reads as a distinct, copyable token; the
+   text is italic to set it apart from the surrounding labels. The box hugs its
+   content (fit-content) rather than stretching the full card width. */
+.id-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  width: fit-content;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--color-primary);
+  border-radius: 6px;
+  /* Faint primary wash so the border reads as intentional, not an error box. */
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+.id-badge__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.id-badge__value {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+/* Shrink the shared icon-button so the badge stays one tidy line. */
+.id-badge__copy {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+}
+
+/* iOS-style on/off switch (see ToggleSwitch.tsx). A pill track with a sliding
+   thumb; `is-on` flips the track to the "running" green and slides the thumb to
+   the right. The whole control is a `role="switch"` button, so it carries no
+   `.btn` styles — reset them here.
+
+   Off-state contrast: `--color-border` sits too close to the panel surface in
+   BOTH themes, so the off track would vanish. We use the muted text colour for
+   the fill instead (clearly darker than the surface in light mode, clearly
+   lighter in dark mode) and add a 1px border + a faint inset shadow so the
+   pill always reads as a distinct, switchable control. The white thumb on the
+   grey track keeps the off state legible too. */
+.toggle-switch {
+  flex-shrink: 0;
+  position: relative;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-text-muted);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.25);
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.toggle-switch.is-on {
+  background: var(--app-color-run);
+  border-color: var(--app-color-run);
+  box-shadow: none;
+}
+
+.toggle-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toggle-switch:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.toggle-switch__thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  /* A stronger shadow than --shadow-sm so the white thumb stands out on the
+     grey off-track. */
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.4);
+  transition: transform 0.18s ease;
+}
+
+/* Slide the thumb to the right edge when on. Track inner width is 42px (44 −
+   2*1px border); thumb 18px with a 3px gap each side → 42 − 18 − 3*2 = 18px. */
+.toggle-switch.is-on .toggle-switch__thumb {
+  transform: translateX(18px);
 }

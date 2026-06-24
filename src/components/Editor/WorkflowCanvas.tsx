@@ -253,6 +253,17 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     [allCommands, workflows],
   );
 
+  // API slugs already used by OTHER workflows, for the meta modal's per-type
+  // uniqueness check on the slug field. The current workflow is excluded so
+  // re-saving with the same slug is allowed.
+  const existingApiSlugs = useMemo(
+    () =>
+      workflows
+        .filter((w) => w.id !== currentId && w.apiSlug !== undefined)
+        .map((w) => w.apiSlug as string),
+    [workflows, currentId],
+  );
+
   // The palette's "Local commands" section lists ONLY this workflow's own
   // `local` commands (globals are added to the canvas via the empty "Command"
   // node + its picker instead). Empty for an unsaved workflow.
@@ -1201,7 +1212,9 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       {metaModalOpen ? (
         <WorkflowMetaModal
           initial={meta}
+          workflowId={currentId ?? undefined}
           tagSuggestions={tagSuggestions}
+          existingApiSlugs={existingApiSlugs}
           onSave={saveMeta}
           onClose={() => setMetaModalOpen(false)}
         />

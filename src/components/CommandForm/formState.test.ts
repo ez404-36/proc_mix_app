@@ -231,6 +231,8 @@ describe("fingerprintForm", () => {
     promptWorkingDir: false,
     target: { kind: "local" },
     promptSshPassword: false,
+    apiEnabled: false,
+    apiSlug: "",
   };
 
   it("is stable for identical persisted fields", () => {

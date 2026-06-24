@@ -1,0 +1,1 @@
+export { IdBadge } from "./IdBadge";

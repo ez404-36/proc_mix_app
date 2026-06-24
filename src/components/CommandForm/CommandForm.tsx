@@ -35,8 +35,11 @@ import { useAdminEscalation } from "../../hooks/useAdminEscalation";
 import { useCommandLiveRun } from "../../hooks/useCommandLiveRun";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
+import { useCommandStore } from "../../stores/commandStore";
+import { isValidApiSlug, sanitizeApiSlugInput } from "../../utils/apiSlug";
 import { CancelIcon, RunIcon, SaveIcon, TrashIcon } from "../icons";
 import { HelpTooltip } from "../HelpTooltip";
+import { IdBadge } from "../IdBadge";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
 import { NumberStepper } from "../NumberStepper";
@@ -184,6 +187,10 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   // `workflows` array (not an inline `.find`) keeps the selector
   // referentially stable; the lookup itself is a cheap render-time step.
   const workflows = useWorkflowStore((s) => s.workflows);
+  // All commands, used to detect an API-slug collision client-side before save
+  // (the backend's partial unique index is the ultimate guard). Referentially
+  // stable selector; the lookup itself is a cheap render-time step.
+  const allCommands = useCommandStore((s) => s.commands);
   // History-aware wrappers — see services/commandActions.ts. The
   // wrappers delegate to the same store methods, so existing test
   // spies that replace `useCommandStore.getState().addCommand` keep
@@ -358,8 +365,34 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     if (form.script.trim() === "") {
       next.script = t("commandForm.errors.scriptRequired");
     }
+    // Validate the API slug only when API access is ON and a slug is entered
+    // (blank = "no slug", which is valid). When the opt-in is off the slug
+    // field is hidden, so validating it would surface an error the user can't
+    // see/fix — and the slug isn't persisted in that case anyway. First the
+    // character set, then a per-type uniqueness check against other commands.
+    const slug = form.apiSlug.trim();
+    if (form.apiEnabled && slug !== "") {
+      if (!isValidApiSlug(slug)) {
+        next.apiSlug = t("commandForm.httpApi.slugInvalid");
+      } else {
+        const conflict = allCommands.some(
+          (c) => c.id !== command?.id && c.apiSlug === slug,
+        );
+        if (conflict) {
+          next.apiSlug = t("commandForm.httpApi.slugConflict");
+        }
+      }
+    }
     return next;
-  }, [form.name, form.script, t]);
+  }, [
+    form.name,
+    form.script,
+    form.apiEnabled,
+    form.apiSlug,
+    allCommands,
+    command?.id,
+    t,
+  ]);
 
   // Per-row variable errors. Stored separately from `errors` (which
   // covers the scalar top-level fields) because the UI needs to render
@@ -373,12 +406,15 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   const hasErrors =
     errors.name !== undefined ||
     errors.script !== undefined ||
+    errors.apiSlug !== undefined ||
     hasVariableErrors;
 
   // Which tab each validation error belongs to, so the tab strip can show
   // an error badge and Save can jump to the first offending tab. The
-  // output tab has no validation today.
-  const mainTabHasError = errors.name !== undefined;
+  // output tab has no validation today. The HTTP API section lives on the
+  // main tab, so a slug error flags the main tab.
+  const mainTabHasError =
+    errors.name !== undefined || errors.apiSlug !== undefined;
   const scriptTabHasError =
     errors.script !== undefined || hasVariableErrors;
 
@@ -388,7 +424,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
       // Jump to the first tab carrying an error so the user sees it even
       // if they're on a different tab. Name (main) takes precedence over
       // script/variables (script).
-      if (errors.name !== undefined) {
+      if (errors.name !== undefined || errors.apiSlug !== undefined) {
         setActiveTab("main");
       } else if (errors.script !== undefined || hasVariableErrors) {
         setActiveTab("script");
@@ -428,6 +464,12 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     // remote again.
     const promptSshPasswordValue =
       isRemoteTarget && form.promptSshPassword ? true : undefined;
+
+    // HTTP-API fields. A blank slug means "no slug" (stored as undefined). The
+    // slug is only meaningful when API access is enabled, but we persist the
+    // typed value regardless so toggling access off then on keeps the slug.
+    const trimmedSlug = form.apiSlug.trim();
+    const apiSlugValue = trimmedSlug === "" ? undefined : trimmedSlug;
 
     // Convert UI rows to wire-format specs. Empty list → omit the
     // field entirely from the saved Command (matches the `args` / `env`
@@ -480,6 +522,10 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
         target: targetValue,
         // Explicit field so unchecking (or switching to local) drops the flag.
         promptSshPassword: promptSshPasswordValue,
+        // HTTP API: explicit fields (including `undefined` slug) so clearing
+        // the slug or disabling access drops the value on the stored command.
+        apiEnabled: form.apiEnabled,
+        apiSlug: apiSlugValue,
       };
       if (command.nameKey !== undefined) patch.nameKey = undefined;
       if (command.descriptionKey !== undefined) {
@@ -514,6 +560,10 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
         ...(promptSshPasswordValue !== undefined
           ? { promptSshPassword: promptSshPasswordValue }
           : {}),
+        // HTTP API: omit entirely when not opted in / no slug so the wire stays
+        // byte-identical to a command that predates this feature.
+        ...(form.apiEnabled ? { apiEnabled: true } : {}),
+        ...(apiSlugValue !== undefined ? { apiSlug: apiSlugValue } : {}),
         // A command created from within a workflow editor is scoped LOCAL to
         // that workflow (hidden from the global library). Stamp the scope +
         // owning workflow id supplied by the host. Omitted entirely for a
@@ -553,6 +603,8 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     form.promptWorkingDir,
     form.target,
     form.promptSshPassword,
+    form.apiEnabled,
+    form.apiSlug,
     errors,
     hasErrors,
     hasVariableErrors,
@@ -1155,7 +1207,12 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
          * scrolling body, so it stays put as the body scrolls.
          */}
         <header className="command-form__topbar">
-          <h1 className="command-form__topbar-title">{title}</h1>
+          <div className="command-form__topbar-heading">
+            <h1 className="command-form__topbar-title">{title}</h1>
+            {mode === "edit" && command !== null ? (
+              <IdBadge id={command.id} />
+            ) : null}
+          </div>
           <div className="command-form__topbar-actions">
             {(() => {
               // The Run button's behavior follows the active run target:
@@ -1596,6 +1653,57 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
               incrementLabel={t("commandForm.timeout.increment")}
             />
           </div>
+
+          {/* --- HTTP API: opt-in + slug for the built-in REST server --- */}
+          <div className="command-form__field command-form__field--inline">
+            <label className="command-form__field--inline">
+              <input
+                type="checkbox"
+                checked={form.apiEnabled}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, apiEnabled: e.target.checked }))
+                }
+              />
+              <span>{t("commandForm.httpApi.enabled")}</span>
+            </label>
+          </div>
+          {/* The slug only matters when API access is on, so it's hidden until
+              the user opts in (keeps the form tidy and the intent clear). */}
+          {form.apiEnabled ? (
+            <div className="command-form__field">
+              <label
+                className="command-form__label"
+                htmlFor="command-form-api-slug"
+              >
+                {t("commandForm.httpApi.slug")}
+              </label>
+              <input
+                id="command-form-api-slug"
+                className={`input${
+                  showErrors && errors.apiSlug ? " input--error" : ""
+                }`}
+                value={form.apiSlug}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    apiSlug: sanitizeApiSlugInput(e.target.value),
+                  }))
+                }
+                placeholder={t("commandForm.httpApi.slugPlaceholder")}
+                aria-invalid={showErrors && errors.apiSlug ? true : undefined}
+              />
+              {showErrors && errors.apiSlug ? (
+                <p className="command-form__error">{errors.apiSlug}</p>
+              ) : (
+                <span className="command-form__hint" role="note">
+                  {t("commandForm.httpApi.slugHint", {
+                    slug:
+                      form.apiSlug.trim() === "" ? "<slug>" : form.apiSlug.trim(),
+                  })}
+                </span>
+              )}
+            </div>
+          ) : null}
           </div>
 
           {/* --- Tab: Script (script editor + variables) --- */}

@@ -8,6 +8,7 @@ import {
   getCommandName,
 } from "../../utils/commandLabels";
 import { CancelIcon, EditIcon, RunIcon, TrashIcon } from "../icons";
+import { IdBadge } from "../IdBadge";
 import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 
 interface CommandViewProps {
@@ -77,7 +78,10 @@ export function CommandView({
         aria-label={displayName}
       >
         <div className="workflow-view__header">
-          <h2 className="command-form__title">{displayName}</h2>
+          <div className="workflow-view__heading">
+            <h2 className="command-form__title">{displayName}</h2>
+            <IdBadge id={command.id} />
+          </div>
           <div className="list-tile__meta">
             {isRemoteTarget(command.target) ? (
               <span className="target-badge">

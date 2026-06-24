@@ -279,6 +279,19 @@ export interface Workflow {
   updatedAt: string;
   lastRunAt?: string;
   runCount: number;
+  /**
+   * Optional stable slug used to address this workflow over the built-in HTTP
+   * API (`POST /api/workflow/{slug}/run`). `undefined` means no slug — the API
+   * can still address it by `id` when {@link apiEnabled} is set. Must be unique
+   * among workflows (separate namespace from commands). Lowercase letters,
+   * digits, and hyphens only.
+   */
+  apiSlug?: string;
+  /**
+   * Whether this workflow may be run over the built-in HTTP API. `undefined` /
+   * `false` keeps it invisible to the API until the user explicitly opts in.
+   */
+  apiEnabled?: boolean;
 }
 
 export type WorkflowEventKind =

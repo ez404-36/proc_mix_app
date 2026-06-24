@@ -8,7 +8,9 @@ import type {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { normalizeTags } from "../../utils/commandFilters";
+import { isValidApiSlug, sanitizeApiSlugInput } from "../../utils/apiSlug";
 import { CancelIcon, CheckIcon } from "../icons";
+import { IdBadge } from "../IdBadge";
 
 /**
  * Editable workflow metadata, distinct from the persisted `Workflow` (no id,
@@ -21,16 +23,32 @@ export interface WorkflowMeta {
   tags: string[];
   categoryId?: string;
   icon?: string;
+  /** Whether this workflow may be run over the built-in HTTP API. */
+  apiEnabled?: boolean;
+  /** Optional HTTP-API slug (`undefined` = no slug). */
+  apiSlug?: string;
 }
 
 interface WorkflowMetaModalProps {
   initial: WorkflowMeta;
+  /**
+   * The workflow's id, shown (with a copy button) under the modal title so the
+   * user can grab it for the HTTP API. `undefined` for a brand-new workflow
+   * that has not been persisted yet (no id to show).
+   */
+  workflowId?: string;
   /**
    * Tag suggestions shown in the autocomplete list as the user types — the
    * SHARED base of tags used across both commands and workflows, so the
    * field mirrors the command form's tags editor.
    */
   tagSuggestions?: ReadonlyArray<string>;
+  /**
+   * API slugs already used by OTHER workflows, for a per-type uniqueness check
+   * on the slug field. The current workflow's own slug is excluded by the
+   * caller so re-saving with the same slug is allowed.
+   */
+  existingApiSlugs?: ReadonlyArray<string>;
   onSave: (meta: WorkflowMeta) => void;
   onClose: () => void;
 }
@@ -49,7 +67,9 @@ interface WorkflowMetaModalProps {
  */
 export function WorkflowMetaModal({
   initial,
+  workflowId,
   tagSuggestions = [],
+  existingApiSlugs = [],
   onSave,
   onClose,
 }: WorkflowMetaModalProps): ReactElement {
@@ -59,6 +79,8 @@ export function WorkflowMetaModal({
   const [tags, setTags] = useState<string[]>(() =>
     normalizeTags(initial.tags),
   );
+  const [apiEnabled, setApiEnabled] = useState(initial.apiEnabled ?? false);
+  const [apiSlug, setApiSlug] = useState(initial.apiSlug ?? "");
   const [tagDraft, setTagDraft] = useState<string>("");
   const [tagSuggestActiveIndex, setTagSuggestActiveIndex] =
     useState<number>(-1);
@@ -140,8 +162,24 @@ export function WorkflowMetaModal({
   const trimmedName = name.trim();
   const nameInvalid = trimmedName === "";
 
+  // Slug validity: only when API access is ON (the field is hidden otherwise,
+  // so a validation error would be invisible) and a slug is entered (blank is
+  // allowed = no slug). Otherwise it must match the character set AND not
+  // collide with another workflow's slug.
+  const trimmedSlug = apiSlug.trim();
+  const slugError = ((): string | undefined => {
+    if (!apiEnabled || trimmedSlug === "") return undefined;
+    if (!isValidApiSlug(trimmedSlug)) {
+      return t("editor.meta.httpApi.slugInvalid");
+    }
+    if (existingApiSlugs.includes(trimmedSlug)) {
+      return t("editor.meta.httpApi.slugConflict");
+    }
+    return undefined;
+  })();
+
   const handleSave = (): void => {
-    if (nameInvalid) {
+    if (nameInvalid || slugError !== undefined) {
       setShowError(true);
       return;
     }
@@ -158,6 +196,8 @@ export function WorkflowMetaModal({
       tags: finalTags,
       categoryId: initial.categoryId,
       icon: initial.icon,
+      apiEnabled,
+      apiSlug: trimmedSlug === "" ? undefined : trimmedSlug,
     });
   };
 
@@ -187,6 +227,7 @@ export function WorkflowMetaModal({
         aria-label={t("editor.meta.title")}
       >
         <h2 className="command-form__title">{t("editor.meta.title")}</h2>
+        {workflowId !== undefined ? <IdBadge id={workflowId} /> : null}
 
         <div className="command-form__field">
           <label className="command-form__label" htmlFor="wf-meta-name">
@@ -278,6 +319,42 @@ export function WorkflowMetaModal({
             ) : null}
           </div>
         </div>
+
+        <div className="command-form__field command-form__field--inline">
+          <label className="command-form__field--inline">
+            <input
+              type="checkbox"
+              checked={apiEnabled}
+              onChange={(e) => setApiEnabled(e.target.checked)}
+            />
+            <span>{t("editor.meta.httpApi.enabled")}</span>
+          </label>
+        </div>
+
+        {/* The slug only matters when API access is on, so hide it until the
+            user opts in. */}
+        {apiEnabled ? (
+          <div className="command-form__field">
+            <label className="command-form__label" htmlFor="wf-meta-api-slug">
+              {t("editor.meta.httpApi.slug")}
+            </label>
+            <input
+              id="wf-meta-api-slug"
+              className={`input${
+                showError && slugError !== undefined ? " input--error" : ""
+              }`}
+              value={apiSlug}
+              onChange={(e) => setApiSlug(sanitizeApiSlugInput(e.target.value))}
+              placeholder={t("editor.meta.httpApi.slugPlaceholder")}
+              aria-invalid={
+                showError && slugError !== undefined ? true : undefined
+              }
+            />
+            {showError && slugError !== undefined ? (
+              <p className="command-form__error">{slugError}</p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="command-form__actions">
           <button

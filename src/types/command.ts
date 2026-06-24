@@ -220,6 +220,19 @@ export interface Command {
    * choose-at-run-time variants.
    */
   target?: ExecutionTarget;
+  /**
+   * Optional stable slug used to address this command over the built-in HTTP
+   * API (`POST /api/command/{slug}/run`). `undefined` means no slug — the API
+   * can still address the command by `id` when {@link apiEnabled} is set.
+   * Must be unique among commands; the backend rejects a duplicate on save.
+   * Lowercase letters, digits, and hyphens only.
+   */
+  apiSlug?: string;
+  /**
+   * Whether this command may be run over the built-in HTTP API. `undefined` /
+   * `false` keeps it invisible to the API until the user explicitly opts in.
+   */
+  apiEnabled?: boolean;
 }
 
 /**
