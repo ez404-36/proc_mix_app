@@ -19,11 +19,15 @@ module.exports = {
     // a store/component file is allowed; a value import is not.
     {
       name: 'components-not-from-stores',
-      severity: 'warn',
+      severity: 'info',
       comment:
-        'Components should read state through hooks, not import stores directly. ' +
-        'Wrap store access in a custom hook under src/hooks/ instead.',
-      from: { path: '^src/components/' },
+        'INFO (not warn) by convention: this codebase reads state via direct ' +
+        'useXStore(selector) access in components — there is no read-bridge hook ' +
+        'layer, so these edges are the accepted pattern and only documented here. ' +
+        'Test files are excluded entirely: they legitimately seed stores via ' +
+        'setState/getState to build fixtures. Kept as a marker so a future decision ' +
+        'to introduce bridge hooks can re-promote this to warn/error.',
+      from: { path: '^src/components/', pathNot: '\\.(test|smoke\\.test)\\.tsx?$' },
       to: { path: '^src/stores/', dependencyTypesNot: ['type-only'] },
     },
     {
