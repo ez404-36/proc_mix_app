@@ -152,7 +152,10 @@ mod tests {
     #[test]
     fn set_rejects_empty_password() {
         let err = set("prod", "").unwrap_err();
-        assert!(matches!(err, SshPasswordError::EmptyPassword), "got: {err:?}");
+        assert!(
+            matches!(err, SshPasswordError::EmptyPassword),
+            "got: {err:?}"
+        );
     }
 
     /// Every public function must reject an unsafe alias at the boundary, so

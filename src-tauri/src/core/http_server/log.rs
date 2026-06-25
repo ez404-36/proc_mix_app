@@ -264,8 +264,14 @@ mod tests {
     fn summaries_round_trip_camel_case_and_omit_none() {
         let e = entry(200);
         let json = serde_json::to_string(&e).unwrap();
-        assert!(json.contains("\"requestSummary\""), "request_summary → requestSummary");
-        assert!(json.contains("\"responseSummary\""), "response_summary → responseSummary");
+        assert!(
+            json.contains("\"requestSummary\""),
+            "request_summary → requestSummary"
+        );
+        assert!(
+            json.contains("\"responseSummary\""),
+            "response_summary → responseSummary"
+        );
         // The already-masked secret is preserved exactly (this module never
         // re-redacts).
         assert!(json.contains("token=***"));

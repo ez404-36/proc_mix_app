@@ -655,9 +655,7 @@ pub async fn list_request_log(
 /// Clear the in-memory request log shown in the panel. The persistent
 /// `http-server.log` file (audit trail) is intentionally left untouched.
 #[tauri::command]
-pub async fn clear_request_log(
-    state: State<'_, Arc<HttpServerState>>,
-) -> Result<(), String> {
+pub async fn clear_request_log(state: State<'_, Arc<HttpServerState>>) -> Result<(), String> {
     state.request_log.clear();
     Ok(())
 }

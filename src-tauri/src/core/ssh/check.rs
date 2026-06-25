@@ -311,7 +311,10 @@ mod tests {
             "host_key_verification ... keyboard-interactive failed",
             "Enter passphrase for key '/home/u/.ssh/id_ed25519':",
         ] {
-            assert!(is_auth_failure(stderr), "should be auth failure: {stderr:?}");
+            assert!(
+                is_auth_failure(stderr),
+                "should be auth failure: {stderr:?}"
+            );
         }
     }
 

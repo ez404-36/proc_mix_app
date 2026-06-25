@@ -196,22 +196,40 @@ mod tests {
 
     #[test]
     fn verify_rejects_wrong_token() {
-        assert_eq!(verify(Some("wrong"), Some("s3cr3t")), AuthOutcome::Unauthorized);
+        assert_eq!(
+            verify(Some("wrong"), Some("s3cr3t")),
+            AuthOutcome::Unauthorized
+        );
         // Different lengths must also be Unauthorized, not a panic.
-        assert_eq!(verify(Some("short"), Some("longer-token")), AuthOutcome::Unauthorized);
+        assert_eq!(
+            verify(Some("short"), Some("longer-token")),
+            AuthOutcome::Unauthorized
+        );
     }
 
     #[test]
     fn verify_handles_missing_credentials_and_config() {
         assert_eq!(verify(None, Some("s3cr3t")), AuthOutcome::Unauthorized);
-        assert_eq!(verify(Some("anything"), None), AuthOutcome::NoTokenConfigured);
+        assert_eq!(
+            verify(Some("anything"), None),
+            AuthOutcome::NoTokenConfigured
+        );
         assert_eq!(verify(None, None), AuthOutcome::NoTokenConfigured);
     }
 
     #[test]
     fn host_allows_loopback_names() {
-        for h in ["localhost", "127.0.0.1", "localhost:8765", "127.0.0.1:8765", "LOCALHOST"] {
-            assert!(is_host_allowed(Some(h), 8765, false, None), "should allow {h:?}");
+        for h in [
+            "localhost",
+            "127.0.0.1",
+            "localhost:8765",
+            "127.0.0.1:8765",
+            "LOCALHOST",
+        ] {
+            assert!(
+                is_host_allowed(Some(h), 8765, false, None),
+                "should allow {h:?}"
+            );
         }
         assert!(is_host_allowed(Some("[::1]"), 8765, false, None));
         assert!(is_host_allowed(Some("[::1]:8765"), 8765, false, None));
@@ -225,24 +243,44 @@ mod tests {
         assert!(!is_host_allowed(Some("   "), 8765, false, None));
         // A rebinding attacker's domain.
         assert!(!is_host_allowed(Some("evil.example"), 8765, false, None));
-        assert!(!is_host_allowed(Some("evil.example:8765"), 8765, false, None));
+        assert!(!is_host_allowed(
+            Some("evil.example:8765"),
+            8765,
+            false,
+            None
+        ));
     }
 
     #[test]
     fn host_rejects_wrong_port() {
         assert!(!is_host_allowed(Some("localhost:9999"), 8765, false, None));
         assert!(!is_host_allowed(Some("127.0.0.1:1"), 8765, false, None));
-        assert!(!is_host_allowed(Some("localhost:notaport"), 8765, false, None));
+        assert!(!is_host_allowed(
+            Some("localhost:notaport"),
+            8765,
+            false,
+            None
+        ));
     }
 
     #[test]
     fn host_allows_lan_ip_only_when_bound_lan() {
         let lan: Ipv4Addr = "192.168.1.50".parse().unwrap();
         // Not bound to LAN → the LAN IP is NOT a valid Host.
-        assert!(!is_host_allowed(Some("192.168.1.50"), 8765, false, Some(lan)));
+        assert!(!is_host_allowed(
+            Some("192.168.1.50"),
+            8765,
+            false,
+            Some(lan)
+        ));
         // Bound to LAN → it is.
         assert!(is_host_allowed(Some("192.168.1.50"), 8765, true, Some(lan)));
-        assert!(is_host_allowed(Some("192.168.1.50:8765"), 8765, true, Some(lan)));
+        assert!(is_host_allowed(
+            Some("192.168.1.50:8765"),
+            8765,
+            true,
+            Some(lan)
+        ));
         // A different IP is still rejected.
         assert!(!is_host_allowed(Some("10.0.0.1"), 8765, true, Some(lan)));
         // Loopback still works under LAN bind.

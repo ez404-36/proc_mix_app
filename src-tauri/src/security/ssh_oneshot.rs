@@ -143,7 +143,10 @@ mod tests {
     #[test]
     fn put_rejects_empty_password_without_touching_keychain() {
         let err = put("run-1", "").unwrap_err();
-        assert!(matches!(err, SshOneShotError::EmptyPassword), "got: {err:?}");
+        assert!(
+            matches!(err, SshOneShotError::EmptyPassword),
+            "got: {err:?}"
+        );
     }
 
     /// `put` must reject an empty run id — a throwaway account keyed by "" would
@@ -159,7 +162,10 @@ mod tests {
     #[test]
     fn take_and_clear_reject_empty_run_id() {
         assert!(matches!(take("").unwrap_err(), SshOneShotError::EmptyRunId));
-        assert!(matches!(clear("").unwrap_err(), SshOneShotError::EmptyRunId));
+        assert!(matches!(
+            clear("").unwrap_err(),
+            SshOneShotError::EmptyRunId
+        ));
     }
 
     /// The account name is the run id under the shared one-shot prefix. Pinned

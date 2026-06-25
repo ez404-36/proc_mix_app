@@ -202,13 +202,11 @@ fn command_with_vars(id: &str, api_slug: &str) -> CommandRecord {
 /// exists. Used to assert that an API run is recorded and finalised.
 async fn history_row(pool: &DbPool, execution_id: &str) -> Option<(String, String)> {
     use sqlx::Row;
-    let row = sqlx::query(
-        "SELECT kind, status FROM history_events WHERE execution_id = ? LIMIT 1",
-    )
-    .bind(execution_id)
-    .fetch_optional(pool.as_ref())
-    .await
-    .unwrap();
+    let row = sqlx::query("SELECT kind, status FROM history_events WHERE execution_id = ? LIMIT 1")
+        .bind(execution_id)
+        .fetch_optional(pool.as_ref())
+        .await
+        .unwrap();
     row.map(|r| {
         (
             r.try_get::<String, _>("kind").unwrap(),
@@ -674,21 +672,39 @@ async fn request_log_records_metadata_and_redacts_secrets() {
 
     // Time + IP.
     assert!(!entry.ts.is_empty(), "timestamp recorded");
-    assert!(entry.remote_addr.starts_with("127.0.0.1:"), "sender IP recorded");
+    assert!(
+        entry.remote_addr.starts_with("127.0.0.1:"),
+        "sender IP recorded"
+    );
     // Entity name.
     assert_eq!(entry.entity_name.as_deref(), Some("cmd-c1"));
     // Redacted request body: secret masked, non-secret shown.
     let req_summary = entry.request_summary.as_deref().expect("request summary");
-    assert!(req_summary.contains("token=***"), "secret masked: {req_summary}");
-    assert!(req_summary.contains("name=alice"), "non-secret shown: {req_summary}");
-    assert!(!req_summary.contains("s3cr3t"), "raw secret must not appear");
+    assert!(
+        req_summary.contains("token=***"),
+        "secret masked: {req_summary}"
+    );
+    assert!(
+        req_summary.contains("name=alice"),
+        "non-secret shown: {req_summary}"
+    );
+    assert!(
+        !req_summary.contains("s3cr3t"),
+        "raw secret must not appear"
+    );
     // Response summary.
     let resp_summary = entry.response_summary.as_deref().expect("response summary");
-    assert!(resp_summary.contains("status=succeeded"), "got: {resp_summary}");
+    assert!(
+        resp_summary.contains("status=succeeded"),
+        "got: {resp_summary}"
+    );
 
     // Defence in depth: the secret appears in NO field of the serialised entry.
     let json = serde_json::to_string(entry).unwrap();
-    assert!(!json.contains("s3cr3t"), "secret leaked into the log entry: {json}");
+    assert!(
+        !json.contains("s3cr3t"),
+        "secret leaked into the log entry: {json}"
+    );
 }
 
 /// A 404 (unknown command) still logs time, IP, and an error response summary,
@@ -698,18 +714,14 @@ async fn request_log_records_errors() {
     let pool = fresh_pool().await;
     let (router, server_state) = router_with_state(pool, Some(TEST_TOKEN));
 
-    let (status, _) =
-        send(router, post_command_run("ghost", Some(TEST_TOKEN), false)).await;
+    let (status, _) = send(router, post_command_run("ghost", Some(TEST_TOKEN), false)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     let log = server_state.request_log.snapshot();
     let entry = log.last().expect("a request was logged");
     assert!(!entry.ts.is_empty());
     assert!(entry.remote_addr.starts_with("127.0.0.1:"));
-    assert_eq!(
-        entry.response_summary.as_deref(),
-        Some("error=notFound")
-    );
+    assert_eq!(entry.response_summary.as_deref(), Some("error=notFound"));
     // The logged path carries the REAL reference, not the `:reference` template.
     assert_eq!(entry.path, "/api/command/ghost/run");
 }
@@ -724,8 +736,11 @@ async fn request_log_path_shows_real_slug_on_auth_failure() {
         .unwrap();
     let (router, server_state) = router_with_state(pool, Some(TEST_TOKEN));
 
-    let (status, _) =
-        send(router, post_command_run("deploy", Some("wrong-token"), false)).await;
+    let (status, _) = send(
+        router,
+        post_command_run("deploy", Some("wrong-token"), false),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     let entry = server_state
@@ -733,8 +748,14 @@ async fn request_log_path_shows_real_slug_on_auth_failure() {
         .snapshot()
         .pop()
         .expect("a request was logged");
-    assert_eq!(entry.path, "/api/command/deploy/run", "real slug logged on 401");
-    assert_eq!(entry.response_summary.as_deref(), Some("error=unauthorized"));
+    assert_eq!(
+        entry.path, "/api/command/deploy/run",
+        "real slug logged on 401"
+    );
+    assert_eq!(
+        entry.response_summary.as_deref(),
+        Some("error=unauthorized")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -753,7 +774,10 @@ async fn command_run_recorded_and_finalised_in_history() {
 
     let (status, body) = send(router, post_command_run("ok", Some(TEST_TOKEN), true)).await;
     assert_eq!(status, StatusCode::OK);
-    let exec_id = body["executionId"].as_str().expect("execution id").to_string();
+    let exec_id = body["executionId"]
+        .as_str()
+        .expect("execution id")
+        .to_string();
 
     let (kind, run_status) = history_row(&pool, &exec_id)
         .await
@@ -799,7 +823,10 @@ async fn workflow_run_recorded_and_finalised_in_history() {
         .unwrap();
     let (status, body) = send(router, req).await;
     assert_eq!(status, StatusCode::OK);
-    let exec_id = body["executionId"].as_str().expect("execution id").to_string();
+    let exec_id = body["executionId"]
+        .as_str()
+        .expect("execution id")
+        .to_string();
 
     let (kind, run_status) = history_row(&pool, &exec_id)
         .await

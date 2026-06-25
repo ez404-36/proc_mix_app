@@ -179,9 +179,9 @@ pub async fn run_command<R: Runtime>(
         .map_err(map_spawn_error)?;
 
     if wait {
-        let outcome = rx.await.map_err(|_| {
-            ApiError::RunFailed("execution completion channel dropped".to_string())
-        })?;
+        let outcome = rx
+            .await
+            .map_err(|_| ApiError::RunFailed("execution completion channel dropped".to_string()))?;
         finalize_command_run(pool, &execution_id, &outcome).await;
         let status = terminal_status_str(&outcome);
         Ok(RunOutcome {
@@ -247,8 +247,7 @@ pub async fn run_workflow<R: Runtime>(
 
     // Redact node-variable values against each node's command `sensitive` flags
     // before `wf` / `commands` are moved into the executor.
-    let request_summary =
-        redact_workflow_variables(&wf, &commands, &node_variable_values, wait);
+    let request_summary = redact_workflow_variables(&wf, &commands, &node_variable_values, wait);
 
     // Allocate the run id up front so we can write a `running` WorkflowRun
     // history row now and finalise the SAME row on completion — entirely in the
@@ -473,7 +472,10 @@ async fn record_command_run_started(pool: &DbPool, cmd: &CommandRecord, executio
         },
     };
     if let Err(e) = storage_history::insert_event(pool, &event).await {
-        eprintln!("http_server: failed to record run history for {}: {e}", cmd.id);
+        eprintln!(
+            "http_server: failed to record run history for {}: {e}",
+            cmd.id
+        );
     }
 }
 
@@ -529,11 +531,7 @@ async fn finalize_command_run(pool: &DbPool, execution_id: &str, outcome: &NodeO
 
 /// Record a `running` WorkflowRun history event (the source of truth for an
 /// API-triggered workflow run). Finalised by `finalize_workflow_run`.
-async fn record_workflow_run_started(
-    pool: &DbPool,
-    wf: &WorkflowRecord,
-    execution_id: &str,
-) {
+async fn record_workflow_run_started(pool: &DbPool, wf: &WorkflowRecord, execution_id: &str) {
     let event = HistoryEvent {
         id: uuid::Uuid::new_v4().to_string(),
         created_at: chrono::Utc::now().to_rfc3339(),
@@ -723,9 +721,15 @@ mod tests {
                 silent: true,
             },
         );
-        assert!(req.silent, "silent must be true when log_to_console is false");
+        assert!(
+            req.silent,
+            "silent must be true when log_to_console is false"
+        );
         assert!(req.capture_output, "API runs always capture");
-        assert!(req.workflow_run_id.is_none(), "API command run is standalone");
+        assert!(
+            req.workflow_run_id.is_none(),
+            "API command run is standalone"
+        );
     }
 
     /// The command request summary masks sensitive values, shows non-sensitive

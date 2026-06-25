@@ -61,10 +61,7 @@ const ALIAS_ENV: &str = "PROCMIX_ASKPASS_ALIAS";
 /// Kept free of any I/O so it can be reasoned about; the secret is returned by
 /// value and written exactly once by `main`.
 #[cfg(unix)]
-fn resolve_password(
-    run_id: Option<String>,
-    alias: Option<String>,
-) -> Result<Option<String>, ()> {
+fn resolve_password(run_id: Option<String>, alias: Option<String>) -> Result<Option<String>, ()> {
     // One-shot takes priority: it is the transient, just-entered secret for
     // this specific run. `take` reads AND deletes so it never outlives the run.
     if let Some(run_id) = run_id.filter(|s| !s.is_empty()) {

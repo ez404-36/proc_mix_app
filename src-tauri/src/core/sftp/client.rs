@@ -621,9 +621,7 @@ drwxr-xr-x  5 u g 4096 Jun 21 10:00 .config
     #[test]
     fn detects_quota_and_remote_open_errors() {
         assert!(first_sftp_error_line("", "Disk quota exceeded\n").is_some());
-        assert!(
-            first_sftp_error_line("remote open(\"/x\"): Permission denied\n", "").is_some()
-        );
+        assert!(first_sftp_error_line("remote open(\"/x\"): Permission denied\n", "").is_some());
         assert!(first_sftp_error_line("Cannot download /x\n", "").is_some());
     }
 

@@ -16,8 +16,7 @@ use std::time::Duration;
 
 use procmix_lib::core::executor::{
     spawn_execution, ExecuteRequest, ExecutionEvent, ExecutionTarget, ExecutorState,
-    ERR_INVALID_WORKING_DIR,
-    EXECUTION_EVENT,
+    ERR_INVALID_WORKING_DIR, EXECUTION_EVENT,
 };
 use procmix_lib::storage::commands::VariableSpec;
 use tauri::test::mock_builder;

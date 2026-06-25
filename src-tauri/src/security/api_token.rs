@@ -125,7 +125,10 @@ mod tests {
         let err = set("").unwrap_err();
         match err {
             ApiTokenError::Backend(msg) => {
-                assert!(msg.contains("empty"), "expected 'empty' in message, got: {msg}");
+                assert!(
+                    msg.contains("empty"),
+                    "expected 'empty' in message, got: {msg}"
+                );
             }
         }
     }

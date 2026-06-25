@@ -53,12 +53,12 @@ impl TokenSource {
     /// task (keyring is synchronous); the fixed variant is returned directly.
     async fn resolve(&self) -> Option<String> {
         match self {
-            TokenSource::Keychain => tokio::task::spawn_blocking(|| {
-                crate::security::api_token::get().ok().flatten()
-            })
-            .await
-            .ok()
-            .flatten(),
+            TokenSource::Keychain => {
+                tokio::task::spawn_blocking(|| crate::security::api_token::get().ok().flatten())
+                    .await
+                    .ok()
+                    .flatten()
+            }
             TokenSource::Fixed(token) => token.clone(),
         }
     }
@@ -130,8 +130,16 @@ async fn list_commands<R: Runtime>(
         return resp;
     }
     let result = handlers::list_api_commands(&state.pool).await;
-    let (resp, _) = finish(result.map(|items| (StatusCode::OK, Json(json!(items)).into_response())));
-    log_request(&state, addr, "GET", "/api/commands", resp.status(), LogDetail::default());
+    let (resp, _) =
+        finish(result.map(|items| (StatusCode::OK, Json(json!(items)).into_response())));
+    log_request(
+        &state,
+        addr,
+        "GET",
+        "/api/commands",
+        resp.status(),
+        LogDetail::default(),
+    );
     resp
 }
 
@@ -146,7 +154,14 @@ async fn list_workflows<R: Runtime>(
     let result = handlers::list_api_workflows(&state.pool).await;
     let (resp, _) =
         finish(result.map(|items| (StatusCode::OK, Json(json!(items)).into_response())));
-    log_request(&state, addr, "GET", "/api/workflows", resp.status(), LogDetail::default());
+    log_request(
+        &state,
+        addr,
+        "GET",
+        "/api/workflows",
+        resp.status(),
+        LogDetail::default(),
+    );
     resp
 }
 
@@ -190,7 +205,10 @@ async fn run_command<R: Runtime>(
                 request_summary: Some(outcome.request_summary),
                 response_summary: Some(response_summary(&outcome.response)),
             };
-            ((status, Json(json!(outcome.response))).into_response(), detail)
+            (
+                (status, Json(json!(outcome.response))).into_response(),
+                detail,
+            )
         }
         Err(e) => (api_error_response(&e), error_detail(&e)),
     };
@@ -237,7 +255,10 @@ async fn run_workflow<R: Runtime>(
                 request_summary: Some(outcome.request_summary),
                 response_summary: Some(response_summary(&outcome.response)),
             };
-            ((status, Json(json!(outcome.response))).into_response(), detail)
+            (
+                (status, Json(json!(outcome.response))).into_response(),
+                detail,
+            )
         }
         Err(e) => (api_error_response(&e), error_detail(&e)),
     };
@@ -272,7 +293,14 @@ async fn guard<R: Runtime>(
         lan_ip,
     ) {
         let resp = forbidden_host_response();
-        log_request(state, addr, method, path, resp.status(), auth_detail("forbiddenHost"));
+        log_request(
+            state,
+            addr,
+            method,
+            path,
+            resp.status(),
+            auth_detail("forbiddenHost"),
+        );
         return Some(resp);
     }
 
@@ -280,13 +308,18 @@ async fn guard<R: Runtime>(
     // the token (and without leaking whether the token would have matched).
     if state.server_state.is_rate_limited(ip).await {
         let resp = unauthorized_response();
-        log_request(state, addr, method, path, resp.status(), auth_detail("rateLimited"));
+        log_request(
+            state,
+            addr,
+            method,
+            path,
+            resp.status(),
+            auth_detail("rateLimited"),
+        );
         return Some(resp);
     }
 
-    let presented = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok());
+    let presented = headers.get("authorization").and_then(|v| v.to_str().ok());
     let presented = auth::extract_bearer(presented);
 
     // The configured token is read fresh on each request (so a regenerate takes
@@ -299,7 +332,14 @@ async fn guard<R: Runtime>(
         AuthOutcome::Unauthorized => {
             state.server_state.record_auth_failure(ip).await;
             let resp = unauthorized_response();
-            log_request(state, addr, method, path, resp.status(), auth_detail("unauthorized"));
+            log_request(
+                state,
+                addr,
+                method,
+                path,
+                resp.status(),
+                auth_detail("unauthorized"),
+            );
             Some(resp)
         }
         AuthOutcome::NoTokenConfigured => {
@@ -343,11 +383,9 @@ fn forbidden_host_response() -> Response {
 /// Map an [`ApiError`] to its HTTP response.
 fn api_error_response(e: &ApiError) -> Response {
     match e {
-        ApiError::NotFound => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "notFound" })),
-        )
-            .into_response(),
+        ApiError::NotFound => {
+            (StatusCode::NOT_FOUND, Json(json!({ "error": "notFound" }))).into_response()
+        }
         ApiError::MissingVariable(name) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "missingVariable", "variable": name })),

@@ -209,7 +209,10 @@ mod tests {
         let later = now + RATE_LIMIT_WINDOW_SECS + 1;
         assert!(!rl.is_blocked(&ip(), later), "window elapsed → unblocked");
         rl.record_failure(ip(), later);
-        assert!(!rl.is_blocked(&ip(), later), "fresh window, count 1 < threshold");
+        assert!(
+            !rl.is_blocked(&ip(), later),
+            "fresh window, count 1 < threshold"
+        );
     }
 
     #[tokio::test]

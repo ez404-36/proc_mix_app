@@ -821,10 +821,9 @@ mod wire_format_tests {
             serde_json::from_value(serde_json::json!({ "kind": "local" })).unwrap();
         assert_eq!(local, ExecutionTarget::Local);
 
-        let remote: ExecutionTarget = serde_json::from_value(
-            serde_json::json!({ "kind": "remote", "alias": "db-1" }),
-        )
-        .unwrap();
+        let remote: ExecutionTarget =
+            serde_json::from_value(serde_json::json!({ "kind": "remote", "alias": "db-1" }))
+                .unwrap();
         assert_eq!(
             remote,
             ExecutionTarget::Remote {
@@ -843,7 +842,10 @@ mod wire_format_tests {
     #[test]
     fn remote_sentinels_are_pinned() {
         assert_eq!(ERR_INVALID_REMOTE_TARGET, "INVALID_REMOTE_TARGET:");
-        assert_eq!(ERR_REMOTE_ELEVATION_UNSUPPORTED, "REMOTE_ELEVATION_UNSUPPORTED");
+        assert_eq!(
+            ERR_REMOTE_ELEVATION_UNSUPPORTED,
+            "REMOTE_ELEVATION_UNSUPPORTED"
+        );
         assert_eq!(ERR_REMOTE_TARGET_UNRESOLVED, "REMOTE_TARGET_UNRESOLVED");
         assert_eq!(ERR_SSH_PASSWORD_BACKEND_PREFIX, "SSH_PASSWORD_BACKEND:");
     }
@@ -1160,10 +1162,7 @@ mod wire_format_tests {
         // The sudo password must never appear.
         assert!(!dbg.contains("hunter2"), "admin password leaked: {dbg}");
         // The one-shot SSH password must never appear.
-        assert!(
-            !dbg.contains("sshpw-secret"),
-            "ssh password leaked: {dbg}"
-        );
+        assert!(!dbg.contains("sshpw-secret"), "ssh password leaked: {dbg}");
         // The sensitive variable value must never appear.
         assert!(
             !dbg.contains("s3cr3t-token"),

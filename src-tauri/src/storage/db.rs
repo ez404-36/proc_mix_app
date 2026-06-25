@@ -1031,7 +1031,10 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(row.try_get::<Option<String>, _>("api_slug").unwrap().is_none());
+        assert!(row
+            .try_get::<Option<String>, _>("api_slug")
+            .unwrap()
+            .is_none());
         assert_eq!(row.try_get::<i64, _>("api_enabled").unwrap(), 0);
 
         // The partial unique index must exist.
@@ -1086,6 +1089,9 @@ mod tests {
         )
         .execute(&pool)
         .await;
-        assert!(dup.is_err(), "duplicate api_slug must be rejected by the index");
+        assert!(
+            dup.is_err(),
+            "duplicate api_slug must be rejected by the index"
+        );
     }
 }

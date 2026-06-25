@@ -21,7 +21,8 @@ use crate::core::ssh::is_safe_alias;
 
 use super::types::{
     ExecuteRequest, ExecutionTarget, ERR_INVALID_REMOTE_TARGET, ERR_INVALID_WORKING_DIR,
-    ERR_REMOTE_ELEVATION_UNSUPPORTED, ERR_REMOTE_TARGET_UNRESOLVED, ERR_SSH_PASSWORD_BACKEND_PREFIX,
+    ERR_REMOTE_ELEVATION_UNSUPPORTED, ERR_REMOTE_TARGET_UNRESOLVED,
+    ERR_SSH_PASSWORD_BACKEND_PREFIX,
 };
 
 /// How a remote run authenticates, which changes the `ssh` argv + environment.
@@ -432,9 +433,7 @@ pub(super) fn build_command(
     resolved: &ResolvedScript,
     req: &ExecuteRequest,
     global_env: &std::collections::BTreeMap<String, String>,
-    #[cfg_attr(not(unix), allow(unused_variables))] askpass_resource_path: Option<
-        &std::path::Path,
-    >,
+    #[cfg_attr(not(unix), allow(unused_variables))] askpass_resource_path: Option<&std::path::Path>,
 ) -> Result<Command, String> {
     let extra_args: Vec<String> = resolved.args.clone();
 
@@ -1234,7 +1233,10 @@ mod remote_argv_tests {
             "run",
             &["one".to_string(), "two".to_string()],
         );
-        let pos = argv.iter().position(|s| s == "run").expect("script present");
+        let pos = argv
+            .iter()
+            .position(|s| s == "run")
+            .expect("script present");
         assert_eq!(argv[pos + 1], "one");
         assert_eq!(argv[pos + 2], "two");
     }
@@ -1325,8 +1327,15 @@ mod build_command_remote_tests {
     #[test]
     fn remote_target_spawns_ssh_not_local_shell() {
         let req = remote_request("prod", false);
-        let cmd = build_command("bash", &["-c"], &resolved("uptime"), &req, &BTreeMap::new(), None)
-            .expect("remote build ok");
+        let cmd = build_command(
+            "bash",
+            &["-c"],
+            &resolved("uptime"),
+            &req,
+            &BTreeMap::new(),
+            None,
+        )
+        .expect("remote build ok");
         let program = cmd.as_std().get_program().to_string_lossy().to_string();
         assert_eq!(program, "ssh");
     }
@@ -1338,8 +1347,15 @@ mod build_command_remote_tests {
     #[test]
     fn remote_without_password_uses_key_auth_argv() {
         let req = remote_request("prod", false);
-        let cmd = build_command("bash", &["-c"], &resolved("uptime"), &req, &BTreeMap::new(), None)
-            .expect("remote build ok");
+        let cmd = build_command(
+            "bash",
+            &["-c"],
+            &resolved("uptime"),
+            &req,
+            &BTreeMap::new(),
+            None,
+        )
+        .expect("remote build ok");
         let args: Vec<String> = cmd
             .as_std()
             .get_args()
@@ -1351,7 +1367,11 @@ mod build_command_remote_tests {
         );
         // No askpass env on the key path — neither the helper pointer nor
         // EITHER password-source selector (one-shot run id or persistent alias).
-        for k in ["SSH_ASKPASS", "PROCMIX_ASKPASS_RUN_ID", "PROCMIX_ASKPASS_ALIAS"] {
+        for k in [
+            "SSH_ASKPASS",
+            "PROCMIX_ASKPASS_RUN_ID",
+            "PROCMIX_ASKPASS_ALIAS",
+        ] {
             let present = cmd
                 .as_std()
                 .get_envs()
@@ -1366,8 +1386,15 @@ mod build_command_remote_tests {
     fn unsafe_alias_is_rejected() {
         for bad in ["-oProxyCommand=evil", "a b", "host;rm", "h$(x)", "*"] {
             let req = remote_request(bad, false);
-            let err = build_command("bash", &["-c"], &resolved("x"), &req, &BTreeMap::new(), None)
-                .expect_err("must reject unsafe alias");
+            let err = build_command(
+                "bash",
+                &["-c"],
+                &resolved("x"),
+                &req,
+                &BTreeMap::new(),
+                None,
+            )
+            .expect_err("must reject unsafe alias");
             assert!(
                 err.starts_with(ERR_INVALID_REMOTE_TARGET),
                 "expected invalid-target sentinel for {bad:?}, got {err}"
@@ -1380,8 +1407,15 @@ mod build_command_remote_tests {
     #[test]
     fn remote_with_elevation_is_rejected() {
         let req = remote_request("prod", true);
-        let err = build_command("bash", &["-c"], &resolved("x"), &req, &BTreeMap::new(), None)
-            .expect_err("must reject remote elevation");
+        let err = build_command(
+            "bash",
+            &["-c"],
+            &resolved("x"),
+            &req,
+            &BTreeMap::new(),
+            None,
+        )
+        .expect_err("must reject remote elevation");
         assert_eq!(err, ERR_REMOTE_ELEVATION_UNSUPPORTED);
     }
 
@@ -1392,8 +1426,15 @@ mod build_command_remote_tests {
         let mut req: ExecuteRequest =
             serde_json::from_value(serde_json::json!({ "script": "x" })).unwrap();
         req.target = ExecutionTarget::RemotePrompt;
-        let err = build_command("bash", &["-c"], &resolved("x"), &req, &BTreeMap::new(), None)
-            .expect_err("must reject unresolved prompt");
+        let err = build_command(
+            "bash",
+            &["-c"],
+            &resolved("x"),
+            &req,
+            &BTreeMap::new(),
+            None,
+        )
+        .expect_err("must reject unresolved prompt");
         assert_eq!(err, ERR_REMOTE_TARGET_UNRESOLVED);
     }
 
@@ -1415,14 +1456,27 @@ mod build_command_remote_tests {
     #[test]
     fn remote_downgrades_cmd_to_sh() {
         let req = remote_request("prod", false);
-        let cmd = build_command("cmd", &["/C"], &resolved("dir"), &req, &BTreeMap::new(), None)
-            .expect("remote build ok");
+        let cmd = build_command(
+            "cmd",
+            &["/C"],
+            &resolved("dir"),
+            &req,
+            &BTreeMap::new(),
+            None,
+        )
+        .expect("remote build ok");
         let args: Vec<String> = cmd
             .as_std()
             .get_args()
             .map(|a| a.to_string_lossy().to_string())
             .collect();
-        assert!(args.iter().any(|a| a == "sh"), "expected sh in argv: {args:?}");
-        assert!(!args.iter().any(|a| a == "cmd"), "cmd must not reach remote argv");
+        assert!(
+            args.iter().any(|a| a == "sh"),
+            "expected sh in argv: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "cmd"),
+            "cmd must not reach remote argv"
+        );
     }
 }
