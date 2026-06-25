@@ -45,6 +45,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Drop any timers still queued by the debounce/fetch so switching back to
+  // real timers cannot stall: under parallel load a leftover pending timer
+  // made `vi.useRealTimers()` hang and trip the 30s hook timeout.
+  vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
