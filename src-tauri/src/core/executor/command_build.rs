@@ -22,8 +22,9 @@ use crate::core::ssh::is_safe_alias;
 use super::types::{
     ExecuteRequest, ExecutionTarget, ERR_INVALID_REMOTE_TARGET, ERR_INVALID_WORKING_DIR,
     ERR_REMOTE_ELEVATION_UNSUPPORTED, ERR_REMOTE_TARGET_UNRESOLVED,
-    ERR_SSH_PASSWORD_BACKEND_PREFIX,
 };
+#[cfg(unix)]
+use super::types::ERR_SSH_PASSWORD_BACKEND_PREFIX;
 
 /// How a remote run authenticates, which changes the `ssh` argv + environment.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -94,6 +95,48 @@ pub(super) fn default_shell() -> &'static str {
         "powershell"
     } else {
         "bash"
+    }
+}
+
+/// Statement prepended to a PowerShell script so its output reaches our
+/// redirected stdout pipe as UTF-8.
+///
+/// Windows PowerShell 5.1 (`powershell`) and PowerShell Core (`pwsh`) write
+/// formatted cmdlet output (`Get-ChildItem`, `Get-Date`, …) to a redirected
+/// stdout in the console's OEM code page (e.g. cp866 on a Russian Windows) by
+/// default — NOT UTF-8. Those bytes are invalid UTF-8, so our reader can only
+/// decode them lossily (every non-ASCII char becomes `\u{fffd}`), which is what
+/// produced garbled output like `25 ��� 2026 �.` for `Get-Date`.
+///
+/// Forcing `[Console]::OutputEncoding` to UTF-8 makes the .NET console writer
+/// emit UTF-8 bytes to the pipe, so the reader decodes the text correctly.
+/// This affects ONLY the encoding of bytes on the wire — never the textual
+/// content, exit code, or stderr of the user's script. The trailing `;`
+/// separates it from the user script in the single `-Command` argument.
+///
+/// `2>$null` is appended so that, on the rare host where assigning
+/// `OutputEncoding` emits a warning, the prologue itself contributes nothing to
+/// the captured streams. Only `powershell`/`pwsh` get this; every other shell
+/// (and the remote SSH path) is returned `""` and is byte-for-byte unchanged.
+fn shell_output_encoding_prologue(shell: &str) -> &'static str {
+    match shell {
+        "pwsh" | "powershell" => {
+            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8 2>$null;"
+        }
+        _ => "",
+    }
+}
+
+/// Prepend [`shell_output_encoding_prologue`] to `script` for PowerShell
+/// shells; return `script` unchanged for every other shell. Centralises the
+/// one transformation so the non-elevated and elevated-Windows local paths
+/// stay consistent and the remote path (which never calls this) is untouched.
+fn apply_output_encoding_prologue(shell: &str, script: &str) -> String {
+    let prologue = shell_output_encoding_prologue(shell);
+    if prologue.is_empty() {
+        script.to_string()
+    } else {
+        format!("{prologue}{script}")
     }
 }
 
@@ -622,6 +665,15 @@ pub(super) fn build_command(
     #[cfg(not(windows))]
     let preserve_env = !resolved.env.is_empty() || !global_env.is_empty();
 
+    // For PowerShell shells (`powershell`/`pwsh`), prepend a prologue that
+    // forces UTF-8 output so non-ASCII cmdlet output (e.g. `Get-Date`,
+    // `Get-ChildItem` on a localized Windows) reaches our redirected stdout
+    // pipe as UTF-8 instead of the OEM code page. Every other shell — and the
+    // remote SSH path, which returns earlier and never reaches here — gets the
+    // script verbatim. Computed once so the non-elevated and elevated branches
+    // below stay consistent.
+    let local_script = apply_output_encoding_prologue(program, &resolved.script);
+
     // ------------------------------------------------------------------
     // Build the Command. Three branches:
     //
@@ -641,7 +693,7 @@ pub(super) fn build_command(
             let argv = build_elevated_unix_argv(
                 program,
                 prefix_args,
-                &resolved.script,
+                &local_script,
                 &extra_args,
                 preserve_env,
             );
@@ -658,7 +710,7 @@ pub(super) fn build_command(
             let argv = build_elevated_windows_argv(
                 program,
                 prefix_args,
-                &resolved.script,
+                &local_script,
                 &extra_args,
                 wd_str.as_deref(),
             );
@@ -673,7 +725,7 @@ pub(super) fn build_command(
         {
             // No supported elevation path on this target — reject
             // explicitly rather than silently downgrading.
-            let _ = (program, prefix_args, &extra_args, preserve_env);
+            let _ = (program, prefix_args, &extra_args, preserve_env, &local_script);
             return Err("elevated execution is not supported on this platform".to_string());
         }
     } else {
@@ -681,7 +733,7 @@ pub(super) fn build_command(
         for prefix in prefix_args {
             c.arg(prefix);
         }
-        c.arg(&resolved.script);
+        c.arg(&local_script);
         for a in &extra_args {
             c.arg(a);
         }
