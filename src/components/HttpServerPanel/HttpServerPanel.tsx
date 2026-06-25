@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 import type {
-  ChangeEvent,
   MouseEvent as ReactMouseEvent,
   ReactElement,
 } from "react";
@@ -147,12 +146,12 @@ export function HttpServerPanel(): ReactElement {
     }
   };
 
-  const handleToggleLan = (e: ChangeEvent<HTMLInputElement>): void => {
-    void persist({ ...config, bindLan: e.target.checked });
+  const handleToggleLan = (next: boolean): void => {
+    void persist({ ...config, bindLan: next });
   };
 
-  const handleToggleLogToConsole = (e: ChangeEvent<HTMLInputElement>): void => {
-    void persist({ ...config, logToConsole: e.target.checked });
+  const handleToggleLogToConsole = (next: boolean): void => {
+    void persist({ ...config, logToConsole: next });
   };
 
   const handleRegenerateToken = async (): Promise<void> => {
@@ -376,17 +375,17 @@ export function HttpServerPanel(): ReactElement {
               />
             </div>
 
-            <label className="http-server-panel__toggle">
-              <input
-                type="checkbox"
+            <div className="http-server-panel__toggle">
+              <ToggleSwitch
                 checked={config.bindLan}
                 onChange={handleToggleLan}
                 disabled={busy}
+                ariaLabel={t("httpServer.settings.bindLan")}
               />
               <span className="http-server-panel__toggle-label">
                 {t("httpServer.settings.bindLan")}
               </span>
-            </label>
+            </div>
             {config.bindLan ? (
               <p className="http-server-panel__warning" role="note">
                 {t("httpServer.settings.bindLanWarning")}
@@ -395,17 +394,17 @@ export function HttpServerPanel(): ReactElement {
               <p className="form-hint">{t("httpServer.settings.bindLocalHint")}</p>
             )}
 
-            <label className="http-server-panel__toggle">
-              <input
-                type="checkbox"
+            <div className="http-server-panel__toggle">
+              <ToggleSwitch
                 checked={config.logToConsole}
                 onChange={handleToggleLogToConsole}
                 disabled={busy}
+                ariaLabel={t("httpServer.settings.logToConsole")}
               />
               <span className="http-server-panel__toggle-label">
                 {t("httpServer.settings.logToConsole")}
               </span>
-            </label>
+            </div>
           </section>
 
           {/* Token */}

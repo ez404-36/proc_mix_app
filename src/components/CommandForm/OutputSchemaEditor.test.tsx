@@ -33,7 +33,7 @@ describe("OutputSchemaEditor", () => {
     const onChange = vi.fn();
     render(<OutputSchemaEditor value={undefined} onChange={onChange} t={t} />);
 
-    const toggle = screen.getByRole("checkbox");
+    const toggle = screen.getByRole("switch", { name: /parse output/i });
     fireEvent.click(toggle);
 
     expect(onChange).toHaveBeenCalledWith({
@@ -46,7 +46,7 @@ describe("OutputSchemaEditor", () => {
     const value: OutputSchema = { pipeline: [{ parser: "lines", fields: [] }] };
     render(<OutputSchemaEditor value={value} onChange={onChange} t={t} />);
 
-    const toggle = screen.getByRole("checkbox", { name: /parse output/i });
+    const toggle = screen.getByRole("switch", { name: /parse output/i });
     fireEvent.click(toggle);
 
     expect(onChange).toHaveBeenCalledWith(undefined);

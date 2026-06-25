@@ -2378,6 +2378,16 @@ body.is-editor-fullscreen .output-panel {
   cursor: pointer;
 }
 
+/* The enabled/disabled text swaps between two strings of differing widths.
+   Because the toggle group is right-aligned in the tile header, a changing
+   label width would shift the switch horizontally. Reserve a fixed-width,
+   left-aligned slot for the label so the switch stays put across toggles. */
+.list-schedule-card__toggle-label {
+  display: inline-block;
+  min-width: 72px;
+  text-align: left;
+}
+
 /* Compact schedule tile: the enable toggle drops its text label and sits in
    the head-action cluster next to the icon Run/View buttons. */
 .list-schedule-card__toggle--compact {

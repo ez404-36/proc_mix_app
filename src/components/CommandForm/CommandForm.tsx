@@ -43,6 +43,7 @@ import { IdBadge } from "../IdBadge";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
 import { NumberStepper } from "../NumberStepper";
+import { ToggleSwitch } from "../ToggleSwitch";
 import { OutputSchemaEditor } from "./OutputSchemaEditor";
 import { TargetSelector } from "./TargetSelector";
 import { ScriptEditor } from "./ScriptEditor";
@@ -1296,9 +1297,9 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
           {(
             [
               { key: "main", hasError: mainTabHasError },
+              { key: "env", hasError: false },
               { key: "script", hasError: scriptTabHasError },
               { key: "output", hasError: false },
-              { key: "env", hasError: false },
             ] as ReadonlyArray<{ key: FormTab; hasError: boolean }>
           ).map(({ key, hasError }) => {
             const showBadge = showErrors && hasError;
@@ -1330,7 +1331,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
         </div>
 
         <div className="command-form__body">
-          {/* --- Tab: Main (metadata + execution settings) --- */}
+          {/* --- Tab: Main (metadata) --- */}
           <div
             role="tabpanel"
             id="command-form-panel-main"
@@ -1498,174 +1499,16 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
             )}
           </div>
 
-          <div className="command-form__field">
-            <span className="command-form__label">
-              {t("commandForm.fields.shell")}
-            </span>
-            <Dropdown
-              value={form.shell}
-              options={shellOptions}
-              onChange={handleShellChange}
-              ariaLabel={t("commandForm.fields.shell")}
-            />
-            {showNoShellsWarning ? (
-              <span className="command-form__warning" role="note">
-                {t("commandForm.warnings.noShellsDetected")}
-              </span>
-            ) : null}
-          </div>
-
-          {/*
-           * Where-to-run selector (Local / Remote host / Ask at run time).
-           * Sourced from the shared SSH host store so the offered hosts match
-           * Environment → Connections exactly. Remote runs disable elevation
-           * (handled on the admin checkbox below).
-           */}
-          <TargetSelector
-            value={form.target}
-            onChange={(target) => setForm((s) => ({ ...s, target }))}
-            promptSshPassword={form.promptSshPassword}
-            onPromptSshPasswordChange={(promptSshPassword) =>
-              setForm((s) => ({ ...s, promptSshPassword }))
-            }
-          />
-
-          {/*
-           * Admin checkbox. When checked, the command spawns with
-           * elevated privileges (sudo on Unix, UAC on Windows). The
-           * label uses a `<label>` wrapper so clicking the text also
-           * toggles the input — matches the favorite/checkbox style
-           * elsewhere in the app. Hint copy is platform-conditional:
-           *   - Windows: warn that live-output capture is limited
-           *     (the UAC child runs in a different security context).
-           *   - Unix + no password stored yet: explain the first-run
-           *     password prompt so the modal doesn't surprise users.
-           *
-           * When the script itself starts with sudo/doas/pkexec, we
-           * force the checkbox on and disable it (see
-           * `escalationDetected` above). The hint below explains why.
-           */}
-          <label
-            className={`command-form__field command-form__field--inline${
-              elevationLocked ? " command-form__field--locked" : ""
-            }`}
-            title={
-              isRemoteTarget
-                ? t("commandForm.tooltips.runAsAdminRemote", {
-                    defaultValue:
-                      "Run as administrator is not available for remote commands.",
-                  })
-                : escalationDetected
-                  ? t("commandForm.tooltips.runAsAdminAutoDetected", {
-                      defaultValue:
-                        "Detected sudo/doas/pkexec at the start of the script — admin mode is required.",
-                    })
-                  : undefined
-            }
-          >
-            <input
-              type="checkbox"
-              // Remote runs can't be elevated: force the checkbox off
-              // regardless of the persisted flag so the UI matches what the
-              // executor will actually do.
-              checked={!isRemoteTarget && form.runAsAdmin}
-              disabled={elevationLocked}
-              onChange={(e) =>
-                setForm((s) => ({ ...s, runAsAdmin: e.target.checked }))
-              }
-            />
-            <span>
-              {t("commandForm.fields.runAsAdmin", {
-                defaultValue: "Run as administrator",
-              })}
-            </span>
-          </label>
-          {isRemoteTarget ? (
-            <span className="command-form__hint" role="note">
-              {t("commandForm.hints.runAsAdminRemote", {
-                defaultValue:
-                  "Run as administrator is not available for remote commands.",
-              })}
-            </span>
-          ) : escalationDetected ? (
-            <span className="command-form__hint" role="note">
-              {t("commandForm.hints.runAsAdminAutoDetected", {
-                defaultValue:
-                  "Detected sudo/doas/pkexec at the start of the script. Admin mode is required and can't be disabled until you remove the escalation prefix.",
-              })}
-            </span>
-          ) : null}
-          {!isRemoteTarget && form.runAsAdmin && platform === "windows" ? (
-            <span className="command-form__hint" role="note">
-              {t("commandForm.warnings.windowsAdmin", {
-                defaultValue:
-                  "Windows will show a UAC prompt. Live output capture is limited.",
-              })}
-            </span>
-          ) : null}
-          {!isRemoteTarget &&
-          form.runAsAdmin &&
-          platform !== "windows" &&
-          !adminPasswordStored ? (
-            <span className="command-form__hint" role="note">
-              {t("commandForm.warnings.adminPasswordWillAsk", {
-                defaultValue:
-                  "You'll be asked for your administrator password on the first run.",
-              })}
-            </span>
-          ) : null}
-
-          <div className="command-form__field">
-            <span className="command-form__label">
-              {t("commandForm.fields.timeoutSeconds", {
-                defaultValue: "Timeout (seconds)",
-              })}
-            </span>
-            {/*
-             * Timeout stepper. "Empty = no limit" — the value is stored as a
-             * string (`""` = no limit); we bridge it to NumberStepper's
-             * nullable mode (`null` ⇄ `""`). The shared component hides the
-             * native spinner arrows and renders the app's ghost-button
-             * steppers.
-             */}
-            <NumberStepper
-              allowEmpty
-              value={
-                form.timeoutSeconds.trim() === ""
-                  ? null
-                  : Number.parseInt(form.timeoutSeconds, 10)
-              }
-              onChange={(next) =>
-                setForm((s) => ({
-                  ...s,
-                  timeoutSeconds: next === null ? "" : String(next),
-                }))
-              }
-              min={1}
-              max={Number.MAX_SAFE_INTEGER}
-              placeholder={t("commandForm.placeholders.timeoutSeconds", {
-                defaultValue: "No limit",
-              })}
-              ariaLabel={t("commandForm.fields.timeoutSeconds", {
-                defaultValue: "Timeout (seconds)",
-              })}
-              decrementLabel={t("commandForm.timeout.decrement")}
-              incrementLabel={t("commandForm.timeout.increment")}
-            />
-          </div>
-
           {/* --- HTTP API: opt-in + slug for the built-in REST server --- */}
           <div className="command-form__field command-form__field--inline">
-            <label className="command-form__field--inline">
-              <input
-                type="checkbox"
-                checked={form.apiEnabled}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, apiEnabled: e.target.checked }))
-                }
-              />
-              <span>{t("commandForm.httpApi.enabled")}</span>
-            </label>
+            <ToggleSwitch
+              checked={form.apiEnabled}
+              onChange={(next) =>
+                setForm((s) => ({ ...s, apiEnabled: next }))
+              }
+              ariaLabel={t("commandForm.httpApi.enabled")}
+            />
+            <span>{t("commandForm.httpApi.enabled")}</span>
           </div>
           {/* The slug only matters when API access is on, so it's hidden until
               the user opts in (keeps the form tidy and the intent clear). */}
@@ -1817,30 +1660,129 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
             ) : null}
           </div>
 
+          {/*
+           * Admin toggle. When on, the command spawns with elevated
+           * privileges (sudo on Unix, UAC on Windows), rendered as the
+           * shared iOS-style ToggleSwitch with a visible label beside it.
+           * Hint copy is platform-conditional:
+           *   - Windows: warn that live-output capture is limited
+           *     (the UAC child runs in a different security context).
+           *   - Unix + no password stored yet: explain the first-run
+           *     password prompt so the modal doesn't surprise users.
+           *
+           * When the script itself starts with sudo/doas/pkexec, we
+           * force the toggle on and disable it (see
+           * `escalationDetected` above). The hint below explains why.
+           */}
+          <div
+            className={`command-form__field command-form__field--inline${
+              elevationLocked ? " command-form__field--locked" : ""
+            }`}
+            title={
+              isRemoteTarget
+                ? t("commandForm.tooltips.runAsAdminRemote", {
+                    defaultValue:
+                      "Run as administrator is not available for remote commands.",
+                  })
+                : escalationDetected
+                  ? t("commandForm.tooltips.runAsAdminAutoDetected", {
+                      defaultValue:
+                        "Detected sudo/doas/pkexec at the start of the script — admin mode is required.",
+                    })
+                  : undefined
+            }
+          >
+            <ToggleSwitch
+              // Remote runs can't be elevated: force the switch off
+              // regardless of the persisted flag so the UI matches what the
+              // executor will actually do.
+              checked={!isRemoteTarget && form.runAsAdmin}
+              disabled={elevationLocked}
+              onChange={(next) =>
+                setForm((s) => ({ ...s, runAsAdmin: next }))
+              }
+              ariaLabel={t("commandForm.fields.runAsAdmin", {
+                defaultValue: "Run as administrator",
+              })}
+            />
+            <span>
+              {t("commandForm.fields.runAsAdmin", {
+                defaultValue: "Run as administrator",
+              })}
+            </span>
+          </div>
+          {isRemoteTarget ? (
+            <span className="command-form__hint" role="note">
+              {t("commandForm.hints.runAsAdminRemote", {
+                defaultValue:
+                  "Run as administrator is not available for remote commands.",
+              })}
+            </span>
+          ) : escalationDetected ? (
+            <span className="command-form__hint" role="note">
+              {t("commandForm.hints.runAsAdminAutoDetected", {
+                defaultValue:
+                  "Detected sudo/doas/pkexec at the start of the script. Admin mode is required and can't be disabled until you remove the escalation prefix.",
+              })}
+            </span>
+          ) : null}
+          {!isRemoteTarget && form.runAsAdmin && platform === "windows" ? (
+            <span className="command-form__hint" role="note">
+              {t("commandForm.warnings.windowsAdmin", {
+                defaultValue:
+                  "Windows will show a UAC prompt. Live output capture is limited.",
+              })}
+            </span>
+          ) : null}
+          {!isRemoteTarget &&
+          form.runAsAdmin &&
+          platform !== "windows" &&
+          !adminPasswordStored ? (
+            <span className="command-form__hint" role="note">
+              {t("commandForm.warnings.adminPasswordWillAsk", {
+                defaultValue:
+                  "You'll be asked for your administrator password on the first run.",
+              })}
+            </span>
+          ) : null}
+
           <div className="command-form__field">
             <span className="command-form__label">
-              {t("commandForm.fields.workingDir")}
+              {t("commandForm.fields.timeoutSeconds", {
+                defaultValue: "Timeout (seconds)",
+              })}
             </span>
-            <input
-              type="text"
-              className="input command-form__working-dir-input"
-              value={form.workingDir}
-              onChange={(e) =>
-                setForm((s) => ({ ...s, workingDir: e.target.value }))
+            {/*
+             * Timeout stepper. "Empty = no limit" — the value is stored as a
+             * string (`""` = no limit); we bridge it to NumberStepper's
+             * nullable mode (`null` ⇄ `""`). The shared component hides the
+             * native spinner arrows and renders the app's ghost-button
+             * steppers.
+             */}
+            <NumberStepper
+              allowEmpty
+              value={
+                form.timeoutSeconds.trim() === ""
+                  ? null
+                  : Number.parseInt(form.timeoutSeconds, 10)
               }
-              placeholder={t("commandForm.placeholders.workingDir")}
-              aria-label={t("commandForm.fields.workingDir")}
+              onChange={(next) =>
+                setForm((s) => ({
+                  ...s,
+                  timeoutSeconds: next === null ? "" : String(next),
+                }))
+              }
+              min={1}
+              max={Number.MAX_SAFE_INTEGER}
+              placeholder={t("commandForm.placeholders.timeoutSeconds", {
+                defaultValue: "No limit",
+              })}
+              ariaLabel={t("commandForm.fields.timeoutSeconds", {
+                defaultValue: "Timeout (seconds)",
+              })}
+              decrementLabel={t("commandForm.timeout.decrement")}
+              incrementLabel={t("commandForm.timeout.increment")}
             />
-            <label className="command-form__field command-form__field--inline">
-              <input
-                type="checkbox"
-                checked={form.promptWorkingDir}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, promptWorkingDir: e.target.checked }))
-                }
-              />
-              <span>{t("commandForm.fields.promptWorkingDir")}</span>
-            </label>
           </div>
 
           {/*
@@ -2056,7 +1998,8 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
           />
           </div>
 
-          {/* --- Tab: Env (per-command environment variable overrides) --- */}
+          {/* --- Tab: Env (where-to-run, shell, working directory, and
+              per-command environment variable overrides) --- */}
           <div
             role="tabpanel"
             id="command-form-panel-env"
@@ -2064,6 +2007,64 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
             hidden={activeTab !== "env"}
             className="command-form__panel"
           >
+          {/*
+           * Where-to-run selector (Local / Remote host / Ask at run time).
+           * Sourced from the shared SSH host store so the offered hosts match
+           * Environment → Connections exactly. Remote runs disable elevation
+           * (handled on the admin checkbox below).
+           */}
+          <TargetSelector
+            value={form.target}
+            onChange={(target) => setForm((s) => ({ ...s, target }))}
+            promptSshPassword={form.promptSshPassword}
+            onPromptSshPasswordChange={(promptSshPassword) =>
+              setForm((s) => ({ ...s, promptSshPassword }))
+            }
+          />
+
+          <div className="command-form__field">
+            <span className="command-form__label">
+              {t("commandForm.fields.shell")}
+            </span>
+            <Dropdown
+              value={form.shell}
+              options={shellOptions}
+              onChange={handleShellChange}
+              ariaLabel={t("commandForm.fields.shell")}
+            />
+            {showNoShellsWarning ? (
+              <span className="command-form__warning" role="note">
+                {t("commandForm.warnings.noShellsDetected")}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="command-form__field">
+            <span className="command-form__label">
+              {t("commandForm.fields.workingDir")}
+            </span>
+            <input
+              type="text"
+              className="input command-form__working-dir-input"
+              value={form.workingDir}
+              onChange={(e) =>
+                setForm((s) => ({ ...s, workingDir: e.target.value }))
+              }
+              placeholder={t("commandForm.placeholders.workingDir")}
+              aria-label={t("commandForm.fields.workingDir")}
+            />
+            <div className="command-form__field command-form__field--inline">
+              <ToggleSwitch
+                checked={form.promptWorkingDir}
+                onChange={(next) =>
+                  setForm((s) => ({ ...s, promptWorkingDir: next }))
+                }
+                ariaLabel={t("commandForm.fields.promptWorkingDir")}
+              />
+              <span>{t("commandForm.fields.promptWorkingDir")}</span>
+            </div>
+          </div>
+
             <div className="command-form__field">
               <span className="command-form__label">
                 {t("commandForm.env.title", { defaultValue: "Environment variables" })}

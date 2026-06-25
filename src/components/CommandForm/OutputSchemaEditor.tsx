@@ -23,6 +23,7 @@ import { inferTsType, jsTemplate } from "../../utils/jsParserTemplate";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
 import { NumberStepper } from "../NumberStepper";
+import { ToggleSwitch } from "../ToggleSwitch";
 
 /**
  * Parsers offered in the editor. Order matches the conceptual
@@ -496,18 +497,20 @@ export function OutputSchemaEditor(
   return (
     <div className="command-form__field command-form__output-schema">
       <div className="command-form__output-schema-header">
-        <label className="command-form__field command-form__field--inline">
-          <input
-            type="checkbox"
+        <div className="command-form__field command-form__field--inline">
+          <ToggleSwitch
             checked={enabled}
-            onChange={(e) => handleToggle(e.target.checked)}
+            onChange={(next) => handleToggle(next)}
+            ariaLabel={t("commandForm.outputSchema.enable", {
+              defaultValue: "Parse output",
+            })}
           />
           <span>
             {t("commandForm.outputSchema.enable", {
               defaultValue: "Parse output",
             })}
           </span>
-        </label>
+        </div>
       </div>
 
       {enabled && value ? (

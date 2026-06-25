@@ -28,6 +28,7 @@ import { ListControls } from "../ListControls/ListControls";
 import type { SortOption } from "../ListControls/ListControls";
 import { Pagination } from "../Pagination/Pagination";
 import { PlusIcon, RunIcon, ViewIcon } from "../icons";
+import { ToggleSwitch } from "../ToggleSwitch";
 import { ScheduleView } from "./ScheduleView";
 
 /** Grid template (column widths) for the schedule table rows. */
@@ -219,26 +220,24 @@ function ScheduleCard({
   };
 
   const enableToggle = (
-    <label
+    <span
       className={`list-schedule-card__toggle${compact ? " list-schedule-card__toggle--compact" : ""}`}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
     >
-      <input
-        type="checkbox"
+      <ToggleSwitch
         checked={schedule.enabled}
         onChange={() => onToggle(schedule)}
-        aria-label={
-          schedule.enabled ? t("scheduler.disable") : t("scheduler.enable")
-        }
-        title={
+        ariaLabel={
           schedule.enabled ? t("scheduler.disable") : t("scheduler.enable")
         }
       />
       {!compact ? (
-        <span>
+        <span className="list-schedule-card__toggle-label">
           {schedule.enabled ? t("scheduler.enabled") : t("scheduler.disabled")}
         </span>
       ) : null}
-    </label>
+    </span>
   );
 
   return (

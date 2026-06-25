@@ -56,6 +56,7 @@ import type { DropdownOption } from "../Dropdown";
 import { HelpTooltip } from "../HelpTooltip";
 import { CancelIcon, SaveIcon } from "../icons";
 import { NumberStepper } from "../NumberStepper";
+import { ToggleSwitch } from "../ToggleSwitch";
 
 interface ScheduleFormProps {
   /** The schedule being edited, or `null` to create a new one. */
@@ -771,14 +772,14 @@ export function ScheduleForm({
           </legend>
 
         <div className="form-checkbox-row">
-          <label className="form-checkbox">
-            <input
-              type="checkbox"
+          <div className="form-checkbox">
+            <ToggleSwitch
               checked={skipIfRunning}
-              onChange={(e) => setSkipIfRunning(e.target.checked)}
+              onChange={(next) => setSkipIfRunning(next)}
+              ariaLabel={t("scheduler.form.skipIfRunning")}
             />
             <span>{t("scheduler.form.skipIfRunning")}</span>
-          </label>
+          </div>
           <HelpTooltip
             id="schedule-form-skip-if-running-help"
             buttonLabel={t("scheduler.form.skipIfRunningHelp")}
@@ -787,14 +788,14 @@ export function ScheduleForm({
         </div>
 
         <div className="form-checkbox-row">
-          <label className="form-checkbox">
-            <input
-              type="checkbox"
+          <div className="form-checkbox">
+            <ToggleSwitch
               checked={captureOutput}
-              onChange={(e) => setCaptureOutput(e.target.checked)}
+              onChange={(next) => setCaptureOutput(next)}
+              ariaLabel={t("scheduler.form.captureOutput")}
             />
             <span>{t("scheduler.form.captureOutput")}</span>
-          </label>
+          </div>
           <HelpTooltip
             id="schedule-form-capture-output-help"
             buttonLabel={t("scheduler.form.captureOutputHelp")}
@@ -804,14 +805,14 @@ export function ScheduleForm({
 
         <div className="schedule-form__catch-up">
           <div className="form-checkbox-row">
-            <label className="form-checkbox">
-              <input
-                type="checkbox"
+            <div className="form-checkbox">
+              <ToggleSwitch
                 checked={catchUp}
-                onChange={(e) => setCatchUp(e.target.checked)}
+                onChange={(next) => setCatchUp(next)}
+                ariaLabel={t("scheduler.form.catchUp")}
               />
               <span>{t("scheduler.form.catchUp")}</span>
-            </label>
+            </div>
             <HelpTooltip
               id="schedule-form-catch-up-help"
               buttonLabel={t("scheduler.form.catchUpHelp")}
@@ -849,14 +850,14 @@ export function ScheduleForm({
 
         {targetKind === "command" ? (
           <div className="schedule-form__catch-up">
-            <label className="form-checkbox">
-              <input
-                type="checkbox"
+            <div className="form-checkbox">
+              <ToggleSwitch
                 checked={useTimeout}
-                onChange={(e) => setUseTimeout(e.target.checked)}
+                onChange={(next) => setUseTimeout(next)}
+                ariaLabel={t("scheduler.form.useTimeout")}
               />
               <span>{t("scheduler.form.useTimeout")}</span>
-            </label>
+            </div>
             {useTimeout ? (
               <label className="form-field schedule-form__sub-field">
                 <span className="form-field__label">
@@ -879,14 +880,14 @@ export function ScheduleForm({
         ) : null}
 
         <div className="schedule-form__catch-up">
-          <label className="form-checkbox">
-            <input
-              type="checkbox"
+          <div className="form-checkbox">
+            <ToggleSwitch
               checked={retryOnError}
-              onChange={(e) => setRetryOnError(e.target.checked)}
+              onChange={(next) => setRetryOnError(next)}
+              ariaLabel={t("scheduler.form.retryOnError")}
             />
             <span>{t("scheduler.form.retryOnError")}</span>
-          </label>
+          </div>
           {retryOnError ? (
             <label className="form-field schedule-form__sub-field">
               <span className="form-field__label">
@@ -907,14 +908,14 @@ export function ScheduleForm({
           ) : null}
         </div>
 
-        <label className="form-checkbox">
-          <input
-            type="checkbox"
+        <div className="form-checkbox">
+          <ToggleSwitch
             checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
+            onChange={(next) => setEnabled(next)}
+            ariaLabel={t("scheduler.form.enabledOnCreate")}
           />
           <span>{t("scheduler.form.enabledOnCreate")}</span>
-        </label>
+        </div>
         </fieldset>
 
         {formError !== null ? (
