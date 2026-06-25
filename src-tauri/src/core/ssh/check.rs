@@ -38,6 +38,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use super::types::SshCheckResult;
+use crate::core::proc_ext::NoConsoleWindow;
 
 /// TCP connect budget handed to `ssh` via `-o ConnectTimeout`. Seconds.
 const SSH_CONNECT_TIMEOUT_SECS: u64 = 8;
@@ -146,6 +147,9 @@ pub async fn check_alias(alias: &str) -> SshCheckResult {
         // English error messages regardless of the user's locale, so the
         // surfaced `message` is stable/translatable on the JS side.
         .env("LC_ALL", "C")
+        // Windows: probe ssh.exe without flashing a console window (no-op
+        // elsewhere). See `core::proc_ext`.
+        .no_console_window()
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());

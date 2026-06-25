@@ -32,6 +32,7 @@ use tokio::process::Command;
 
 use super::batch::{build_batch_script, build_sftp_argv, SftpAuth, SftpOp};
 use super::types::{is_safe_remote_path, SftpEntry, SftpEntryKind, SftpError, SftpListing};
+use crate::core::proc_ext::NoConsoleWindow;
 use crate::core::ssh::is_safe_alias;
 
 /// Hard wall-clock budget for a single sftp operation. A transfer of a large
@@ -90,6 +91,9 @@ async fn run_op(
     command
         .args(&argv)
         .env("LC_ALL", "C")
+        // Windows: spawn sftp.exe without flashing a console window (no-op
+        // elsewhere). See `core::proc_ext`.
+        .no_console_window()
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 

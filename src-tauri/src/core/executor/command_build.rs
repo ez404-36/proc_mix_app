@@ -16,6 +16,7 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 use crate::core::parser::ResolvedScript;
+use crate::core::proc_ext::NoConsoleWindow;
 use crate::core::ssh::is_safe_alias;
 
 use super::types::{
@@ -522,6 +523,9 @@ pub(super) fn build_command(
             // English ssh diagnostics regardless of the user's locale, matching
             // the reachability probe so surfaced messages stay stable.
             c.env("LC_ALL", "C");
+            // Windows: spawn ssh.exe without flashing a console window (no-op
+            // elsewhere). See `core::proc_ext`.
+            c.no_console_window();
             c.stdout(Stdio::piped()).stderr(Stdio::piped());
             // No stdin: the remote script must not block waiting on input it
             // cannot receive. Password auth is delivered via SSH_ASKPASS (a
@@ -723,6 +727,12 @@ pub(super) fn build_command(
             cmd.env(k, v);
         }
     }
+
+    // Windows: suppress the console window the spawned shell (cmd.exe /
+    // powershell.exe) or the UAC wrapper powershell would otherwise flash.
+    // No-op on Unix (sudo / bash etc. inherit no console there). See
+    // `core::proc_ext`.
+    cmd.no_console_window();
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     // Only the Unix elevated path needs a piped stdin (to hand sudo

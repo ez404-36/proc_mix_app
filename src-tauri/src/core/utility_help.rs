@@ -31,6 +31,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+use crate::core::proc_ext::NoConsoleWindow;
+
 /// Maximum number of bytes of help text returned to the frontend. Help
 /// output can be large (full man pages); we cap it and flag truncation
 /// so the UI can show a "truncated" note. Truncation always lands on a
@@ -467,6 +469,9 @@ enum StderrPolicy {
 ///     exit yields `None` so a "no manual entry" diagnostic is not
 ///     mistaken for help.
 async fn run_captured(mut command: Command, stderr_policy: StderrPolicy) -> Option<String> {
+    // Windows: the help probe (`<utility> --help`) must not flash a console
+    // window. No-op elsewhere. See `core::proc_ext`.
+    command.no_console_window();
     let output = match tokio::time::timeout(PROBE_TIMEOUT, command.output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(_spawn_err)) => {

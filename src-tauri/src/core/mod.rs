@@ -7,6 +7,7 @@ pub mod flag_parser;
 pub mod http_server;
 pub mod js_parser;
 pub mod parser;
+pub mod proc_ext;
 pub mod redact;
 pub mod scheduler;
 pub mod scope_tracker;

@@ -529,13 +529,34 @@ pub(super) async fn kill_child_tree(
     }
     #[cfg(not(unix))]
     {
+        // Windows has no SIGTERM→grace→SIGKILL escalation: `taskkill /F` is
+        // always a forced (hard) terminate, so `immediate` (user-cancel) and
+        // graceful (timeout) take the same path here. The brief grace the Unix
+        // path gives a process to clean up does not apply.
         let _ = immediate;
         // Kill the entire process tree so child processes spawned by the
         // shell (e.g. python.exe, npm.exe) don't survive the cancel/timeout.
-        // /F forces termination, /T recurses into all descendants.
+        // /F forces termination, /T recurses into all descendants. `child.id()`
+        // is read while the child is still alive (the waiter hasn't reaped it),
+        // so the PID-reuse window is closed.
+        //
+        // NOTE (elevated/UAC): an elevated run wraps the command in
+        // `Start-Process -Verb RunAs`, whose admin-token child is created by the
+        // Windows AppInfo service and is NOT a descendant of this wrapper
+        // powershell — `/T` cannot reach it, and a non-admin process cannot kill
+        // an admin process without re-elevating. Killing the wrapper here still
+        // makes the run's status converge to Cancelled (the `-Wait` wrapper
+        // exits); the already-launched elevated child may run to completion.
+        // This is a Windows security-model limitation, documented in
+        // docs/admin-privileges.md.
+        use crate::core::proc_ext::NoConsoleWindow;
         if let Some(pid) = child.id() {
             let _ = std::process::Command::new("taskkill")
                 .args(["/F", "/T", "/PID", &pid.to_string()])
+                // Don't flash a console window for the kill itself — this fired
+                // on every cancel/timeout. No-op on non-Windows (unreachable in
+                // this cfg block anyway). See `core::proc_ext`.
+                .no_console_window()
                 .output();
         }
         // Safety net: if taskkill wasn't available or the PID already exited,

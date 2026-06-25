@@ -220,6 +220,7 @@ fn read_primary_machine_id_raw() -> String {
     // Spawned by ABSOLUTE path (`%SystemRoot%\System32\reg.exe`) rather than
     // the bare name so a `reg.exe` planted earlier on `PATH` cannot shadow the
     // system tool.
+    use crate::core::proc_ext::NoConsoleWindow;
     let output = std::process::Command::new(system32_tool("reg.exe"))
         .args([
             "query",
@@ -227,6 +228,9 @@ fn read_primary_machine_id_raw() -> String {
             "/v",
             "MachineGuid",
         ])
+        // Don't flash a console window for the HWID probe (runs at startup
+        // during license verification). See `core::proc_ext`.
+        .no_console_window()
         .output();
     let Ok(output) = output else {
         return String::new();
@@ -250,9 +254,13 @@ fn read_primary_mac_raw() -> String {
     // no shell. Absence degrades to "". Spawned by ABSOLUTE path
     // (`%SystemRoot%\System32\getmac.exe`) so a planted `getmac.exe` earlier on
     // `PATH` cannot shadow the system tool.
+    use crate::core::proc_ext::NoConsoleWindow;
     let output = std::process::Command::new(system32_tool("getmac.exe"))
         .arg("/fo")
         .arg("table")
+        // Don't flash a console window for the HWID probe (runs at startup
+        // during license verification). See `core::proc_ext`.
+        .no_console_window()
         .output();
     let Ok(output) = output else {
         return String::new();
