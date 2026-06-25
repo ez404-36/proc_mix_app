@@ -19,10 +19,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCommandStore } from "../../stores/commandStore";
-import {
-  deleteCommand as deleteCommandWithHistory,
-  promoteCommandToGlobal,
-} from "../../services/commandActions";
 import { triggerCommandRun } from "../../services/commandRunner";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
@@ -34,7 +30,7 @@ import {
   useEditorDraftStore,
   type EditorSnapshot,
 } from "../../stores/editorDraftStore";
-import type { Command, WorkflowNodeKind } from "../../types";
+import type { WorkflowNodeKind } from "../../types";
 import { getCommandName } from "../../utils/commandLabels";
 import {
   collectTagsFrom,
@@ -109,6 +105,9 @@ import {
 } from "../icons";
 import { useWorkflowCanvasPersistence } from "./useWorkflowCanvasPersistence";
 import { useWorkflowCanvasDnD } from "./useWorkflowCanvasDnD";
+import { useCanvasNodeCommands } from "./useCanvasNodeCommands";
+import { useCanvasModals } from "./useCanvasModals";
+import { useEditorFullscreen } from "./useEditorFullscreen";
 
 interface WorkflowCanvasProps {
   /** Existing workflow id to edit, or `null` to start a new graph. */
@@ -273,31 +272,12 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   );
 
   const [metaModalOpen, setMetaModalOpen] = useState(false);
-  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
-  // Unsaved-changes guard shown when Close is clicked with a dirty draft.
-  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
-  // The local command shown in the read-only CommandView modal (opened by
-  // clicking an item in the palette's "Local commands" list), or `null`.
-  const [viewCommand, setViewCommand] = useState<Command | null>(null);
-  // A command staged for promotion to global: the promote confirm dialog is
-  // open while this is non-null (set from the CommandView "Make global" button
-  // or the node inspector promote action). `null` when no confirm is pending.
-  const [promotePendingId, setPromotePendingId] = useState<string | null>(null);
   // Canvas interactivity (the "pin"/lock control): when false, nodes can't be
   // dragged / selected / connected — useful while panning a finished graph.
   const [interactive, setInteractive] = useState(true);
-  // Whether the editor (palette + canvas) is expanded to fill the app window.
-  const [fullscreen, setFullscreen] = useState(false);
-  // While the editor is fullscreen it covers the docked OutputPanel (the
-  // fullscreen layer sits above it). Toggle a body class so the console is
-  // lifted ABOVE the fullscreen editor (CSS-only; see `is-editor-fullscreen`),
-  // letting the user watch a run's output without leaving fullscreen. Cleared
-  // on unmount so leaving the editor view never strands the class.
-  useEffect(() => {
-    const cls = "is-editor-fullscreen";
-    document.body.classList.toggle(cls, fullscreen);
-    return () => document.body.classList.remove(cls);
-  }, [fullscreen]);
+  // Whether the editor (palette + canvas) is expanded to fill the app window,
+  // plus the body-class side effect that keeps the console visible over it.
+  const { fullscreen, toggleFullscreen } = useEditorFullscreen();
   // The edge highlighted while an EXISTING free-floating node is dragged over
   // it (the "insert here" hint for canvas node-drag, distinct from the palette
   // drag hint owned by the DnD hook). Null when not over an insertable edge.
@@ -548,57 +528,24 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     setView("command-editor");
   }, [currentId, setCommandEditorDirty, setCommandEditorTarget, setView]);
 
-  // Request promotion of a local command to global ("make global"): opens the
-  // confirm dialog. The actual promote happens on confirm. Used by the
-  // CommandView "Make global" button (opened from the Local commands list).
-  const onPromoteCommand = useCallback((commandId: string): void => {
-    setPromotePendingId(commandId);
-  }, []);
-
-  // Confirm/cancel the promote. On confirm the command leaves this workflow's
-  // private scope and joins the shared library (renamed on name conflict — see
-  // `promoteCommandToGlobal`); it then disappears from the "Local commands"
-  // list and the open CommandView (no longer local) is closed.
-  const confirmPromote = useCallback((): void => {
-    if (promotePendingId !== null) {
-      promoteCommandToGlobal(promotePendingId);
-    }
-    setPromotePendingId(null);
-    setViewCommand(null);
-  }, [promotePendingId]);
-  const cancelPromote = useCallback((): void => {
-    setPromotePendingId(null);
-  }, []);
-
-  // Open a local command in the read-only CommandView modal (clicking an item
-  // in the "Local commands" list). These items do not add a node — that is
-  // done via the empty "Command" node + its picker.
-  const onViewLocalCommand = useCallback((command: Command): void => {
-    setViewCommand(command);
-  }, []);
-
-  // Edit a local command from its CommandView: open the full-screen command
-  // editor, returning to THIS workflow editor on close (so the user lands back
-  // on the workflow). Mirrors the Library edit flow plus the `returnTo` hint.
-  const onEditViewedCommand = useCallback(
-    (command: Command): void => {
-      setViewCommand(null);
-      setCommandEditorDirty(false);
-      setCommandEditorTarget({
-        mode: "edit",
-        commandId: command.id,
-        returnTo: "editor",
-      });
-      setView("command-editor");
-    },
-    [setCommandEditorDirty, setCommandEditorTarget, setView],
-  );
-
-  // Delete a local command from its CommandView (history-logged, restorable).
-  const onDeleteViewedCommand = useCallback((command: Command): void => {
-    setViewCommand(null);
-    deleteCommandWithHistory(command.id);
-  }, []);
+  // The local-command sub-flows reachable from the palette's "Local commands"
+  // list and the read-only CommandView modal: view / edit / delete / promote.
+  // Owns the `viewCommand` modal target and the promote-confirm state.
+  const {
+    viewCommand,
+    promotePendingOpen,
+    onViewLocalCommand,
+    closeViewCommand,
+    onEditViewedCommand,
+    onDeleteViewedCommand,
+    onPromoteCommand,
+    confirmPromote,
+    cancelPromote,
+  } = useCanvasNodeCommands({
+    setCommandEditorDirty,
+    setCommandEditorTarget,
+    setView,
+  });
 
   // Palette drag-and-drop (drag-over insert hint + drop placement). The hint
   // state (`dropTargetEdgeId`, `insertPreviewPos`) lives in the hook and is
@@ -896,35 +843,36 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   // existing workflow (`currentId !== null`) "initial" means the SAVED
   // version reloaded from the workflow store; for a new workflow it means a
   // fresh single `start`-node graph with empty metadata — both handled by
-  // `buildDraftForTarget(currentId, …)`. A destructive action, so it is
-  // gated behind the app-styled `ConfirmDialog`. `activeRunId` is cleared so
-  // stale highlighting does not linger.
-  const confirmClear = useCallback((): void => {
+  // `buildDraftForTarget(currentId, …)`. `activeRunId` is cleared so stale
+  // highlighting does not linger. Run on confirm of the destructive dialog.
+  const clearCanvas = useCallback((): void => {
     reset(currentId, buildDraftForTarget(currentId, workflows));
     setActiveRunId(null);
-    setClearConfirmOpen(false);
   }, [reset, currentId, workflows, setActiveRunId]);
 
   // Leave the editor for the workflow list. A bare navigate; the dirty guard
-  // (below) decides whether to confirm first.
+  // (in the modals hook) decides whether to confirm first.
   const leaveEditor = useCallback((): void => {
     setView("library");
   }, [setView]);
 
-  // Close button: warn about unsaved changes before leaving. A clean draft
-  // navigates immediately; a dirty one opens the discard confirmation.
-  const requestClose = useCallback((): void => {
-    if (isDirty) {
-      setCloseConfirmOpen(true);
-      return;
-    }
-    leaveEditor();
-  }, [isDirty, leaveEditor]);
-
-  const confirmDiscardAndClose = useCallback((): void => {
-    setCloseConfirmOpen(false);
-    leaveEditor();
-  }, [leaveEditor]);
+  // The two destructive confirm-dialog state machines (clear/cancel + the
+  // unsaved-changes Close guard). The hook owns the open flags; the actual
+  // reset / navigate effects are supplied here.
+  const {
+    clearConfirmOpen,
+    closeConfirmOpen,
+    openClearConfirm,
+    closeClearConfirm,
+    confirmClear,
+    requestClose,
+    closeCloseConfirm,
+    confirmDiscardAndClose,
+  } = useCanvasModals({
+    isDirty,
+    onClearConfirmed: clearCanvas,
+    onLeaveEditor: leaveEditor,
+  });
 
   // Editor-scoped keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z (or
   // Ctrl+Y) = redo. Suppressed while typing in an input/textarea/select or a
@@ -1122,7 +1070,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
           <button
             type="button"
             className="btn command-form__action command-form__action--cancel"
-            onClick={() => setClearConfirmOpen(true)}
+            onClick={openClearConfirm}
           >
             <span className="command-form__action-icon--cancel">
               <CancelIcon />
@@ -1161,7 +1109,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
             interactive={interactive}
             onToggleInteractive={() => setInteractive((v) => !v)}
             fullscreen={fullscreen}
-            onToggleFullscreen={() => setFullscreen((v) => !v)}
+            onToggleFullscreen={toggleFullscreen}
           />
         </ReactFlow>
         {insertHintPos !== null ? (
@@ -1235,7 +1183,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         confirmLabel={isEditingExisting ? t("editor.discard") : t("common.clear")}
         danger
         onConfirm={confirmClear}
-        onCancel={() => setClearConfirmOpen(false)}
+        onCancel={closeClearConfirm}
       />
 
       <ConfirmDialog
@@ -1245,12 +1193,12 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         confirmLabel={t("editor.discard")}
         danger
         onConfirm={confirmDiscardAndClose}
-        onCancel={() => setCloseConfirmOpen(false)}
+        onCancel={closeCloseConfirm}
       />
 
       <CommandView
         command={viewCommand}
-        onClose={() => setViewCommand(null)}
+        onClose={closeViewCommand}
         onEdit={onEditViewedCommand}
         onRun={(cmd) => void triggerCommandRun(cmd)}
         onDelete={onDeleteViewedCommand}
@@ -1258,7 +1206,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       />
 
       <ConfirmDialog
-        open={promotePendingId !== null}
+        open={promotePendingOpen}
         title={t("editor.promoteConfirm.title")}
         message={t("editor.promoteConfirm.message")}
         confirmLabel={t("common.yes")}
