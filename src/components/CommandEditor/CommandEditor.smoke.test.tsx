@@ -252,7 +252,7 @@ describe("CommandEditor view", () => {
 
     // Open the Output tab and enable the schema so the sample field shows.
     fireEvent.click(screen.getByRole("tab", { name: /Output schema/ }));
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("switch", { name: /parse output/i }));
 
     // The sample textarea is auto-filled from the run's stdout.
     await waitFor(() => {
