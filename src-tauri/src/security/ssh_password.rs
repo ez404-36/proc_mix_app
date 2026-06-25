@@ -27,13 +27,15 @@
 // addressed by a malformed alias). This is the single difference from
 // `admin_password`, whose account is a fixed constant.
 //
-// Tests run against `keyring`'s in-memory mock backend (the default in test
-// builds) and — as in `admin_password` / `ssh_oneshot` — deliberately do NOT
-// exercise the keychain round-trip: the mock isolates each `Entry::new` call to
-// a fresh store, so a `set` on one entry is invisible to a `get` on another,
-// the opposite of how real platform backends behave. Tests cover only the
-// boundary guards (empty password, unsafe alias) and the account-name shape.
-// Real-backend coverage happens at the manual QA / smoke-test layer.
+// Tests are built with the REAL `sync-secret-service` backend (there is no
+// in-memory mock in this build — see `security::api_token`), so they
+// deliberately do NOT exercise the keychain round-trip: a headless CI runner
+// has no Secret Service / D-Bus session, and `get_password` there returns a
+// *backend error* (not `NoEntry`). Tests therefore cover only the boundary
+// guards that short-circuit BEFORE any keychain access (empty password, unsafe
+// alias) and the account-name shape. Any call with a non-empty, safe alias
+// reaches the live keychain and must not be asserted on in CI. Real-backend
+// coverage happens at the manual QA / smoke-test layer.
 
 use keyring::Entry;
 use thiserror::Error;

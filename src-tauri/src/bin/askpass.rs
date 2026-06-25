@@ -127,7 +127,9 @@ mod tests {
 
     /// Empty strings are treated as absent for BOTH sources — an empty run id
     /// or alias must not address a keychain entry. With both empty the result
-    /// is the no-source case.
+    /// is the no-source case. Both branches short-circuit before any keychain
+    /// access, so this stays valid on a headless CI runner with no Secret
+    /// Service / D-Bus session.
     #[test]
     fn empty_source_values_are_treated_as_absent() {
         assert_eq!(
@@ -136,14 +138,14 @@ mod tests {
         );
     }
 
-    /// With only the persistent alias set (and nothing stored in the test mock
-    /// keychain), the helper resolves to `Ok(None)` rather than erroring — a
-    /// host with no saved password simply falls through to key auth. (The mock
-    /// `keyring` backend reports `NoEntry`, which `ssh_password::get` maps to
-    /// `Ok(None)`; a real saved password is exercised in manual QA, per the
-    /// module note.)
-    #[test]
-    fn persistent_alias_with_no_stored_password_is_none() {
-        assert_eq!(resolve_password(None, Some("prod".to_string())), Ok(None));
-    }
+    // NOTE: the "persistent alias, nothing stored" path is deliberately NOT
+    // unit-tested. With a non-empty, safe alias `resolve_password` reaches the
+    // real `keyring` backend (`sync-secret-service` on Linux — there is no
+    // in-memory mock in this build, see `security::api_token`). On a headless
+    // CI runner that has no Secret Service / D-Bus session, `get_password`
+    // returns a *backend error* — not `NoEntry` — so the helper resolves to
+    // `Err(())`, not `Ok(None)`. Both outcomes funnel to "print nothing, exit
+    // non-zero" in `main`, so the user-visible contract is identical; the
+    // distinction is only meaningful against a real keychain, which is covered
+    // at the manual QA / smoke-test layer (same rationale as `api_token`).
 }
