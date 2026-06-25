@@ -394,6 +394,20 @@ select {
   text-align: center;
 }
 
+/* Collapsed: center the HTTP-server icon and hide the label + run/stop toggle,
+   mirroring how `.app-sidebar__nav-button` collapses. */
+.app-sidebar--collapsed .http-server-indicator {
+  justify-content: center;
+  gap: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.app-sidebar--collapsed .http-server-indicator__label,
+.app-sidebar--collapsed .http-server-indicator__toggle {
+  display: none;
+}
+
 .app-main {
   flex: 1;
   overflow: auto;
@@ -8227,7 +8241,7 @@ body.is-editor-fullscreen .output-panel {
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--color-text);
   font-size: 13px;
   cursor: pointer;
   text-align: left;
@@ -8235,7 +8249,6 @@ body.is-editor-fullscreen .output-panel {
 
 .http-server-indicator:hover {
   background: var(--color-surface-hover);
-  color: var(--color-text);
 }
 
 .http-server-indicator__icon {
@@ -8250,20 +8263,9 @@ body.is-editor-fullscreen .output-panel {
   text-overflow: ellipsis;
 }
 
-.http-server-indicator__dot {
-  width: 8px;
-  height: 8px;
+.http-server-indicator__toggle {
+  display: inline-flex;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--color-text-muted);
-}
-
-.http-server-indicator.is-running .http-server-indicator__dot {
-  background: var(--app-color-run);
-}
-
-.http-server-indicator.is-stopped .http-server-indicator__dot {
-  background: var(--color-text-muted);
 }
 
 /* --- Portal panel (createPortal to body, like the command palette). --- */

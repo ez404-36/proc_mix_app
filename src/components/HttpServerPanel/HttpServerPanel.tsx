@@ -508,7 +508,24 @@ export function HttpServerPanel(): ReactElement {
         <span className="http-server-indicator__label">
           {t("httpServer.indicator.label")}
         </span>
-        <span className="http-server-indicator__dot" aria-hidden="true" />
+        {/* Run / stop the server inline without opening the panel; the wrapper
+            stops the click from bubbling to the panel-opening button. */}
+        <span
+          className="http-server-indicator__toggle"
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <ToggleSwitch
+            checked={status.running}
+            onChange={() => void handleToggleServer()}
+            disabled={busy}
+            ariaLabel={
+              status.running
+                ? t("httpServer.actions.stop")
+                : t("httpServer.actions.start")
+            }
+          />
+        </span>
       </button>
       {open ? createPortal(panel, document.body) : null}
     </>
