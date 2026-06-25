@@ -110,6 +110,19 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 thiserror = "2"
 
+# Structured, level-based diagnostic logging (replaces the previous ad-hoc
+# `eprintln!` calls scattered across the backend). `tracing` provides the
+# `error!`/`warn!`/`info!`/`debug!` macros and span support for request flows;
+# `tracing-subscriber` provides the `fmt` subscriber installed once in `run()`
+# so events surface on stderr (with an `RUST_LOG`-style `EnvFilter`, defaulting
+# to `info`). Only the lightweight `fmt` + `env-filter` features are enabled.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "env-filter",
+    "ansi",
+] }
+
 # --- Licensing (client-side, verify-only) ---
 #
 # The lease / DTO / error-code wire contract is declared LOCALLY in

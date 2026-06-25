@@ -288,9 +288,8 @@ pub(super) fn spawn_waiter<R: Runtime>(ctx: WaiterCtx<R>) {
         if clear_ssh_oneshot {
             if let Err(e) = crate::security::ssh_oneshot::clear(&id_for_wait) {
                 // The value is never in the error; log the failure so an
-                // orphaned entry is at least diagnosable. `eprintln!` matches
-                // the executor's existing logging (this crate has no `tracing`).
-                eprintln!("failed to clear one-shot ssh password for {id_for_wait}: {e}");
+                // orphaned entry is at least diagnosable.
+                tracing::error!("failed to clear one-shot ssh password for {id_for_wait}: {e}");
             }
         }
 

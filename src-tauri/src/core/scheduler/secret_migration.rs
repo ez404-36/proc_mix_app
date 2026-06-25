@@ -35,7 +35,7 @@ pub async fn migrate_plaintext_schedule_secrets(pool: &DbPool) {
     let history_changed = match storage_history::redact_sensitive_history_defaults(pool).await {
         Ok(n) => n > 0,
         Err(e) => {
-            eprintln!("scheduler: failed to redact sensitive history defaults: {e}");
+            tracing::error!("scheduler: failed to redact sensitive history defaults: {e}");
             false
         }
     };
@@ -43,7 +43,7 @@ pub async fn migrate_plaintext_schedule_secrets(pool: &DbPool) {
     // Only rewrite the file when something actually changed — VACUUM is costly.
     if schedules_changed || history_changed {
         if let Err(e) = crate::storage::db::vacuum(pool).await {
-            eprintln!("scheduler: VACUUM after secret migration failed: {e}");
+            tracing::error!("scheduler: VACUUM after secret migration failed: {e}");
         }
     }
 }
@@ -54,7 +54,7 @@ async fn migrate_schedule_secrets(pool: &DbPool) -> bool {
     let schedules = match storage_schedules::list_all(pool).await {
         Ok(list) => list,
         Err(e) => {
-            eprintln!("scheduler: secret migration failed to list schedules: {e}");
+            tracing::error!("scheduler: secret migration failed to list schedules: {e}");
             return false;
         }
     };
@@ -100,9 +100,9 @@ async fn migrate_schedule_secrets(pool: &DbPool) -> bool {
         // Re-persist through the redaction path: this stores the plaintext
         // secret(s) in the keychain and rewrites the column with sentinels.
         if let Err(e) = storage_schedules::upsert(pool, rec, &sensitive).await {
-            eprintln!(
-                "scheduler: failed to migrate plaintext secrets for schedule {}: {e}",
-                rec.id
+            tracing::error!(
+                schedule_id = %rec.id,
+                "scheduler: failed to migrate plaintext secrets for schedule: {e}"
             );
         } else {
             changed = true;

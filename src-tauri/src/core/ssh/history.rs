@@ -58,7 +58,7 @@ fn event(payload: HistoryEventPayload) -> HistoryEvent {
 async fn record(pool: &DbPool, payload: HistoryEventPayload) {
     let evt = event(payload);
     if let Err(e) = crate::storage::history::insert_event(pool, &evt).await {
-        eprintln!("ssh history: failed to record event: {e}");
+        tracing::error!("ssh history: failed to record event: {e}");
     }
 }
 

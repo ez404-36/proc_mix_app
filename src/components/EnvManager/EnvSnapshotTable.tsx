@@ -223,25 +223,27 @@ function buildCategories(
   const order: (string | null)[] = [];
   const map = new Map<string | null, EnvVarWithSources[]>();
 
+  const bucketFor = (file: string | null): EnvVarWithSources[] => {
+    let bucket = map.get(file);
+    if (bucket === undefined) {
+      bucket = [];
+      order.push(file);
+      map.set(file, bucket);
+    }
+    return bucket;
+  };
+
   for (const v of vars) {
     if (v.sources.length === 0) {
-      if (!map.has(null)) {
-        order.push(null);
-        map.set(null, []);
-      }
-      map.get(null)!.push(v);
+      bucketFor(null).push(v);
     } else {
       for (const src of v.sources) {
-        if (!map.has(src)) {
-          order.push(src);
-          map.set(src, []);
-        }
-        map.get(src)!.push(v);
+        bucketFor(src).push(v);
       }
     }
   }
 
-  return order.map((file) => ({ file, vars: map.get(file)! }));
+  return order.map((file) => ({ file, vars: bucketFor(file) }));
 }
 
 function CategoryView({ vars, reveal }: CategoryViewProps): ReactElement {

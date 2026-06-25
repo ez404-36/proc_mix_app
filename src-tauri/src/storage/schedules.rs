@@ -323,7 +323,7 @@ fn clear_sensitive_values(schedule_id: &str, values: &serde_json::Value) {
     for (name, value) in obj {
         if value.as_str().is_some_and(schedule_secrets::is_secret_ref) {
             if let Err(e) = schedule_secrets::clear(schedule_id, name) {
-                eprintln!("schedules: failed to clear keychain secret for {name}: {e}");
+                tracing::error!("schedules: failed to clear keychain secret for {name}: {e}");
             }
         }
     }
@@ -359,7 +359,9 @@ pub fn resolve_sensitive_values(
                     // leaking the sentinel into the command.
                     Ok(None) => {}
                     Err(e) => {
-                        eprintln!("schedules: failed to read keychain secret for {name}: {e}");
+                        tracing::error!(
+                            "schedules: failed to read keychain secret for {name}: {e}"
+                        );
                     }
                 }
             }

@@ -186,14 +186,14 @@ pub fn list_targets() -> Vec<CaptureTarget> {
 }
 
 /// Emit a single captured event to the frontend. Best-effort: an emit
-/// failure is logged via stderr and otherwise ignored (matches
+/// failure is logged via `tracing` and otherwise ignored (matches
 /// `executor::emit_event`). The raw command line is NEVER logged here.
 ///
 /// `allow(dead_code)` off Windows: only the Windows ETW callback calls this.
 #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub(crate) fn emit_capture<R: Runtime>(app: &AppHandle<R>, event: &CaptureEvent) {
     if let Err(err) = app.emit(CAPTURE_EVENT, event) {
-        eprintln!("failed to emit capture event: {err}");
+        tracing::error!("failed to emit capture event: {err}");
     }
 }
 

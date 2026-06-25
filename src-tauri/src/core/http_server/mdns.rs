@@ -58,7 +58,7 @@ impl MdnsAnnouncement {
         let daemon = match ServiceDaemon::new() {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("http_server: mDNS daemon unavailable, skipping announce: {e}");
+                tracing::warn!("http_server: mDNS daemon unavailable, skipping announce: {e}");
                 return None;
             }
         };
@@ -76,7 +76,7 @@ impl MdnsAnnouncement {
         ) {
             Ok(info) => info,
             Err(e) => {
-                eprintln!("http_server: failed to build mDNS service info: {e}");
+                tracing::error!("http_server: failed to build mDNS service info: {e}");
                 let _ = daemon.shutdown();
                 return None;
             }
@@ -84,7 +84,7 @@ impl MdnsAnnouncement {
 
         let fullname = info.get_fullname().to_string();
         if let Err(e) = daemon.register(info) {
-            eprintln!("http_server: mDNS register failed: {e}");
+            tracing::error!("http_server: mDNS register failed: {e}");
             let _ = daemon.shutdown();
             return None;
         }
@@ -98,10 +98,10 @@ impl MdnsAnnouncement {
     /// must always succeed.
     pub fn stop(self) {
         if let Err(e) = self.daemon.unregister(&self.fullname) {
-            eprintln!("http_server: mDNS unregister failed: {e}");
+            tracing::error!("http_server: mDNS unregister failed: {e}");
         }
         if let Err(e) = self.daemon.shutdown() {
-            eprintln!("http_server: mDNS shutdown failed: {e}");
+            tracing::error!("http_server: mDNS shutdown failed: {e}");
         }
     }
 }

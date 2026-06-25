@@ -483,7 +483,7 @@ async fn run_captured(mut command: Command, stderr_policy: StderrPolicy) -> Opti
         Err(_elapsed) => {
             // Timed out. Log without any user content so a pathological
             // tool is diagnosable without leaking the probed name's help.
-            eprintln!("utility_help: help probe timed out after {PROBE_TIMEOUT:?}");
+            tracing::warn!("utility_help: help probe timed out after {PROBE_TIMEOUT:?}");
             return None;
         }
     };

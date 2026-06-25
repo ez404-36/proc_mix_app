@@ -21,8 +21,29 @@ use crate::core::scheduler::{self, SchedulerState};
 use crate::core::workflow::WorkflowExecutorState;
 use crate::platform::process_watch::WatcherState;
 
+/// Install the process-wide `tracing` subscriber exactly once, on startup.
+///
+/// The backend uses `tracing::{error,warn,info,debug}` for all diagnostic
+/// output; without a subscriber those events are dropped. The `fmt` subscriber
+/// writes them to stderr (matching the previous `eprintln!` destination), and
+/// the `EnvFilter` honours the standard `RUST_LOG` env var, defaulting to
+/// `info` so warnings and errors are visible out of the box. `try_init` is used
+/// so a second call (e.g. in a test harness that already set a global default)
+/// is a harmless no-op rather than a panic.
+fn init_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_tracing();
+
     let builder = tauri::Builder::default();
 
     // Restore the main window to the position, size and monitor it had on
@@ -105,8 +126,8 @@ pub fn run() {
             if let Ok(cfg_dir) = app.path().app_config_dir() {
                 let legacy = cfg_dir.join("env-files.json");
                 if legacy.exists() {
-                    eprintln!(
-                        "[procmix] MIGRATION WARNING: legacy env-files.json found at {}. \
+                    tracing::warn!(
+                        "MIGRATION WARNING: legacy env-files.json found at {}. \
                          The global .env manager feature has been removed. \
                          This file is no longer read. If you registered .env files there, \
                          add them to individual commands via the Env tab in the command form.",

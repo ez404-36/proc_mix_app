@@ -160,14 +160,14 @@ pub async fn check_alias(alias: &str) -> SshCheckResult {
             // Operational fault (no ssh binary), distinct from a host being
             // unreachable. Log it so a "every check fails" report is
             // diagnosable; the user still gets a definitive result.
-            eprintln!("ssh check: ssh client not found (alias {alias:?})");
+            tracing::error!("ssh check: ssh client not found (alias {alias:?})");
             return SshCheckResult {
                 reachable: false,
                 message: "ssh client not found".to_string(),
             };
         }
         Err(e) => {
-            eprintln!("ssh check: failed to spawn ssh for alias {alias:?}: {e}");
+            tracing::error!("ssh check: failed to spawn ssh for alias {alias:?}: {e}");
             return SshCheckResult {
                 reachable: false,
                 message: format!("failed to start ssh: {e}"),
@@ -180,7 +180,7 @@ pub async fn check_alias(alias: &str) -> SshCheckResult {
         Ok(Err(e)) => {
             // Faulted while waiting on the child — an operational error, not a
             // clean "host said no". Worth logging.
-            eprintln!("ssh check: error waiting on ssh for alias {alias:?}: {e}");
+            tracing::error!("ssh check: error waiting on ssh for alias {alias:?}: {e}");
             return SshCheckResult {
                 reachable: false,
                 message: format!("ssh failed: {e}"),

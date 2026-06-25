@@ -62,7 +62,8 @@ function extractUtilityName(script: string): string {
   const tokens = tokenizeScript(script);
   const ESCALATION = new Set(["sudo", "doas", "pkexec"]);
   let start = 0;
-  if (tokens.length > 0 && ESCALATION.has(tokens[0]!)) start = 1;
+  const first = tokens[0];
+  if (first !== undefined && ESCALATION.has(first)) start = 1;
   return tokens[start] ?? "";
 }
 
@@ -74,7 +75,8 @@ function prePopulate(
   const ESCALATION = new Set(["sudo", "doas", "pkexec"]);
   const workTokens = tokens.filter((t) => t.length > 0);
   let start = 0;
-  if (workTokens.length > 0 && ESCALATION.has(workTokens[0]!)) start = 1;
+  const firstWorkToken = workTokens[0];
+  if (firstWorkToken !== undefined && ESCALATION.has(firstWorkToken)) start = 1;
   if (workTokens.length > start) start += 1;
   const args = workTokens.slice(start);
 
@@ -92,7 +94,11 @@ function prePopulate(
 
   let i = 0;
   while (i < args.length) {
-    const token = args[i]!;
+    const token = args[i];
+    if (token === undefined) {
+      i += 1;
+      continue;
+    }
     if (token.startsWith("-")) {
       const matchedFlag = flagMap.get(token);
       if (matchedFlag) {
@@ -100,8 +106,8 @@ function prePopulate(
         if (!usedFlagPrimaries.has(primary)) {
           usedFlagPrimaries.add(primary);
           let value = "";
-          if (matchedFlag.takesValue && i + 1 < args.length) {
-            const next = args[i + 1]!;
+          const next = args[i + 1];
+          if (matchedFlag.takesValue && next !== undefined) {
             if (!next.startsWith("-")) {
               value = next;
               i += 1;

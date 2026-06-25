@@ -95,9 +95,9 @@ pub(super) async fn fire_schedule<R: Runtime>(
             .await;
         }
         other => {
-            eprintln!(
-                "scheduler: schedule {} has unknown target_kind {other}",
-                rec.id
+            tracing::error!(
+                schedule_id = %rec.id,
+                "scheduler: schedule has unknown target_kind {other}"
             );
             record_outcome(
                 pool,
@@ -127,9 +127,10 @@ pub(super) async fn fire_command<R: Runtime>(
     let cmd = match load_command(pool, &rec.target_id).await {
         Ok(Some(cmd)) => cmd,
         Ok(None) => {
-            eprintln!(
-                "scheduler: schedule {} references missing command {}",
-                rec.id, rec.target_id
+            tracing::error!(
+                schedule_id = %rec.id,
+                target_id = %rec.target_id,
+                "scheduler: schedule references missing command"
             );
             return CommandFire {
                 status: FireStatus::Error,
@@ -137,9 +138,9 @@ pub(super) async fn fire_command<R: Runtime>(
             };
         }
         Err(e) => {
-            eprintln!(
-                "scheduler: failed to load command for schedule {}: {e}",
-                rec.id
+            tracing::error!(
+                schedule_id = %rec.id,
+                "scheduler: failed to load command for schedule: {e}"
             );
             return CommandFire {
                 status: FireStatus::Error,
@@ -203,10 +204,10 @@ pub(super) async fn fire_command<R: Runtime>(
                     capture: CommandFireResult::default(),
                 };
             }
-            eprintln!(
-                "scheduler: command spawn failed for schedule {} (attempt {}): {e}",
-                rec.id,
-                attempt + 1
+            tracing::error!(
+                schedule_id = %rec.id,
+                attempt = attempt + 1,
+                "scheduler: command spawn failed for schedule: {e}"
             );
             last = FireStatus::Error;
             continue;
@@ -266,9 +267,10 @@ pub(super) async fn fire_workflow<R: Runtime>(
         Ok(list) => match list.into_iter().find(|w| w.id == rec.target_id) {
             Some(wf) => wf,
             None => {
-                eprintln!(
-                    "scheduler: schedule {} references missing workflow {}",
-                    rec.id, rec.target_id
+                tracing::error!(
+                    schedule_id = %rec.id,
+                    target_id = %rec.target_id,
+                    "scheduler: schedule references missing workflow"
                 );
                 return CommandFire {
                     status: FireStatus::Error,
@@ -277,9 +279,9 @@ pub(super) async fn fire_workflow<R: Runtime>(
             }
         },
         Err(e) => {
-            eprintln!(
-                "scheduler: failed to load workflows for schedule {}: {e}",
-                rec.id
+            tracing::error!(
+                schedule_id = %rec.id,
+                "scheduler: failed to load workflows for schedule: {e}"
             );
             return CommandFire {
                 status: FireStatus::Error,
@@ -291,9 +293,9 @@ pub(super) async fn fire_workflow<R: Runtime>(
     let all_commands = match storage_commands::list_all(pool).await {
         Ok(list) => list,
         Err(e) => {
-            eprintln!(
-                "scheduler: failed to load commands for schedule {}: {e}",
-                rec.id
+            tracing::error!(
+                schedule_id = %rec.id,
+                "scheduler: failed to load commands for schedule: {e}"
             );
             return CommandFire {
                 status: FireStatus::Error,
@@ -364,17 +366,18 @@ async fn fire_workflow_streaming<R: Runtime>(
         Ok(list) => match list.into_iter().find(|w| w.id == rec.target_id) {
             Some(wf) => wf,
             None => {
-                eprintln!(
-                    "scheduler: schedule {} references missing workflow {}",
-                    rec.id, rec.target_id
+                tracing::error!(
+                    schedule_id = %rec.id,
+                    target_id = %rec.target_id,
+                    "scheduler: schedule references missing workflow"
                 );
                 return FireStatus::Error;
             }
         },
         Err(e) => {
-            eprintln!(
-                "scheduler: failed to load workflows for schedule {}: {e}",
-                rec.id
+            tracing::error!(
+                schedule_id = %rec.id,
+                "scheduler: failed to load workflows for schedule: {e}"
             );
             return FireStatus::Error;
         }
@@ -383,9 +386,9 @@ async fn fire_workflow_streaming<R: Runtime>(
     let all_commands = match storage_commands::list_all(pool).await {
         Ok(list) => list,
         Err(e) => {
-            eprintln!(
-                "scheduler: failed to load commands for schedule {}: {e}",
-                rec.id
+            tracing::error!(
+                schedule_id = %rec.id,
+                "scheduler: failed to load commands for schedule: {e}"
             );
             return FireStatus::Error;
         }
@@ -411,9 +414,9 @@ async fn fire_workflow_streaming<R: Runtime>(
     {
         Ok(_run_id) => FireStatus::Success,
         Err(e) => {
-            eprintln!(
-                "scheduler: workflow launch failed for schedule {}: {e}",
-                rec.id
+            tracing::error!(
+                schedule_id = %rec.id,
+                "scheduler: workflow launch failed for schedule: {e}"
             );
             FireStatus::Error
         }
@@ -480,12 +483,11 @@ fn workflow_variable_values(
     out
 }
 
-/// Load a single command by id (the storage layer exposes only `list_all`, so
-/// we filter — schedules are few and fires are infrequent, so the cost is
-/// negligible and we avoid widening the storage API surface).
+/// Load a single command by id via a targeted point lookup
+/// ([`storage_commands::find_by_id`]). Returns `Ok(None)` when the command
+/// does not exist.
 pub(super) async fn load_command(pool: &DbPool, id: &str) -> Result<Option<CommandRecord>, String> {
-    let all = storage_commands::list_all(pool).await?;
-    Ok(all.into_iter().find(|c| c.id == id))
+    storage_commands::find_by_id(pool, id).await
 }
 
 /// Persist the fire outcome: record a `scheduledRun` history event (the
@@ -518,18 +520,18 @@ pub(super) async fn record_outcome(
         },
     };
     if let Err(e) = storage_history::insert_event(pool, &event).await {
-        eprintln!(
-            "scheduler: failed to record history for schedule {}: {e}",
-            rec.id
+        tracing::error!(
+            schedule_id = %rec.id,
+            "scheduler: failed to record history for schedule: {e}"
         );
     }
 
     if let Err(e) =
         storage_schedules::record_run(pool, &rec.id, now_iso, status.as_str(), next_run).await
     {
-        eprintln!(
-            "scheduler: failed to record run for schedule {}: {e}",
-            rec.id
+        tracing::error!(
+            schedule_id = %rec.id,
+            "scheduler: failed to record run for schedule: {e}"
         );
     }
 }
@@ -562,9 +564,9 @@ async fn record_history_only(
         },
     };
     if let Err(e) = storage_history::insert_event(pool, &event).await {
-        eprintln!(
-            "scheduler: failed to record manual-run history for schedule {}: {e}",
-            rec.id
+        tracing::error!(
+            schedule_id = %rec.id,
+            "scheduler: failed to record manual-run history for schedule: {e}"
         );
     }
 }
@@ -603,9 +605,9 @@ pub async fn run_now<R: Runtime>(
             (status, CommandFireResult::default())
         }
         other => {
-            eprintln!(
-                "scheduler: manual run of schedule {} has unknown target_kind {other}",
-                rec.id
+            tracing::error!(
+                schedule_id = %rec.id,
+                "scheduler: manual run of schedule has unknown target_kind {other}"
             );
             (FireStatus::Error, CommandFireResult::default())
         }

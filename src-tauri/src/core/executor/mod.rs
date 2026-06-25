@@ -49,7 +49,7 @@ use waiter::WaiterCtx;
 /// on) a transport error. Shared by the streaming readers and the waiter.
 pub(crate) fn emit_event<R: Runtime>(app: &AppHandle<R>, event: &ExecutionEvent) {
     if let Err(err) = app.emit(EXECUTION_EVENT, event) {
-        eprintln!("failed to emit execution event: {}", err);
+        tracing::error!("failed to emit execution event: {err}");
     }
 }
 

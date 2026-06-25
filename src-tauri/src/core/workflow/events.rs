@@ -78,7 +78,7 @@ pub enum WorkflowEvent {
 
 pub(super) fn emit<R: Runtime>(app: &AppHandle<R>, event: &WorkflowEvent) {
     if let Err(err) = app.emit(WORKFLOW_EVENT, event) {
-        eprintln!("failed to emit workflow event: {err}");
+        tracing::error!("failed to emit workflow event: {err}");
     }
 }
 

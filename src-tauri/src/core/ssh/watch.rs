@@ -167,7 +167,7 @@ pub fn spawn_ssh_config_watch<R: Runtime>(app: AppHandle<R>) {
             // Notify the UI to refresh regardless of whether anything was
             // logged (the inventory may have changed in ways we don't log).
             if let Err(e) = app.emit(SSH_CONFIG_CHANGED, ()) {
-                eprintln!("ssh watch: failed to emit change event: {e}");
+                tracing::error!("ssh watch: failed to emit change event: {e}");
             }
         }
     });

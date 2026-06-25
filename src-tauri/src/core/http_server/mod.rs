@@ -114,7 +114,7 @@ pub async fn start<R: Runtime>(
             shutdown_task.notified().await;
         });
         if let Err(e) = server.await {
-            eprintln!("http_server: serve error: {e}");
+            tracing::error!("http_server: serve error: {e}");
         }
     });
 
@@ -151,7 +151,7 @@ pub async fn autostart_if_enabled<R: Runtime>(app: &AppHandle<R>, state: &Arc<Ht
     let config = match http_server::load(&pool).await {
         Ok(cfg) => cfg,
         Err(e) => {
-            eprintln!("http_server: failed to load config on startup: {e}");
+            tracing::error!("http_server: failed to load config on startup: {e}");
             return;
         }
     };
@@ -159,6 +159,6 @@ pub async fn autostart_if_enabled<R: Runtime>(app: &AppHandle<R>, state: &Arc<Ht
         return;
     }
     if let Err(e) = start(app, state, config).await {
-        eprintln!("http_server: autostart failed: {e}");
+        tracing::error!("http_server: autostart failed: {e}");
     }
 }

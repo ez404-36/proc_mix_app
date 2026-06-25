@@ -472,9 +472,9 @@ async fn record_command_run_started(pool: &DbPool, cmd: &CommandRecord, executio
         },
     };
     if let Err(e) = storage_history::insert_event(pool, &event).await {
-        eprintln!(
-            "http_server: failed to record run history for {}: {e}",
-            cmd.id
+        tracing::error!(
+            command_id = %cmd.id,
+            "http_server: failed to record run history: {e}"
         );
     }
 }
@@ -525,7 +525,10 @@ async fn finalize_command_run(pool: &DbPool, execution_id: &str, outcome: &NodeO
     )
     .await
     {
-        eprintln!("http_server: failed to finalize command run {execution_id}: {e}");
+        tracing::error!(
+            execution_id = %execution_id,
+            "http_server: failed to finalize command run: {e}"
+        );
     }
 }
 
@@ -548,9 +551,9 @@ async fn record_workflow_run_started(pool: &DbPool, wf: &WorkflowRecord, executi
         },
     };
     if let Err(e) = storage_history::insert_event(pool, &event).await {
-        eprintln!(
-            "http_server: failed to record workflow run history for {}: {e}",
-            wf.id
+        tracing::error!(
+            workflow_id = %wf.id,
+            "http_server: failed to record workflow run history: {e}"
         );
     }
 }
@@ -603,7 +606,10 @@ async fn finalize_workflow_run(
     )
     .await
     {
-        eprintln!("http_server: failed to finalize workflow run {execution_id}: {e}");
+        tracing::error!(
+            execution_id = %execution_id,
+            "http_server: failed to finalize workflow run: {e}"
+        );
     }
 }
 

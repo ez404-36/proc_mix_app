@@ -1131,7 +1131,7 @@ pub async fn redact_sensitive_history_defaults(pool: &DbPool) -> Result<u64, Str
             .map_err(|e| format!("read payload_json: {e}"))?;
 
         let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&payload_json) else {
-            eprintln!("history: skipping undecodable payload for event {id}");
+            tracing::warn!(event_id = %id, "history: skipping undecodable payload for event");
             continue;
         };
 

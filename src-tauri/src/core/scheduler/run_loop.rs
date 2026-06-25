@@ -62,7 +62,7 @@ async fn run_loop<R: Runtime>(
     // display value is accurate and the loop's first tick does not re-fire a
     // just-replayed occurrence.
     if let Err(e) = recompute_all_next_runs(&pool).await {
-        eprintln!("scheduler: failed to recompute next runs on startup: {e}");
+        tracing::error!("scheduler: failed to recompute next runs on startup: {e}");
     }
 
     loop {
@@ -70,7 +70,7 @@ async fn run_loop<R: Runtime>(
         let schedules = match storage_schedules::list_all(&pool).await {
             Ok(list) => list,
             Err(e) => {
-                eprintln!("scheduler: failed to list schedules: {e}");
+                tracing::error!("scheduler: failed to list schedules: {e}");
                 // Back off briefly, then retry rather than spinning.
                 tokio::time::sleep(std::time::Duration::from_secs(MAX_SLEEP_SECS)).await;
                 continue;
@@ -134,7 +134,10 @@ async fn run_loop<R: Runtime>(
             if let Err(e) =
                 storage_schedules::set_next_run(&pool, &rec.id, next_run.as_deref()).await
             {
-                eprintln!("scheduler: failed to advance next_run for {}: {e}", rec.id);
+                tracing::error!(
+                    schedule_id = %rec.id,
+                    "scheduler: failed to advance next_run: {e}"
+                );
             }
 
             let app = app.clone();
@@ -258,7 +261,7 @@ async fn catch_up_on_startup<R: Runtime>(
     let schedules = match storage_schedules::list_all(pool).await {
         Ok(list) => list,
         Err(e) => {
-            eprintln!("scheduler: catch-up failed to list schedules: {e}");
+            tracing::error!("scheduler: catch-up failed to list schedules: {e}");
             return;
         }
     };

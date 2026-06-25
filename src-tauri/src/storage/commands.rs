@@ -636,6 +636,31 @@ pub async fn find_by_api_ref(
     }
 }
 
+/// Load a single command by its primary-key `id`. Returns `Ok(None)` when no
+/// row matches. A targeted point lookup used by the scheduler's fire path
+/// instead of loading the whole table to find one command.
+pub async fn find_by_id(pool: &DbPool, id: &str) -> Result<Option<CommandRecord>, String> {
+    let row = sqlx::query(
+        "SELECT id, name, name_key, description, description_key, icon, script, shell, \
+                args_json, working_dir, env_json, tags_json, category_id, favorite, \
+                created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
+                timeout_seconds, output_schema, scope, workflow_id, target, \
+                api_slug, api_enabled \
+         FROM commands \
+         WHERE id = ? \
+         LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(pool.as_ref())
+    .await
+    .map_err(|e| format!("find_by_id: {e}"))?;
+
+    match row {
+        Some(row) => Ok(Some(row_to_record(row)?)),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod wire_format_tests {
     use super::*;
@@ -1331,5 +1356,25 @@ mod sqlite_integration_tests {
             .await
             .unwrap();
         assert_eq!(list_all(&pool).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn find_by_id_returns_inserted_record() {
+        let pool = make_pool().await;
+        let rec = fixture("target", true);
+        upsert(&pool, &rec).await.unwrap();
+
+        let found = find_by_id(&pool, "target").await.unwrap();
+        assert_eq!(found, Some(rec));
+    }
+
+    #[tokio::test]
+    async fn find_by_id_returns_none_for_missing_id() {
+        let pool = make_pool().await;
+        // Another command exists, but not the one we ask for.
+        upsert(&pool, &fixture("present", false)).await.unwrap();
+
+        let found = find_by_id(&pool, "does-not-exist").await.unwrap();
+        assert!(found.is_none());
     }
 }

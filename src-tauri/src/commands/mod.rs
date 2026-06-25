@@ -1323,7 +1323,7 @@ pub async fn check_ssh_host(
         crate::storage::ssh_host_meta::record_check(pool.inner(), &host_key, result.reachable, &at)
             .await
     {
-        eprintln!("ssh: failed to persist check for {host_key}: {e}");
+        tracing::error!("ssh: failed to persist check for {host_key}: {e}");
     }
 
     Ok(result)
