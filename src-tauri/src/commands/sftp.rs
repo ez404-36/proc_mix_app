@@ -118,6 +118,9 @@ pub async fn sftp_mkdir(app: AppHandle, alias: String, path: String) -> Result<(
 /// sorts (dirs first, then by name).
 #[tauri::command]
 pub async fn list_local_dir(path: String) -> Result<LocalListing, String> {
+    if !sftp::is_safe_local_path(&path) {
+        return Err(sftp::SftpError::InvalidLocalPath.to_string());
+    }
     // `std::fs::read_dir` is blocking; run it off the async runtime so a slow
     // disk can't stall other IPC handlers.
     tokio::task::spawn_blocking(move || read_local_dir(&path))
@@ -135,6 +138,15 @@ pub async fn list_local_dir(path: String) -> Result<LocalListing, String> {
 /// from the file manager; a file uses `remove_file`.
 #[tauri::command]
 pub async fn local_delete(path: String, is_dir: bool) -> Result<(), String> {
+    if !sftp::is_safe_local_path(&path) {
+        return Err(sftp::SftpError::InvalidLocalPath.to_string());
+    }
+    // A recursive `remove_dir_all` on a filesystem/user root would be
+    // catastrophic; refuse the obviously dangerous targets up front. A child of
+    // the home dir (or any other path) is still allowed.
+    if is_dir && sftp::is_root_delete_target(&path) {
+        return Err(sftp::SftpError::RefusedRootDelete.to_string());
+    }
     tokio::task::spawn_blocking(move || {
         let result = if is_dir {
             std::fs::remove_dir_all(&path)
@@ -156,6 +168,9 @@ pub async fn local_delete(path: String, is_dir: bool) -> Result<(), String> {
 /// falling back to a copy).
 #[tauri::command]
 pub async fn local_rename(from: String, to: String) -> Result<(), String> {
+    if !sftp::is_safe_local_path(&from) || !sftp::is_safe_local_path(&to) {
+        return Err(sftp::SftpError::InvalidLocalPath.to_string());
+    }
     tokio::task::spawn_blocking(move || {
         std::fs::rename(&from, &to).map_err(|e| sftp::SftpError::LocalIo(e.to_string()))
     })
@@ -171,6 +186,9 @@ pub async fn local_rename(from: String, to: String) -> Result<(), String> {
 /// caller passed a path whose parent is missing.
 #[tauri::command]
 pub async fn local_mkdir(path: String) -> Result<(), String> {
+    if !sftp::is_safe_local_path(&path) {
+        return Err(sftp::SftpError::InvalidLocalPath.to_string());
+    }
     tokio::task::spawn_blocking(move || {
         std::fs::create_dir(&path).map_err(|e| sftp::SftpError::LocalIo(e.to_string()))
     })

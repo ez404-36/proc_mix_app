@@ -12,10 +12,12 @@
 // `workflowActions` wrappers, so each imported entry is logged as a
 // `commandCreated` / `workflowCreated` event, exactly like a manual create.
 
-import { createCommand, updateCommand } from "./commandActions";
-import { createWorkflow } from "./workflowActions";
-import { useCommandStore } from "../stores/commandStore";
-import { useWorkflowStore } from "../stores/workflowStore";
+import {
+  createCommand,
+  existingCommandApiSlugs,
+  updateCommand,
+} from "./commandActions";
+import { createWorkflow, existingWorkflowApiSlugs } from "./workflowActions";
 import type {
   ExportedCommand,
   ExportedWorkflow,
@@ -212,19 +214,10 @@ export function applyImport(
 
   // API slugs already in use, per type (separate namespaces). A colliding
   // imported slug is cleared so the backend's unique-slug index never rejects
-  // the import. Read once up front from the live stores.
-  const existingCommandSlugs = new Set<string>(
-    useCommandStore
-      .getState()
-      .commands.map((c) => c.apiSlug)
-      .filter((s): s is string => s !== undefined),
-  );
-  const existingWorkflowSlugs = new Set<string>(
-    useWorkflowStore
-      .getState()
-      .workflows.map((w) => w.apiSlug)
-      .filter((s): s is string => s !== undefined),
-  );
+  // the import. Read once up front through the actions facade (which owns the
+  // store access) so this service stays free of direct store imports.
+  const existingCommandSlugs = existingCommandApiSlugs();
+  const existingWorkflowSlugs = existingWorkflowApiSlugs();
   let clearedApiSlugs = 0;
 
   const commandIdMap = new Map<string, string>();

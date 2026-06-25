@@ -53,7 +53,7 @@ import { ListControls } from "../ListControls/ListControls";
 import type { SortOption } from "../ListControls/ListControls";
 import { Pagination } from "../Pagination/Pagination";
 import { ChevronIcon, PlusIcon, RunIcon, ViewIcon } from "../icons";
-import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
+import { TargetBadge } from "../TargetBadge";
 /**
  * Workflows are user-authored, so their `name`/`description` are not run
  * through the seed-localization helper that commands use — they are shown
@@ -272,9 +272,7 @@ function CommandCard({
         )}
       </div>
       <div className="list-tile__meta">
-        {isRemoteTarget(cmd.target) ? (
-          <span className="target-badge">{formatTargetBadge(cmd.target, t)}</span>
-        ) : null}
+        <TargetBadge target={cmd.target} />
         {cmd.shell ? <span className="shell-badge">{cmd.shell}</span> : null}
         {!hideCategory &&
         cmd.categoryId !== undefined &&

@@ -31,7 +31,8 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::core::executor::{
-    self, CapturedLine, CapturedStream, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus,
+    self, CapturedLine, CapturedStream, ExecuteRequest, ExecutorState, NodeOutcome, RunOptions,
+    TerminalStatus,
 };
 use crate::core::extractor::{self, ExtractedOutput};
 use crate::core::workflow_condition::{self, EvalContext};
@@ -309,86 +310,6 @@ fn emit_unless_silent<R: Runtime>(app: &AppHandle<R>, silent: bool, event: &Work
     }
 }
 
-/// Build an `ExecuteRequest` for a `command` node from its resolved
-/// `CommandRecord`. Mirrors the JS-side request assembly in
-/// `src/utils/executor.ts` (shell, args, working dir, env, variables,
-/// elevated flag) so a node runs identically to a direct library run.
-///
-/// `execution_id` is supplied by the runner so it can correlate the
-/// `nodeStarted` event with the underlying `execution-event` stream.
-///
-/// `variable_values` carries the per-node values the command layer
-/// collected on the frontend (`triggerWorkflowRun` →
-/// `resolveVariableValues`, which merges spec defaults and prompts the
-/// user for any no-default variable). The executor still falls back to
-/// each spec's `default_value` for any variable not present in this map,
-/// so a node with all-defaulted variables works with an empty map. A
-/// variable with neither a supplied value nor a default makes the
-/// executor return a typed `missingVariable` error, which the runner
-/// surfaces as a node spawn failure — a genuine misconfiguration.
-fn build_request(
-    cmd: &CommandRecord,
-    execution_id: String,
-    workflow_run_id: String,
-    variable_values: BTreeMap<String, String>,
-    silent: bool,
-    capture_output: bool,
-) -> ExecuteRequest {
-    let env = cmd
-        .env
-        .as_ref()
-        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
-    ExecuteRequest {
-        script: cmd.script.clone(),
-        shell: cmd.shell.clone(),
-        args: cmd.args.clone(),
-        working_dir: cmd.working_dir.as_ref().map(Into::into),
-        env,
-        command_id: Some(cmd.id.clone()),
-        execution_id: Some(execution_id),
-        // Resolve elevation like the UI/library path (`executor.ts`): the
-        // persisted flag OR a script whose LEADING command is an inline-
-        // escalation tool. A workflow node is spawned by the backend
-        // runner (no UI elevation resolution), so without this a `sudo …`
-        // node with `run_as_admin = false` runs on the non-elevated path
-        // and the inline sudo dies with "a terminal is required to read the
-        // password". Keychain fallback applies (`admin_password: None`).
-        elevated: cmd.run_as_admin
-            || crate::core::utility_help::detect_admin_escalation(&cmd.script),
-        admin_password: None,
-        variables: cmd.variables.clone(),
-        variable_values,
-        // Tag the node's execution with the workflow run id so every
-        // `execution-event` it emits routes into the aggregated workflow
-        // process on the frontend instead of a standalone terminal entry.
-        workflow_run_id: Some(workflow_run_id),
-        timeout_seconds: cmd.timeout_seconds,
-        // Forward the command's output schema so the executor extracts the
-        // node's stdout and reports the structured fields back via the
-        // completion channel — the runner threads them into the next
-        // node's variable values (data-flow).
-        output_schema: cmd.output_schema.clone(),
-        // A streaming run (live UI) builds the aggregate console from the
-        // per-node `execution-event`s and needs no per-node buffer. A
-        // scheduled fire has no UI, so it asks each node to buffer its output
-        // and the traversal assembles the aggregate log for history.
-        capture_output,
-        // A SILENT (planned) workflow fire suppresses every node's
-        // `execution-event` too — without this, a planned fire would still
-        // stream each node's stdout to the live console even though the
-        // workflow-level events are suppressed.
-        silent,
-        // A workflow node inherits its command's target, so a remote-targeted
-        // command runs over SSH whether invoked directly or as a workflow step.
-        // `unwrap_or_default()` maps a command with no stored target to `Local`.
-        target: cmd.target.clone().unwrap_or_default(),
-        // A workflow node runs without an interactive password prompt, so a
-        // remote-targeted node must use key/agent auth (remote password auth is
-        // interactive-prompt-only).
-        ssh_password: None,
-    }
-}
-
 /// Locate the single start node, returning its index in `nodes`.
 fn find_start(nodes: &[WorkflowNodeRecord]) -> Result<usize, WorkflowError> {
     let mut found: Option<usize> = None;
@@ -552,13 +473,24 @@ async fn run_command_node<R: Runtime>(
         },
     );
 
-    let req = build_request(
+    // A workflow node mirrors a direct library run, but tags every
+    // `execution-event` with the workflow run id so the frontend routes the
+    // node's output into the aggregated workflow process instead of a
+    // standalone terminal entry. A streaming run (live UI) builds the
+    // aggregate console from those events and needs no per-node buffer; a
+    // scheduled fire has no UI, so it asks each node to buffer its output and
+    // the traversal assembles the aggregate log for history. A SILENT
+    // (planned) fire also suppresses each node's `execution-event`s.
+    let req = ExecuteRequest::for_command(
         cmd,
-        execution_id.clone(),
-        ctx.run_id.to_string(),
-        variable_values,
-        ctx.silent,
-        ctx.capture_output,
+        RunOptions {
+            execution_id: execution_id.clone(),
+            variable_values,
+            workflow_run_id: Some(ctx.run_id.to_string()),
+            timeout_override: None,
+            capture_output: ctx.capture_output,
+            silent: ctx.silent,
+        },
     );
     executor::spawn_execution_with_completion(app.clone(), executor_state.clone(), req, Some(tx))
         .await

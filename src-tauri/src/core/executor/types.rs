@@ -17,7 +17,7 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::core::extractor::ExtractedOutput;
 use crate::core::parser::ParseError;
-use crate::storage::commands::{OutputSchemaRecord, VariableSpec};
+use crate::storage::commands::{CommandRecord, OutputSchemaRecord, VariableSpec};
 
 pub const EXECUTION_EVENT: &str = "execution-event";
 
@@ -341,6 +341,88 @@ impl std::fmt::Debug for ExecuteRequest {
             .field("target", &self.target)
             .field("ssh_password", &ssh_password)
             .finish()
+    }
+}
+
+/// Per-call-site knobs for [`ExecuteRequest::for_command`]. Carries ONLY the
+/// values that genuinely differ between the three backend run paths (workflow
+/// node, scheduled fire, HTTP-API run); every security-sensitive default
+/// (elevation detection, `admin_password`/`ssh_password = None`, the command's
+/// saved target) is derived from the `CommandRecord` by the constructor, so it
+/// cannot drift across call sites.
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    /// Client-supplied execution id used verbatim for the spawned run, so the
+    /// caller can register state keyed on it before invoking.
+    pub execution_id: String,
+    /// Per-run variable values (prompt results merged with caller values).
+    pub variable_values: BTreeMap<String, String>,
+    /// Set ONLY when the run is a node within a workflow run, so every emitted
+    /// `execution-event` routes into the aggregated workflow process. `None`
+    /// for a standalone command run (scheduler / HTTP API).
+    pub workflow_run_id: Option<String>,
+    /// When `Some`, overrides the command's own `timeout_seconds` (used by the
+    /// scheduler's per-run timeout). `None` falls back to `cmd.timeout_seconds`.
+    pub timeout_override: Option<u64>,
+    /// Buffer every stdout/stderr line for history persistence.
+    pub capture_output: bool,
+    /// Suppress every `execution-event` (planned/cron fire) — the history
+    /// record is the source of truth for such runs.
+    pub silent: bool,
+}
+
+impl ExecuteRequest {
+    /// Build an `ExecuteRequest` for a backend-initiated run of `cmd`, applying
+    /// the per-call-site knobs in `opts`. This is the single, authoritative
+    /// builder shared by the workflow runner, the scheduler, and the HTTP-API
+    /// handler — previously three near-identical copies that risked drifting on
+    /// the security-sensitive defaults.
+    ///
+    /// Behaviour mirrors the UI/library request assembly in
+    /// `src/utils/executor.ts` (shell, args, working dir, env, variables,
+    /// elevated flag) so a backend run behaves identically to a direct library
+    /// run.
+    ///
+    /// Security-critical defaults (kept byte-for-byte identical to the previous
+    /// three copies):
+    /// - `elevated`: the persisted `run_as_admin` flag OR a script whose LEADING
+    ///   command is an inline-escalation tool (`sudo`/`doas`/`pkexec`). Without
+    ///   the inline detection a `sudo …` script with `run_as_admin = false` runs
+    ///   on the non-elevated path and the inline sudo dies needing a TTY.
+    /// - `admin_password: None`: a backend run has no UI to prompt, so the
+    ///   executor falls back to the OS keychain (surfacing the typed
+    ///   `ADMIN_PASSWORD_REQUIRED` sentinel when empty).
+    /// - `ssh_password: None`: a headless backend run cannot prompt for an SSH
+    ///   password (remote password auth is interactive-prompt-only), so a
+    ///   remote-targeted command must use key/agent auth.
+    /// - `target`: the command's saved target; `unwrap_or_default()` maps a
+    ///   record with no stored target (legacy rows) to `Local`.
+    pub fn for_command(cmd: &CommandRecord, opts: RunOptions) -> Self {
+        let env = cmd
+            .env
+            .as_ref()
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+        ExecuteRequest {
+            script: cmd.script.clone(),
+            shell: cmd.shell.clone(),
+            args: cmd.args.clone(),
+            working_dir: cmd.working_dir.as_ref().map(Into::into),
+            env,
+            command_id: Some(cmd.id.clone()),
+            execution_id: Some(opts.execution_id),
+            elevated: cmd.run_as_admin
+                || crate::core::utility_help::detect_admin_escalation(&cmd.script),
+            admin_password: None,
+            variables: cmd.variables.clone(),
+            variable_values: opts.variable_values,
+            workflow_run_id: opts.workflow_run_id,
+            timeout_seconds: opts.timeout_override.or(cmd.timeout_seconds),
+            output_schema: cmd.output_schema.clone(),
+            capture_output: opts.capture_output,
+            silent: opts.silent,
+            target: cmd.target.clone().unwrap_or_default(),
+            ssh_password: None,
+        }
     }
 }
 

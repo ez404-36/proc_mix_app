@@ -40,6 +40,20 @@ export interface EnvRow {
   value: string;
 }
 
+/**
+ * The command form's four tabs. `main` holds metadata + execution settings,
+ * `script` the script editor and variables, `output` the output schema,
+ * `env` the per-command environment variable overrides.
+ */
+export type FormTab = 'main' | 'script' | 'output' | 'env';
+
+export interface FormErrors {
+  name?: string;
+  script?: string;
+  /** Set when the API slug is malformed or collides with another command. */
+  apiSlug?: string;
+}
+
 export interface FormState {
   name: string;
   description: string;

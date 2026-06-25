@@ -9,6 +9,7 @@ import {
 } from "../../utils/commandLabels";
 import { CancelIcon, EditIcon, RunIcon, TrashIcon } from "../icons";
 import { IdBadge } from "../IdBadge";
+import { TargetBadge } from "../TargetBadge";
 import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 
 interface CommandViewProps {
@@ -83,11 +84,7 @@ export function CommandView({
             <IdBadge id={command.id} />
           </div>
           <div className="list-tile__meta">
-            {isRemoteTarget(command.target) ? (
-              <span className="target-badge">
-                {formatTargetBadge(command.target, t)}
-              </span>
-            ) : null}
+            <TargetBadge target={command.target} />
             {command.shell ? (
               <span className="shell-badge">{command.shell}</span>
             ) : null}

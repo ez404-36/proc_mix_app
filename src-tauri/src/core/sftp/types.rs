@@ -112,6 +112,14 @@ pub enum SftpError {
     /// download target directory).
     #[error("local io error: {0}")]
     LocalIo(String),
+    /// A local path argument failed [`is_safe_local_path`] (empty or contains
+    /// a NUL/control character).
+    #[error("invalid local path")]
+    InvalidLocalPath,
+    /// A local delete target is a filesystem/user root (`/`, the OS home root,
+    /// or a drive root) and is refused as obviously dangerous.
+    #[error("refusing to delete a root directory")]
+    RefusedRootDelete,
     /// The operation exceeded its wall-clock budget.
     #[error("sftp timed out")]
     Timeout,
@@ -144,6 +152,68 @@ pub fn is_safe_remote_path(path: &str) -> bool {
         return false;
     }
     !path.chars().any(|c| c == '\0' || c.is_ascii_control())
+}
+
+/// `true` when `path` is acceptable as a LOCAL filesystem path argument for the
+/// left-pane file operations (`list_local_dir`, `local_delete`, `local_rename`,
+/// `local_mkdir`).
+///
+/// These ops are reachable ONLY from the trusted local Tauri frontend (they are
+/// Tauri `invoke` commands, never registered as HTTP handlers), so this is a
+/// defence-in-depth sanity check rather than a sandbox. It rejects:
+///   - the empty string; and
+///   - any NUL or ASCII control character (a stray NUL truncates the path at the
+///     syscall boundary; control characters never appear in a legitimate path
+///     typed by the file manager).
+///
+/// It deliberately does NOT canonicalize or confine the path — the local pane is
+/// meant to browse the whole filesystem with the app's own privileges.
+pub fn is_safe_local_path(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    !path.chars().any(|c| c == '\0' || c.is_ascii_control())
+}
+
+/// `true` when `path` points at a filesystem or user root that a recursive
+/// delete must refuse, regardless of platform:
+///   - the Unix filesystem root `/`;
+///   - the current user's home directory itself (deleting the whole home from a
+///     file manager is never the intent — deleting a child of it is fine);
+///   - a Windows drive root (`C:\`, `C:/`, or a bare `C:`).
+///
+/// The comparison trims a single trailing separator so `"/home/u"` and
+/// `"/home/u/"` are treated alike. This is a blocklist of *obviously* dangerous
+/// targets, not a confinement boundary.
+pub fn is_root_delete_target(path: &str) -> bool {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+
+    // Unix/posix root: the path was only separators (e.g. "/", "///").
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    // Windows drive root: "C:", "C:\", "C:/" — after trimming separators the
+    // remainder is a single drive letter followed by a colon.
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() == 2 && chars[0].is_ascii_alphabetic() && chars[1] == ':' {
+        return true;
+    }
+
+    // The user's home directory itself.
+    #[allow(deprecated)]
+    if let Some(home) = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+    {
+        let home_str = home.to_string_lossy();
+        let home_trimmed = home_str.trim_end_matches(['/', '\\']);
+        if !home_trimmed.is_empty() && trimmed == home_trimmed {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -198,6 +268,71 @@ mod tests {
     fn rejects_control_chars_and_nul() {
         for p in ["a\nb", "a\rb", "a\tb", "a\0b", "line1\nrm everything"] {
             assert!(!is_safe_remote_path(p), "should reject {p:?}");
+        }
+    }
+
+    #[test]
+    fn local_path_accepts_realistic_paths() {
+        for p in [
+            "/home/user",
+            "/home/user/Documents/file.txt",
+            "C:\\Users\\me\\file.txt",
+            "relative/dir",
+            "/data/файлы/отчёт.txt",
+            "/weird/it's a file.txt",
+            ".",
+            "..",
+        ] {
+            assert!(is_safe_local_path(p), "should accept {p:?}");
+        }
+    }
+
+    #[test]
+    fn local_path_rejects_empty_and_control_chars() {
+        assert!(!is_safe_local_path(""));
+        for p in ["a\nb", "a\rb", "a\0b", "a\tb"] {
+            assert!(!is_safe_local_path(p), "should reject {p:?}");
+        }
+    }
+
+    #[test]
+    fn root_delete_target_flags_filesystem_root() {
+        for p in ["/", "//", "///"] {
+            assert!(is_root_delete_target(p), "should flag {p:?}");
+        }
+    }
+
+    #[test]
+    fn root_delete_target_flags_windows_drive_root() {
+        for p in ["C:", "C:\\", "C:/", "d:", "Z:\\"] {
+            assert!(is_root_delete_target(p), "should flag {p:?}");
+        }
+    }
+
+    #[test]
+    fn root_delete_target_allows_child_paths() {
+        for p in [
+            "/home/user/Documents",
+            "/var/log",
+            "C:\\Users\\me",
+            "/tmp/scratch/",
+            "relative/dir",
+        ] {
+            assert!(!is_root_delete_target(p), "should allow {p:?}");
+        }
+    }
+
+    #[test]
+    fn root_delete_target_flags_home_root_only() {
+        // Drive the check deterministically via $HOME.
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", "/home/tester");
+        assert!(is_root_delete_target("/home/tester"));
+        assert!(is_root_delete_target("/home/tester/")); // trailing slash
+        assert!(!is_root_delete_target("/home/tester/Documents"));
+        match prev {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
         }
     }
 

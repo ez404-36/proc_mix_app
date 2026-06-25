@@ -19,38 +19,32 @@ import type {
   ScheduleTargetKind,
   ScheduleVariableValues,
 } from "../types";
+import {
+  makeEnumGuard,
+  nullToUndef,
+  undefToNull,
+} from "./repositoryHelpers";
 
-const KNOWN_TARGET_KINDS: ReadonlySet<ScheduleTargetKind> =
-  new Set<ScheduleTargetKind>(["command", "workflow"]);
+const isTargetKind = makeEnumGuard<ScheduleTargetKind>(["command", "workflow"]);
 
-function isTargetKind(value: string): value is ScheduleTargetKind {
-  return KNOWN_TARGET_KINDS.has(value as ScheduleTargetKind);
-}
-
-const KNOWN_RUN_STATUSES: ReadonlySet<ScheduleRunStatus> =
-  new Set<ScheduleRunStatus>([
-    "success",
-    "error",
-    "cancelled",
-    "missingVariable",
-    "skipped",
-  ]);
+const isRunStatus = makeEnumGuard<ScheduleRunStatus>([
+  "success",
+  "error",
+  "cancelled",
+  "missingVariable",
+  "skipped",
+]);
 
 function toRunStatus(value: string | null): ScheduleRunStatus | undefined {
   if (value === null) return undefined;
-  return KNOWN_RUN_STATUSES.has(value as ScheduleRunStatus)
-    ? (value as ScheduleRunStatus)
-    : undefined;
+  return isRunStatus(value) ? value : undefined;
 }
 
-const KNOWN_CATCH_UP_POLICIES: ReadonlySet<CatchUpPolicy> =
-  new Set<CatchUpPolicy>(["none", "once", "all"]);
+const isCatchUpPolicy = makeEnumGuard<CatchUpPolicy>(["none", "once", "all"]);
 
 /** Narrow a free-form policy string; an unknown value falls back to "none". */
 function toCatchUpPolicy(value: string): CatchUpPolicy {
-  return KNOWN_CATCH_UP_POLICIES.has(value as CatchUpPolicy)
-    ? (value as CatchUpPolicy)
-    : "none";
+  return isCatchUpPolicy(value) ? value : "none";
 }
 
 /**
@@ -93,13 +87,13 @@ export function scheduleToRecord(s: Schedule): ScheduleRecord {
     skipIfRunning: s.skipIfRunning,
     captureOutput: s.captureOutput,
     catchUpPolicy: s.catchUpPolicy,
-    timeoutSeconds: s.timeoutSeconds ?? null,
+    timeoutSeconds: undefToNull(s.timeoutSeconds),
     maxRetries: s.maxRetries,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
-    lastRunAt: s.lastRunAt ?? null,
-    lastRunStatus: s.lastRunStatus ?? null,
-    nextRunAt: s.nextRunAt ?? null,
+    lastRunAt: undefToNull(s.lastRunAt),
+    lastRunStatus: undefToNull(s.lastRunStatus),
+    nextRunAt: undefToNull(s.nextRunAt),
     runCount: s.runCount,
   };
 }
@@ -121,13 +115,13 @@ export function recordToSchedule(r: ScheduleRecord): Schedule {
     skipIfRunning: r.skipIfRunning,
     captureOutput: r.captureOutput,
     catchUpPolicy: toCatchUpPolicy(r.catchUpPolicy),
-    timeoutSeconds: r.timeoutSeconds ?? undefined,
+    timeoutSeconds: nullToUndef(r.timeoutSeconds),
     maxRetries: r.maxRetries,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
-    lastRunAt: r.lastRunAt ?? undefined,
+    lastRunAt: nullToUndef(r.lastRunAt),
     lastRunStatus: toRunStatus(r.lastRunStatus),
-    nextRunAt: r.nextRunAt ?? undefined,
+    nextRunAt: nullToUndef(r.nextRunAt),
     runCount: r.runCount,
   };
 }

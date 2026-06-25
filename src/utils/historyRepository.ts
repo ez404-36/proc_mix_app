@@ -40,6 +40,7 @@ import {
   recordToWorkflow,
   workflowToRecord,
 } from "./workflowRepository";
+import { nullToUndef, omitWhenUndefined } from "./repositoryHelpers";
 
 // Re-export so tests (and the rare consumer that needs the wire shape
 // of a snapshot, e.g. eventToWire callers building a payload by hand)
@@ -269,13 +270,13 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         // Collapse `null` (defensive) and `undefined` (Rust's
         // `skip_serializing_if`) to a single `undefined` so the UI
         // can check `event.exitCode === undefined` reliably.
-        exitCode: w.exitCode ?? undefined,
-        durationMs: w.durationMs ?? undefined,
+        exitCode: nullToUndef(w.exitCode),
+        durationMs: nullToUndef(w.durationMs),
         status: w.status,
-        target: w.target ?? undefined,
-        timedOut: w.timedOut ?? undefined,
-        output: w.output ?? undefined,
-        result: w.result ?? undefined,
+        target: nullToUndef(w.target),
+        timedOut: nullToUndef(w.timedOut),
+        output: nullToUndef(w.output),
+        result: nullToUndef(w.result),
       };
     case "commandRestored":
       return {
@@ -331,12 +332,12 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         workflowId: w.workflowId,
         workflowName: w.workflowName,
         executionId: w.executionId,
-        exitCode: w.exitCode ?? undefined,
-        durationMs: w.durationMs ?? undefined,
+        exitCode: nullToUndef(w.exitCode),
+        durationMs: nullToUndef(w.durationMs),
         status: w.status,
-        timedOut: w.timedOut ?? undefined,
-        output: w.output ?? undefined,
-        result: w.result ?? undefined,
+        timedOut: nullToUndef(w.timedOut),
+        output: nullToUndef(w.output),
+        result: nullToUndef(w.result),
       };
     case "scheduledRun":
       return {
@@ -349,10 +350,10 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         targetId: w.targetId,
         status: toScheduledRunStatus(w.status),
         // Collapse `null` (defensive) / `undefined` (Rust skip) to `undefined`.
-        exitCode: w.exitCode ?? undefined,
-        durationMs: w.durationMs ?? undefined,
-        output: w.output ?? undefined,
-        result: w.result ?? undefined,
+        exitCode: nullToUndef(w.exitCode),
+        durationMs: nullToUndef(w.durationMs),
+        output: nullToUndef(w.output),
+        result: nullToUndef(w.result),
       };
     case "sshHostAdded":
     case "sshHostDiscovered":
@@ -418,13 +419,13 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         // Send `undefined` (key omitted) when the value is absent,
         // mirroring Rust's `skip_serializing_if`. JSON.stringify drops
         // `undefined` keys, so the on-wire shape matches exactly.
-        ...(e.exitCode !== undefined ? { exitCode: e.exitCode } : {}),
-        ...(e.durationMs !== undefined ? { durationMs: e.durationMs } : {}),
+        ...omitWhenUndefined("exitCode", e.exitCode),
+        ...omitWhenUndefined("durationMs", e.durationMs),
         status: e.status,
-        ...(e.target !== undefined ? { target: e.target } : {}),
-        ...(e.timedOut !== undefined ? { timedOut: e.timedOut } : {}),
-        ...(e.output !== undefined ? { output: e.output } : {}),
-        ...(e.result !== undefined ? { result: e.result } : {}),
+        ...omitWhenUndefined("target", e.target),
+        ...omitWhenUndefined("timedOut", e.timedOut),
+        ...omitWhenUndefined("output", e.output),
+        ...omitWhenUndefined("result", e.result),
       };
     case "commandRestored":
       return {
@@ -482,12 +483,12 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         executionId: e.executionId,
         // Send `undefined` (key omitted) when absent, mirroring Rust's
         // `skip_serializing_if`. JSON.stringify drops `undefined` keys.
-        ...(e.exitCode !== undefined ? { exitCode: e.exitCode } : {}),
-        ...(e.durationMs !== undefined ? { durationMs: e.durationMs } : {}),
+        ...omitWhenUndefined("exitCode", e.exitCode),
+        ...omitWhenUndefined("durationMs", e.durationMs),
         status: e.status,
-        ...(e.timedOut !== undefined ? { timedOut: e.timedOut } : {}),
-        ...(e.output !== undefined ? { output: e.output } : {}),
-        ...(e.result !== undefined ? { result: e.result } : {}),
+        ...omitWhenUndefined("timedOut", e.timedOut),
+        ...omitWhenUndefined("output", e.output),
+        ...omitWhenUndefined("result", e.result),
       };
     case "scheduledRun":
       // The frontend never writes scheduledRun events (the backend
@@ -504,10 +505,10 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         targetKind: e.targetKind,
         targetId: e.targetId,
         status: e.status,
-        ...(e.exitCode !== undefined ? { exitCode: e.exitCode } : {}),
-        ...(e.durationMs !== undefined ? { durationMs: e.durationMs } : {}),
-        ...(e.output !== undefined ? { output: e.output } : {}),
-        ...(e.result !== undefined ? { result: e.result } : {}),
+        ...omitWhenUndefined("exitCode", e.exitCode),
+        ...omitWhenUndefined("durationMs", e.durationMs),
+        ...omitWhenUndefined("output", e.output),
+        ...omitWhenUndefined("result", e.result),
       };
     case "sshHostAdded":
     case "sshHostDiscovered":

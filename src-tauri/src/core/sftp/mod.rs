@@ -20,8 +20,9 @@ pub mod types;
 pub use batch::{build_sftp_argv, SftpAuth, SftpOp};
 pub use client::{download, list_dir, mkdir, remove, rename, upload};
 pub use types::{
-    is_safe_remote_path, LocalEntry, LocalListing, SftpEntry, SftpEntryKind, SftpError,
-    SftpListing, ERR_INVALID_REMOTE_PATH, ERR_INVALID_SFTP_TARGET,
+    is_root_delete_target, is_safe_local_path, is_safe_remote_path, LocalEntry, LocalListing,
+    SftpEntry, SftpEntryKind, SftpError, SftpListing, ERR_INVALID_REMOTE_PATH,
+    ERR_INVALID_SFTP_TARGET,
 };
 
 /// The destination-alias safety check, shared with the reachability probe and

@@ -10,11 +10,14 @@ import {
   getCommandDescription,
   getCommandName,
 } from "../../utils/commandLabels";
+import { makeRowId } from "../../utils/commandFormState";
 import type { EnvRow, FormState, VariableRow } from "../../types/commandForm";
 
 export type {
   EnvRow,
+  FormErrors,
   FormState,
+  FormTab,
   RunLine,
   RunResult,
   RunStatus,
@@ -25,6 +28,7 @@ export {
   CANCEL_GRACE_MS,
   envRowsToRecord,
   INITIAL_RUN_RESULT,
+  makeRowId,
   parseTimeoutSeconds,
   rowsToVariableSpecs,
   syncScriptDefaultsToRows,
@@ -122,20 +126,6 @@ export function buildShellOptions(
   return options;
 }
 
-/**
- * The form's four tabs. `main` holds metadata + execution settings,
- * `script` the script editor and variables, `output` the output schema,
- * `env` the per-command environment variable overrides.
- */
-export type FormTab = "main" | "script" | "output" | "env";
-
-export interface FormErrors {
-  name?: string;
-  script?: string;
-  /** Set when the API slug is malformed or collides with another command. */
-  apiSlug?: string;
-}
-
 /** Regex enforced on every variable row's `name` field. */
 export const VARIABLE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -218,13 +208,6 @@ export function specsToVariableRows(
     // legitimately if the user clears the field later.
     nameTouched: true,
   }));
-}
-
-export function makeRowId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `var-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 /**

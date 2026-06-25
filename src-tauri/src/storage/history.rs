@@ -21,7 +21,8 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-use crate::core::executor::ExecutionTarget;
+use crate::core::executor::{CapturedLine, ExecutionTarget};
+use crate::core::extractor::ExtractedOutput;
 use crate::storage::commands::CommandRecord;
 use crate::storage::workflows::WorkflowRecord;
 use crate::storage::DbPool;
@@ -682,6 +683,45 @@ pub fn bound_history_output(lines: Vec<HistoryLogLine>) -> Vec<HistoryLogLine> {
         });
     }
     out
+}
+
+/// Map a slice of executor [`CapturedLine`]s into bounded History
+/// [`HistoryLogLine`]s. Each line's stream enum is rendered to its stable tag
+/// (`"stdout"` / `"stderr"` / `"meta"`) and the result is capped via
+/// [`bound_history_output`] (so the byte cap and trailing `"…(truncated)"`
+/// marker behave identically regardless of which producer wrote it).
+///
+/// This is the single shared mapper for the scheduler's per-command and
+/// per-workflow capture paths and the HTTP-API run finalizers — previously
+/// four near-identical copies (`scheduler::map_captured_output` /
+/// `map_workflow_capture`, `handlers::outcome_output` / `workflow_output`),
+/// each re-implementing the same map-then-cap.
+pub fn from_captured_lines(lines: &[CapturedLine]) -> Vec<HistoryLogLine> {
+    let mapped = lines
+        .iter()
+        .map(|l| HistoryLogLine {
+            stream: l.stream.as_str().to_string(),
+            line: l.line.clone(),
+        })
+        .collect();
+    bound_history_output(mapped)
+}
+
+/// Map an executor [`ExtractedOutput`] (the structured output-schema result)
+/// into the History [`HistoryExtractedResult`] shape, cloning the `fields` map
+/// into a `serde_json::Map`. A successful extraction has no `error`. The single
+/// shared mapper for the scheduler and HTTP-API finalizers (previously
+/// `scheduler::map_extracted_result` / `handlers::outcome_result`).
+pub fn extracted_to_history(extracted: &ExtractedOutput) -> HistoryExtractedResult {
+    HistoryExtractedResult {
+        fields: extracted
+            .fields
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        return_value: extracted.return_value.clone(),
+        error: None,
+    }
 }
 
 /// Update an existing `command_run` event with the final outcome

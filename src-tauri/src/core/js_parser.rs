@@ -32,6 +32,14 @@
 //     `while (true) {}` throws a runtime-limit error rather than hanging.
 //     Together they make every unbounded computation terminate, so the
 //     synchronous call on the extraction hot path can never block forever.
+//   * A WALL-CLOCK backstop (`JS_WALL_CLOCK_BUDGET`) runs the evaluation on a
+//     dedicated worker thread and abandons the wait after the deadline. The
+//     iteration/recursion limits already guarantee termination, but a single
+//     pathological built-in operation (e.g. catastrophic regex backtracking,
+//     which does not increment the loop counter) could still spin for a long
+//     time; the wall-clock budget bounds that case too. On a timeout the call
+//     returns `Timeout` immediately and the worker — guaranteed to finish by
+//     the other limits — is left to wind down on its own.
 //
 // # Failure model
 //
@@ -59,6 +67,14 @@ const JS_LOOP_ITERATION_LIMIT: u64 = 1_000_000;
 /// Max function-call recursion depth before Boa throws. Bounds unbounded
 /// recursion (the other way to spin forever without a loop).
 const JS_RECURSION_LIMIT: usize = 400;
+
+/// Wall-clock budget for a single `parse(data)` evaluation. The iteration /
+/// recursion limits already make every computation terminate, but a single
+/// long-running built-in op (e.g. pathological regex backtracking) does not
+/// trip the loop counter; this deadline is the backstop so the synchronous
+/// extraction call can never hang the app for more than this long. Generous
+/// relative to a legitimate parse (which completes in milliseconds).
+const JS_WALL_CLOCK_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Typed failure of a `javascript` parser step. Carries only structural
 /// detail (never `data` or output contents) so an error can't leak a
@@ -113,16 +129,40 @@ pub fn run_js(user_code: &str, input: &Value) -> Result<Value, JsParseError> {
         return Err(JsParseError::CodeTooLarge(user_code.len()));
     }
 
-    // The entire execution is wrapped in `catch_unwind` so that a boa panic
-    // (known cases: `to_json` on Undefined / Null / Symbol; internal asserts)
-    // becomes a typed error instead of aborting the process. A panic in a
-    // Tauri command handler is process-fatal, so we must intercept it.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_js_inner(user_code, input)
-    }));
-    match result {
-        Ok(inner) => inner,
-        Err(_) => Err(JsParseError::ResultNotSerializable),
+    // Run the evaluation on a dedicated worker thread and wait at most
+    // `JS_WALL_CLOCK_BUDGET` for it. The Boa `Context` is `!Send`, so it is
+    // built INSIDE the worker — only the owned source string and serialised
+    // input cross the thread boundary. If the deadline passes we return
+    // `Timeout`; the worker is detached (never joined) and is guaranteed to
+    // terminate on its own by the iteration/recursion limits, so it cannot leak
+    // unboundedly.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Value, JsParseError>>(1);
+    let code = user_code.to_owned();
+    let data = input.clone();
+
+    // A panic inside the worker (known boa cases: `to_json` on Undefined / Null
+    // / Symbol; internal asserts) must NOT escape — a panic crossing a thread
+    // boundary is swallowed by the join, but we convert it to a typed error via
+    // `catch_unwind` so a successful-but-panicking run is reported cleanly.
+    std::thread::Builder::new()
+        .name("js-parser".into())
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_js_inner(&code, &data)
+            }))
+            .unwrap_or(Err(JsParseError::ResultNotSerializable));
+            // The receiver may already be gone (we timed out); ignore the error.
+            let _ = tx.send(result);
+        })
+        .map_err(|e| JsParseError::Runtime(format!("failed to spawn js parser thread: {e}")))?;
+
+    match rx.recv_timeout(JS_WALL_CLOCK_BUDGET) {
+        Ok(result) => result,
+        // Deadline elapsed before the worker reported — treat as a timeout.
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(JsParseError::Timeout),
+        // The worker dropped the sender without sending (e.g. the thread was
+        // torn down) — surface as a timeout rather than blocking forever.
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(JsParseError::Timeout),
     }
 }
 
@@ -213,6 +253,53 @@ mod tests {
             "RuntimeLimit: exceeded maximum call stack length",
         ] {
             assert_eq!(classify(msg), JsParseError::Timeout, "msg: {msg}");
+        }
+    }
+
+    #[test]
+    fn runs_a_simple_parse_within_budget() {
+        // A normal parse completes well under the wall-clock budget and returns
+        // its JSON result through the worker thread + channel path.
+        let code = "function parse(data) { return { n: data.length }; }";
+        let input = Value::Array(vec![Value::from(1), Value::from(2), Value::from(3)]);
+        let out = run_js(code, &input).expect("parse succeeds");
+        assert_eq!(out, serde_json::json!({ "n": 3 }));
+    }
+
+    #[test]
+    fn loop_limit_breach_is_timeout_through_worker() {
+        // A runaway loop trips Boa's iteration limit; the worker reports the
+        // reclassified Timeout through the channel (proving the threaded path
+        // surfaces inner results, not just the wall-clock deadline).
+        let code = "function parse(data) { while (true) {} }";
+        let err = run_js(code, &Value::Null).expect_err("must not succeed");
+        assert_eq!(err, JsParseError::Timeout);
+    }
+
+    #[test]
+    fn wall_clock_budget_bounds_a_single_pathological_op() {
+        // Catastrophic regex backtracking spins inside a single built-in op and
+        // does NOT increment the loop-iteration counter, so only the wall-clock
+        // backstop can stop it. The call must return (Timeout or, if the engine
+        // happens to finish, a Runtime error) — the point is it does not hang.
+        let code = r#"
+            function parse(data) {
+                return /(a+)+$/.test("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaX");
+            }
+        "#;
+        let start = std::time::Instant::now();
+        let result = run_js(code, &Value::Null);
+        // It returned (didn't hang) within a small multiple of the budget.
+        assert!(
+            start.elapsed() < JS_WALL_CLOCK_BUDGET + std::time::Duration::from_secs(2),
+            "run_js must return promptly, took {:?}",
+            start.elapsed()
+        );
+        // Either the wall-clock fired (Timeout) or the op completed fast on this
+        // engine build (a bool result). Both are acceptable; a hang is not.
+        match result {
+            Err(JsParseError::Timeout) | Ok(_) => {}
+            other => panic!("unexpected result: {other:?}"),
         }
     }
 

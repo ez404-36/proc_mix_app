@@ -20,7 +20,7 @@ import type {
   WorkflowCondition,
 } from "../../types";
 import { getCommandDescription, getCommandName } from "../../utils/commandLabels";
-import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
+import { isRemoteTarget } from "../../utils/targetLabel";
 import { dataSourceId, dataSourceOptions } from "../../utils/dataSourceOptions";
 import {
   dominatingDataNodeVariableNames,
@@ -47,6 +47,7 @@ import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
 import { NumberStepper } from "../NumberStepper";
 import { OutputSchemaEditor } from "../CommandForm/OutputSchemaEditor";
+import { TargetBadge } from "../TargetBadge";
 import { TextNodeEditor } from "./TextNodeEditor";
 import {
   ArrowRightIcon,
@@ -507,9 +508,7 @@ function NodeConfigForm({
               command form. */}
           {selectedCommand && isRemoteTarget(selectedCommand.target) ? (
             <div className="wf-inspector__local-row">
-              <span className="target-badge">
-                {formatTargetBadge(selectedCommand.target, t)}
-              </span>
+              <TargetBadge target={selectedCommand.target} />
             </div>
           ) : null}
         </div>

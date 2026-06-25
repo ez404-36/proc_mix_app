@@ -80,32 +80,61 @@ pub async fn vacuum(pool: &DbPool) -> Result<(), String> {
     Ok(())
 }
 
-/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `commands` table.
+/// Apply a list of idempotent `ALTER TABLE <table> ADD COLUMN …` migrations.
 ///
-/// `CREATE TABLE IF NOT EXISTS` only creates the schema as it was on
-/// first launch; columns added in later releases (like `run_as_admin`,
-/// v0.2.0) won't be applied to existing databases. SQLite has no
-/// `ADD COLUMN IF NOT EXISTS`, so we ask `PRAGMA table_info` what is
-/// there and add what isn't.
+/// SQLite has no `ADD COLUMN IF NOT EXISTS`, so we inspect `PRAGMA
+/// table_info(<table>)` once, build the set of existing column names, and run
+/// only the migrations whose column is absent. `CREATE TABLE IF NOT EXISTS`
+/// (in schema.sql) only creates the schema as it was on first launch; columns
+/// added in later releases must be back-filled this way on existing databases.
 ///
-/// New columns must be NULLable or have a DEFAULT — both apply to
-/// `run_as_admin INTEGER NOT NULL DEFAULT 0`, so the migration is safe
-/// regardless of how many existing rows the user has.
-async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
-    let rows = sqlx::query("PRAGMA table_info(commands)")
+/// Each migration is `(column_name, "ALTER TABLE … ADD COLUMN …")`. The SQL
+/// must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound — that's also a
+/// desirable property because a runtime-built ALTER would invite injection
+/// bugs. New columns must be NULLable or have a DEFAULT so the migration is
+/// safe regardless of how many existing rows the user has.
+///
+/// `table` is interpolated ONLY into the `PRAGMA` inspection (a fixed,
+/// caller-supplied identifier, never user input) and into error messages; the
+/// ALTER statements are the static SQL from `migrations`. This is the single
+/// shared body for every `ensure_*_columns` migrator below.
+async fn apply_column_migrations(
+    pool: &SqlitePool,
+    table: &str,
+    migrations: &[(&str, &'static str)],
+) -> Result<(), String> {
+    // `table` is a fixed identifier supplied by the (in-crate) caller, never a
+    // user value. sqlx 0.9 requires the `AssertSqlSafe` wrapper for non-'static
+    // SQL strings; this documents the audit.
+    let pragma = format!("PRAGMA table_info({table})");
+    let rows = sqlx::query(sqlx::AssertSqlSafe(pragma.as_str()))
         .fetch_all(pool)
         .await
-        .map_err(|e| format!("inspect commands table: {e}"))?;
+        .map_err(|e| format!("inspect {table} table: {e}"))?;
 
     let existing: std::collections::HashSet<String> = rows
         .into_iter()
         .filter_map(|r| r.try_get::<String, _>("name").ok())
         .collect();
 
-    // (column_name, "ADD COLUMN …" fragment). Append future columns
-    // here. The SQL must be a `&'static str` for sqlx 0.9's
-    // `SqlSafeStr` bound — that's also a desirable property because
-    // a runtime-built ALTER would invite injection bugs.
+    for &(col, sql) in migrations {
+        if !existing.contains(col) {
+            sqlx::query(sql)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("add column {col} to {table}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `commands` table.
+///
+/// Columns added in later releases (like `run_as_admin`, v0.2.0) are
+/// back-filled via [`apply_column_migrations`]; then the partial unique index
+/// on `api_slug` is (re)created now that the column is guaranteed to exist.
+async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
+    // (column_name, "ADD COLUMN …" fragment). Append future columns here.
     let migrations: &[(&str, &'static str)] = &[
         (
             "run_as_admin",
@@ -151,14 +180,7 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
         ),
     ];
 
-    for &(col, sql) in migrations {
-        if !existing.contains(col) {
-            sqlx::query(sql)
-                .execute(pool)
-                .await
-                .map_err(|e| format!("add column {col} to commands: {e}"))?;
-        }
-    }
+    apply_column_migrations(pool, "commands", migrations).await?;
 
     // Create the PARTIAL unique index on `api_slug` HERE rather than in
     // schema.sql: on an existing database `CREATE TABLE IF NOT EXISTS` does not
@@ -187,19 +209,7 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
 /// [`ensure_commands_columns`]. The same `PRAGMA table_info` inspection
 /// guards idempotency once entries are added.
 async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
-    let rows = sqlx::query("PRAGMA table_info(workflows)")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("inspect workflows table: {e}"))?;
-
-    let existing: std::collections::HashSet<String> = rows
-        .into_iter()
-        .filter_map(|r| r.try_get::<String, _>("name").ok())
-        .collect();
-
     // (column_name, "ADD COLUMN …" fragment). Append future columns here.
-    // The SQL must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound —
-    // a runtime-built ALTER would also invite injection bugs.
     let migrations: &[(&str, &'static str)] = &[
         (
             // Optional HTTP-API slug (v0.10.0). NULL on existing rows.
@@ -213,14 +223,7 @@ async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
         ),
     ];
 
-    for &(col, sql) in migrations {
-        if !existing.contains(col) {
-            sqlx::query(sql)
-                .execute(pool)
-                .await
-                .map_err(|e| format!("add column {col} to workflows: {e}"))?;
-        }
-    }
+    apply_column_migrations(pool, "workflows", migrations).await?;
 
     // Partial unique index on `api_slug`, created AFTER the column is guaranteed
     // to exist (same ordering reason as idx_commands_api_slug). Uniqueness is
@@ -245,31 +248,10 @@ async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
 /// same `PRAGMA table_info` inspection guards idempotency once entries are
 /// added.
 async fn ensure_ssh_host_meta_columns(pool: &SqlitePool) -> Result<(), String> {
-    let rows = sqlx::query("PRAGMA table_info(ssh_host_meta)")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("inspect ssh_host_meta table: {e}"))?;
-
-    let existing: std::collections::HashSet<String> = rows
-        .into_iter()
-        .filter_map(|r| r.try_get::<String, _>("name").ok())
-        .collect();
-
     // (column_name, "ADD COLUMN …" fragment). Append future columns here.
-    // The SQL must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound —
-    // a runtime-built ALTER would also invite injection bugs. Empty for the
-    // v0.9.0 initial release; see the doc comment above.
+    // Empty for the v0.9.0 initial release; see the doc comment above.
     let migrations: &[(&str, &'static str)] = &[];
-
-    for &(col, sql) in migrations {
-        if !existing.contains(col) {
-            sqlx::query(sql)
-                .execute(pool)
-                .await
-                .map_err(|e| format!("add column {col} to ssh_host_meta: {e}"))?;
-        }
-    }
-    Ok(())
+    apply_column_migrations(pool, "ssh_host_meta", migrations).await
 }
 
 /// Ensure the single default row of the `http_server_config` table exists.
@@ -305,19 +287,7 @@ async fn ensure_http_server_config(pool: &SqlitePool) -> Result<(), String> {
 /// [`ensure_workflows_columns`]. The same `PRAGMA table_info` inspection
 /// guards idempotency once entries are added.
 async fn ensure_schedules_columns(pool: &SqlitePool) -> Result<(), String> {
-    let rows = sqlx::query("PRAGMA table_info(schedules)")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("inspect schedules table: {e}"))?;
-
-    let existing: std::collections::HashSet<String> = rows
-        .into_iter()
-        .filter_map(|r| r.try_get::<String, _>("name").ok())
-        .collect();
-
     // (column_name, "ADD COLUMN …" fragment). Append future columns here.
-    // The SQL must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound —
-    // a runtime-built ALTER would also invite injection bugs.
     let migrations: &[(&str, &'static str)] = &[
         (
             "catch_up_policy",
@@ -337,15 +307,7 @@ async fn ensure_schedules_columns(pool: &SqlitePool) -> Result<(), String> {
         ),
     ];
 
-    for &(col, sql) in migrations {
-        if !existing.contains(col) {
-            sqlx::query(sql)
-                .execute(pool)
-                .await
-                .map_err(|e| format!("add column {col} to schedules: {e}"))?;
-        }
-    }
-    Ok(())
+    apply_column_migrations(pool, "schedules", migrations).await
 }
 
 /// Idempotent `ALTER TABLE … ADD COLUMN …` for the `history_events` table.
@@ -356,32 +318,13 @@ async fn ensure_schedules_columns(pool: &SqlitePool) -> Result<(), String> {
 /// safe for existing rows. Mirrors [`ensure_schedules_columns`]; the same
 /// `PRAGMA table_info` inspection guards idempotency.
 async fn ensure_history_columns(pool: &SqlitePool) -> Result<(), String> {
-    let rows = sqlx::query("PRAGMA table_info(history_events)")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("inspect history_events table: {e}"))?;
-
-    let existing: std::collections::HashSet<String> = rows
-        .into_iter()
-        .filter_map(|r| r.try_get::<String, _>("name").ok())
-        .collect();
-
     // (column_name, "ADD COLUMN …" fragment). Append future columns here.
-    // The SQL must be a `&'static str` for sqlx 0.9's `SqlSafeStr` bound —
-    // a runtime-built ALTER would also invite injection bugs.
     let migrations: &[(&str, &'static str)] = &[(
         "schedule_id",
         "ALTER TABLE history_events ADD COLUMN schedule_id TEXT",
     )];
 
-    for &(col, sql) in migrations {
-        if !existing.contains(col) {
-            sqlx::query(sql)
-                .execute(pool)
-                .await
-                .map_err(|e| format!("add column {col} to history_events: {e}"))?;
-        }
-    }
+    apply_column_migrations(pool, "history_events", migrations).await?;
 
     // Back-fill `schedule_id` for rows written BEFORE the column existed.
     // The `ALTER TABLE … ADD COLUMN schedule_id TEXT` above leaves every

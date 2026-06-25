@@ -28,53 +28,55 @@ import type {
   WorkflowNode,
   WorkflowNodeKind,
 } from "../types";
+import {
+  makeEnumGuard,
+  nullToUndef,
+  omitWhenUndefined,
+  undefToNull,
+} from "./repositoryHelpers";
 
-/** Set of node kinds the runner understands — used as a type-narrowing
- * guard when decoding a record whose `kind` column is an arbitrary string.
- * An unknown value falls back to "command" so a malformed node never
- * crashes the decoder; the editor's validation surfaces the real problem
- * to the user. Must stay in lock-step with the Rust `NodeKind::parse`. */
-const KNOWN_NODE_KINDS: ReadonlySet<WorkflowNodeKind> =
-  new Set<WorkflowNodeKind>([
-    "start",
-    "command",
-    "condition",
-    "switch",
-    "loop",
-    "try",
-    "data",
-    "parser",
-    "text",
-    "parallel",
-    "join",
-    "end",
-  ]);
+/** Type-narrowing guard for the node kinds the runner understands. An unknown
+ * value falls back to "command" so a malformed node never crashes the decoder;
+ * the editor's validation surfaces the real problem to the user. Must stay in
+ * lock-step with the Rust `NodeKind::parse`. */
+const isNodeKind = makeEnumGuard<WorkflowNodeKind>([
+  "start",
+  "command",
+  "condition",
+  "switch",
+  "loop",
+  "try",
+  "data",
+  "parser",
+  "text",
+  "parallel",
+  "join",
+  "end",
+]);
 
-function isNodeKind(value: string): value is WorkflowNodeKind {
-  return KNOWN_NODE_KINDS.has(value as WorkflowNodeKind);
-}
-
-/** Whether a decoded edge branch is one the runner understands. The `case:<id>`
+/** Static set of edge branches the runner understands. The `case:<id>`
  * (switch case) and `branch:<n>` (parallel fork exit) branches are dynamic —
- * the suffix is author/index derived — so they are matched by prefix rather
- * than membership. An unrecognised value falls back to "out". Must stay in
- * lock-step with the Rust `Branch` mapping. */
-const KNOWN_BRANCHES: ReadonlySet<WorkflowEdgeBranch> =
-  new Set<WorkflowEdgeBranch>([
-    "out",
-    "then",
-    "else",
-    "default",
-    "body",
-    "done",
-    "ok",
-    "catch",
-  ]);
+ * the suffix is author/index derived — so they are matched by prefix in
+ * {@link isBranch} rather than membership. Must stay in lock-step with the Rust
+ * `Branch` mapping. */
+const isStaticBranch = makeEnumGuard<WorkflowEdgeBranch>([
+  "out",
+  "then",
+  "else",
+  "default",
+  "body",
+  "done",
+  "ok",
+  "catch",
+]);
 
+/** Whether a decoded edge branch is one the runner understands. Dynamic
+ * `case:<id>` / `branch:<n>` branches match by prefix; everything else by
+ * membership. An unrecognised value falls back to "out". */
 function isBranch(value: string): value is WorkflowEdgeBranch {
   if (value.startsWith("case:")) return true;
   if (value.startsWith("branch:")) return true;
-  return KNOWN_BRANCHES.has(value as WorkflowEdgeBranch);
+  return isStaticBranch(value);
 }
 
 /** Wire format of a single node, matching the Rust `WorkflowNodeRecord`.
@@ -150,21 +152,21 @@ function nodeToRecord(n: WorkflowNode): WorkflowNodeRecord {
   return {
     id: n.id,
     kind: n.kind,
-    commandId: n.commandId ?? null,
-    label: n.label ?? null,
+    commandId: undefToNull(n.commandId),
+    label: undefToNull(n.label),
     // Advanced-node config. Empty vectors are sent as-is (Rust drops them on
     // serialise); `undefined` collapses to `null` for the optional structs.
-    condition: n.condition ?? null,
+    condition: undefToNull(n.condition),
     cases: n.cases ?? [],
-    loop: n.loop ?? null,
-    retry: n.retry ?? null,
+    loop: undefToNull(n.loop),
+    retry: undefToNull(n.retry),
     data: n.data ?? [],
     // Empty object collapses to omitted on the wire (Rust drops a default
     // map); keep it minimal so nodes without overrides stay clean.
     variableSources: n.variableSources ?? {},
-    parser: n.parser ?? null,
-    text: n.text ?? null,
-    joinNodeId: n.joinNodeId ?? null,
+    parser: undefToNull(n.parser),
+    text: undefToNull(n.text),
+    joinNodeId: undefToNull(n.joinNodeId),
     position: { x: n.position.x, y: n.position.y },
   };
 }
@@ -173,23 +175,23 @@ function recordToNode(r: WorkflowNodeRecord): WorkflowNode {
   return {
     id: r.id,
     kind: isNodeKind(r.kind) ? r.kind : "command",
-    commandId: r.commandId ?? undefined,
-    label: r.label ?? undefined,
-    condition: r.condition ?? undefined,
+    commandId: nullToUndef(r.commandId),
+    label: nullToUndef(r.label),
+    condition: nullToUndef(r.condition),
     // Absent / null vectors decode to `undefined` so the node stays minimal;
     // an empty array also collapses to `undefined` to avoid noise on the node.
     cases: r.cases && r.cases.length > 0 ? r.cases : undefined,
-    loop: r.loop ?? undefined,
-    retry: r.retry ?? undefined,
+    loop: nullToUndef(r.loop),
+    retry: nullToUndef(r.retry),
     data: r.data && r.data.length > 0 ? r.data : undefined,
     // An absent / empty map decodes to `undefined` so the node stays minimal.
     variableSources:
       r.variableSources && Object.keys(r.variableSources).length > 0
         ? r.variableSources
         : undefined,
-    parser: r.parser ?? undefined,
-    text: r.text ?? undefined,
-    joinNodeId: r.joinNodeId ?? undefined,
+    parser: nullToUndef(r.parser),
+    text: nullToUndef(r.text),
+    joinNodeId: nullToUndef(r.joinNodeId),
     position: { x: r.position.x, y: r.position.y },
   };
 }
@@ -216,22 +218,22 @@ export function workflowToRecord(w: Workflow): WorkflowRecord {
   return {
     id: w.id,
     name: w.name,
-    description: w.description ?? null,
-    icon: w.icon ?? null,
+    description: undefToNull(w.description),
+    icon: undefToNull(w.icon),
     nodes: w.nodes.map(nodeToRecord),
     edges: w.edges.map(edgeToRecord),
     tags: w.tags,
-    categoryId: w.categoryId ?? null,
+    categoryId: undefToNull(w.categoryId),
     favorite: w.favorite,
     createdAt: w.createdAt,
     updatedAt: w.updatedAt,
-    lastRunAt: w.lastRunAt ?? null,
+    lastRunAt: undefToNull(w.lastRunAt),
     runCount: w.runCount,
     // HTTP-API slug: omit when absent; an empty string normalises to `null`
     // (no slug) so the backend's partial unique index never sees a "" clash.
-    ...(w.apiSlug !== undefined
-      ? { apiSlug: w.apiSlug.trim() === "" ? null : w.apiSlug.trim() }
-      : {}),
+    ...omitWhenUndefined("apiSlug", w.apiSlug, (slug) =>
+      slug.trim() === "" ? null : slug.trim(),
+    ),
     // HTTP-API opt-in. Always sent so toggling it off persists.
     apiEnabled: w.apiEnabled ?? false,
   };
@@ -246,19 +248,19 @@ export function recordToWorkflow(r: WorkflowRecord): Workflow {
   return {
     id: r.id,
     name: r.name,
-    description: r.description ?? undefined,
-    icon: r.icon ?? undefined,
+    description: nullToUndef(r.description),
+    icon: nullToUndef(r.icon),
     nodes: (r.nodes ?? []).map(recordToNode),
     edges: (r.edges ?? []).map(recordToEdge),
     tags: r.tags,
-    categoryId: r.categoryId ?? undefined,
+    categoryId: nullToUndef(r.categoryId),
     favorite: r.favorite,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
-    lastRunAt: r.lastRunAt ?? undefined,
+    lastRunAt: nullToUndef(r.lastRunAt),
     runCount: r.runCount,
     // HTTP-API slug; `undefined` when the workflow has none.
-    apiSlug: r.apiSlug ?? undefined,
+    apiSlug: nullToUndef(r.apiSlug),
     // Default to `false` for legacy rows (no column).
     apiEnabled: r.apiEnabled ?? false,
   };

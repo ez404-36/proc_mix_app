@@ -17,7 +17,6 @@ import { useTranslation } from "react-i18next";
 import { useCommandStore } from "../../stores/commandStore";
 import { useHistoryStore } from "../../stores/historyStore";
 import type { HistoryEvent } from "../../types";
-import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 import {
   historyEventSubjectId,
   historyEventSubjectName,
@@ -29,6 +28,7 @@ import {
   RunIcon,
   TrashIcon,
 } from "../icons";
+import { TargetBadge } from "../TargetBadge";
 import { ScheduledRunOutput } from "./ScheduledRunOutput";
 import { SshHostChangeDetail } from "./SshHostChangeDetail";
 
@@ -282,10 +282,8 @@ export function HistoryRow({
   );
   const meta = (
     <div className="history-row__meta">
-      {event.kind === "commandRun" && isRemoteTarget(event.target) ? (
-        <span className="target-badge">
-          {formatTargetBadge(event.target, t)}
-        </span>
+      {event.kind === "commandRun" ? (
+        <TargetBadge target={event.target} />
       ) : null}
       {showUndo && (
         <button

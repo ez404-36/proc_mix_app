@@ -14,24 +14,23 @@ import type {
   Shell,
   VariableSpec,
 } from "../types";
+import {
+  makeEnumGuard,
+  nullToUndef,
+  omitWhenUndefined,
+  undefToNull,
+} from "./repositoryHelpers";
 
 /** Scope values the Rust executor understands; used to narrow the wire string. */
-const KNOWN_SCOPES: ReadonlySet<CommandScope> = new Set<CommandScope>([
-  "local",
-  "global",
-]);
-
-function isScope(value: string): value is CommandScope {
-  return KNOWN_SCOPES.has(value as CommandScope);
-}
+const isScope = makeEnumGuard<CommandScope>(["local", "global"]);
 
 /**
- * Set of shell identifiers the Rust executor understands. Used as a
- * type-narrowing guard when decoding a record whose `shell` column is an
+ * Type-narrowing guard for the shell identifiers the Rust executor
+ * understands. Used when decoding a record whose `shell` column is an
  * arbitrary `string | null`. An unknown value is treated as `undefined`
  * so the executor falls back to its per-platform default.
  */
-const KNOWN_SHELLS: ReadonlySet<Shell> = new Set<Shell>([
+const isShell = makeEnumGuard<Shell>([
   "bash",
   "zsh",
   "fish",
@@ -40,10 +39,6 @@ const KNOWN_SHELLS: ReadonlySet<Shell> = new Set<Shell>([
   "powershell",
   "cmd",
 ]);
-
-function isShell(value: string): value is Shell {
-  return KNOWN_SHELLS.has(value as Shell);
-}
 
 /**
  * Wire format that matches the Rust `CommandRecord` struct exactly.
@@ -130,21 +125,21 @@ export function commandToRecord(c: Command): CommandRecord {
   return {
     id: c.id,
     name: c.name,
-    nameKey: c.nameKey ?? null,
-    description: c.description ?? null,
-    descriptionKey: c.descriptionKey ?? null,
-    icon: c.icon ?? null,
+    nameKey: undefToNull(c.nameKey),
+    description: undefToNull(c.description),
+    descriptionKey: undefToNull(c.descriptionKey),
+    icon: undefToNull(c.icon),
     script: c.script,
-    shell: c.shell ?? null,
-    args: c.args ?? null,
-    workingDir: c.workingDir ?? null,
-    env: c.env ?? null,
+    shell: undefToNull(c.shell),
+    args: undefToNull(c.args),
+    workingDir: undefToNull(c.workingDir),
+    env: undefToNull(c.env),
     tags: c.tags,
-    categoryId: c.categoryId ?? null,
+    categoryId: undefToNull(c.categoryId),
     favorite: c.favorite,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
-    lastRunAt: c.lastRunAt ?? null,
+    lastRunAt: undefToNull(c.lastRunAt),
     runCount: c.runCount,
     runAsAdmin: c.runAsAdmin,
     // Pass through the variable list verbatim — the Rust side stores it
@@ -152,23 +147,23 @@ export function commandToRecord(c: Command): CommandRecord {
     // field through unchanged rather than collapsing to `undefined` so
     // the persistence layer can distinguish "user cleared the list"
     // from "field never set".
-    ...(c.variables !== undefined ? { variables: c.variables } : {}),
+    ...omitWhenUndefined("variables", c.variables),
     // Pass the output schema through verbatim — the Rust side stores it
     // as a JSON column. Omitted entirely when absent so the wire stays
     // byte-identical to legacy payloads for commands without a schema.
-    ...(c.outputSchema !== undefined ? { outputSchema: c.outputSchema } : {}),
+    ...omitWhenUndefined("outputSchema", c.outputSchema),
     // Scope: send the explicit value when set, omit otherwise. The Rust side
     // defaults an absent scope to `'global'`, so omitting it keeps the wire
     // byte-identical to legacy payloads for ordinary global commands.
-    ...(c.scope !== undefined ? { scope: c.scope } : {}),
+    ...omitWhenUndefined("scope", c.scope),
     // Owning workflow id for a local command. Omitted entirely for globals.
-    ...(c.workflowId !== undefined ? { workflowId: c.workflowId } : {}),
+    ...omitWhenUndefined("workflowId", c.workflowId),
     // HTTP-API slug: omit when absent so the wire stays byte-identical to
     // legacy payloads. An empty string is normalised to `null` (no slug) so the
     // backend's partial unique index never sees a "" collision.
-    ...(c.apiSlug !== undefined
-      ? { apiSlug: c.apiSlug.trim() === "" ? null : c.apiSlug.trim() }
-      : {}),
+    ...omitWhenUndefined("apiSlug", c.apiSlug, (slug) =>
+      slug.trim() === "" ? null : slug.trim(),
+    ),
     // HTTP-API opt-in. Always send so toggling it off persists.
     apiEnabled: c.apiEnabled ?? false,
   };
@@ -184,21 +179,21 @@ export function recordToCommand(r: CommandRecord): Command {
   return {
     id: r.id,
     name: r.name,
-    nameKey: r.nameKey ?? undefined,
-    description: r.description ?? undefined,
-    descriptionKey: r.descriptionKey ?? undefined,
-    icon: r.icon ?? undefined,
+    nameKey: nullToUndef(r.nameKey),
+    description: nullToUndef(r.description),
+    descriptionKey: nullToUndef(r.descriptionKey),
+    icon: nullToUndef(r.icon),
     script: r.script,
     shell: shellValue,
-    args: r.args ?? undefined,
-    workingDir: r.workingDir ?? undefined,
-    env: r.env ?? undefined,
+    args: nullToUndef(r.args),
+    workingDir: nullToUndef(r.workingDir),
+    env: nullToUndef(r.env),
     tags: r.tags,
-    categoryId: r.categoryId ?? undefined,
+    categoryId: nullToUndef(r.categoryId),
     favorite: r.favorite,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
-    lastRunAt: r.lastRunAt ?? undefined,
+    lastRunAt: nullToUndef(r.lastRunAt),
     runCount: r.runCount,
     // Default to `false` so commands loaded from old DBs (where the
     // column didn't exist) don't accidentally inherit `undefined`.
@@ -217,7 +212,7 @@ export function recordToCommand(r: CommandRecord): Command {
         : undefined,
     // `outputSchema` collapses to `undefined` when absent or null so the
     // UI can use `cmd.outputSchema?` idiomatically.
-    outputSchema: r.outputSchema ?? undefined,
+    outputSchema: nullToUndef(r.outputSchema),
     // Default to `"global"` so commands loaded from old DBs (no column) or
     // carrying an unrecognised value are treated as ordinary library commands
     // rather than vanishing as orphaned locals.
@@ -225,9 +220,9 @@ export function recordToCommand(r: CommandRecord): Command {
       ? r.scope
       : "global",
     // A local command's owning workflow id; `undefined` for globals.
-    workflowId: r.workflowId ?? undefined,
+    workflowId: nullToUndef(r.workflowId),
     // HTTP-API slug; `undefined` when the command has none.
-    apiSlug: r.apiSlug ?? undefined,
+    apiSlug: nullToUndef(r.apiSlug),
     // Default to `false` so commands loaded from old DBs (no column) are not
     // accidentally treated as API-enabled.
     apiEnabled: r.apiEnabled ?? false,

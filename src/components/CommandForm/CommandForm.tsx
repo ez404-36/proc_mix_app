@@ -15,40 +15,32 @@ import type {
   Command,
   CommandScope,
   OutputSchema,
-  ParsedCli,
   Shell,
   VariableSpec,
 } from "../../types";
-import {
-  createCommand as createCommandWithHistory,
-  updateCommand as updateCommandWithHistory,
-} from "../../services/commandActions";
-import { detectAdminEscalation } from "../../utils/detectAdminEscalation";
 import { getCachedPlatform } from "../../utils/platform";
 import { getCachedAvailableShells } from "../../utils/shells";
-import { normalizeTags } from "../../utils/commandFilters";
-import { isOverridingSystem, isValidEnvVarName } from "../../utils/envVars";
 import { parseUtilityNamesWithRanges } from "../../utils/utilityName";
 import type { UtilityNameRange } from "../../utils/utilityName";
 import { useUtilitiesHelp } from "../../hooks/useUtilityHelp";
 import { useAdminEscalation } from "../../hooks/useAdminEscalation";
 import { useCommandLiveRun } from "../../hooks/useCommandLiveRun";
+import { useCommandFormSave } from "../../hooks/useCommandFormSave";
+import { useEnvRows } from "../../hooks/useEnvRows";
+import { useVariableRows } from "../../hooks/useVariableRows";
+import { useUtilityFlagBuilder } from "../../hooks/useUtilityFlagBuilder";
+import { MainTab } from "./MainTab";
+import { ScriptTab } from "./ScriptTab";
+import { OutputTab } from "./OutputTab";
+import { EnvTab } from "./EnvTab";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { useCommandStore } from "../../stores/commandStore";
-import { isValidApiSlug, sanitizeApiSlugInput } from "../../utils/apiSlug";
-import { CancelIcon, RunIcon, SaveIcon, TrashIcon } from "../icons";
-import { HelpTooltip } from "../HelpTooltip";
+import { isValidApiSlug } from "../../utils/apiSlug";
+import { CancelIcon, RunIcon, SaveIcon } from "../icons";
 import { IdBadge } from "../IdBadge";
-import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
-import { NumberStepper } from "../NumberStepper";
-import { ToggleSwitch } from "../ToggleSwitch";
-import { OutputSchemaEditor } from "./OutputSchemaEditor";
-import { TargetSelector } from "./TargetSelector";
-import { ScriptEditor } from "./ScriptEditor";
 import { LiveRunOutput } from "./LiveRunOutput";
-import { FlagBuilder } from "./FlagBuilder";
 import type {
   UtilityHighlight,
   UtilityHighlightStatus,
@@ -62,24 +54,18 @@ import {
   envRowsToRecord,
   fingerprintForm,
   isShell,
-  makeRowId,
-  parseTimeoutSeconds,
   rowsToVariableSpecs,
-  syncScriptDefaultsToRows,
-  syncVariableDefaultToScript,
 } from "./formState";
 import type {
-  EnvRow,
   FormErrors,
   FormState,
   FormTab,
-  VariableRow,
 } from "./formState";
 import {
   getCachedProcessEnv,
   getProcessEnv,
 } from "../../services/environmentService";
-import { parseUtilityFlags } from "../../services/utilityHelp";
+
 import { useEnvManagerStore } from "../../stores/envManagerStore";
 
 export interface CommandFormProps {
@@ -192,12 +178,6 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   // (the backend's partial unique index is the ultimate guard). Referentially
   // stable selector; the lookup itself is a cheap render-time step.
   const allCommands = useCommandStore((s) => s.commands);
-  // History-aware wrappers — see services/commandActions.ts. The
-  // wrappers delegate to the same store methods, so existing test
-  // spies that replace `useCommandStore.getState().addCommand` keep
-  // working as long as the spy returns a `Command`-shaped value.
-  const addCommand = createCommandWithHistory;
-  const updateCommand = updateCommandWithHistory;
 
   const nameInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -229,18 +209,6 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
 
   const [form, setForm] = useState<FormState>(initial);
   const [showErrors, setShowErrors] = useState<boolean>(false);
-
-  // Flag builder: open/closed state + parsed CLI data fetched on demand.
-  const [flagBuilderOpen, setFlagBuilderOpen] = useState<boolean>(false);
-  const [flagBuilderData, setFlagBuilderData] = useState<ParsedCli | null>(null);
-  const [flagBuilderLoading, setFlagBuilderLoading] = useState<boolean>(false);
-  // Parsed CLI per recognised utility name, for the editor's per-command
-  // flag highlighting (every command in a `|`/`;` chain, not just the
-  // leading one). Keyed by utility name; populated by the proactive
-  // effect below as each utility resolves to "found".
-  const [flagsByUtility, setFlagsByUtility] = useState<
-    ReadonlyMap<string, ParsedCli>
-  >(() => new Map());
 
   // Dirty tracking for the host's unsaved-changes guard. We compare a
   // STABLE projection of the form against its initial snapshot, excluding
@@ -419,205 +387,24 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   const scriptTabHasError =
     errors.script !== undefined || hasVariableErrors;
 
-  const handleSave = useCallback((): void => {
-    if (hasErrors) {
-      setShowErrors(true);
-      // Jump to the first tab carrying an error so the user sees it even
-      // if they're on a different tab. Name (main) takes precedence over
-      // script/variables (script).
-      if (errors.name !== undefined || errors.apiSlug !== undefined) {
-        setActiveTab("main");
-      } else if (errors.script !== undefined || hasVariableErrors) {
-        setActiveTab("script");
-      }
-      return;
-    }
-    const trimmedName = form.name.trim();
-    const trimmedScript = form.script.trim();
-    const trimmedDescription = form.description.trim();
-    const descriptionValue =
-      trimmedDescription.length > 0 ? trimmedDescription : undefined;
-    // Defensive: re-detect at save time against the trimmed script so
-    // a user who pasted `sudo …` and hit Save in the same tick still
-    // gets the correct flag. The useEffect above will normally have
-    // already flipped form.runAsAdmin to true by the time Save fires,
-    // but recomputing here makes the save path independent of effect
-    // ordering and impossible to bypass by tampering with the input
-    // state through devtools or future refactors.
-    // Remote runs cannot be elevated in this version (local sudo/UAC does
-    // not map onto a remote host). Force the persisted flag off for a remote
-    // target so a command can't be saved as "remote + admin" — a combination
-    // the executor would reject. The UI also disables the toggle for remote.
-    const isRemoteTarget = form.target.kind !== "local";
-    const runAsAdminValue =
-      !isRemoteTarget &&
-      (form.runAsAdmin || detectAdminEscalation(trimmedScript));
-
-    // Persisted target: omit it entirely when local so the saved Command's
-    // wire shape stays byte-identical to a command that predates this feature
-    // (the executor defaults a missing target to local).
-    const targetValue =
-      form.target.kind === "local" ? undefined : form.target;
-
-    // Persist the password-prompt opt-in only for a remote target — it is
-    // meaningless for a local run. Switching a command back to local therefore
-    // drops the flag, so it can't silently re-arm if the command later becomes
-    // remote again.
-    const promptSshPasswordValue =
-      isRemoteTarget && form.promptSshPassword ? true : undefined;
-
-    // HTTP-API fields. A blank slug means "no slug" (stored as undefined). The
-    // slug is only meaningful when API access is enabled, but we persist the
-    // typed value regardless so toggling access off then on keeps the slug.
-    const trimmedSlug = form.apiSlug.trim();
-    const apiSlugValue = trimmedSlug === "" ? undefined : trimmedSlug;
-
-    // Convert UI rows to wire-format specs. Empty list → omit the
-    // field entirely from the saved Command (matches the `args` / `env`
-    // convention elsewhere in this file). For the edit path we always
-    // write the field — including as `undefined` — so the persisted
-    // record reflects a user who cleared every row.
-    const variablesValue: VariableSpec[] | undefined =
-      form.variables.length > 0
-        ? rowsToVariableSpecs(form.variables)
-        : undefined;
-
-    // Tags: normalized (trim/dedupe/no-empties). Category: a blank
-    // input maps to `undefined` (no category) rather than an empty
-    // string, so the stored field is either a real name or absent.
-    const tagsValue = normalizeTags(form.tags);
-    const trimmedCategory = form.category.trim();
-    const categoryValue =
-      trimmedCategory.length > 0 ? trimmedCategory : undefined;
-
-    if (mode === "edit" && command) {
-      // Seed-to-user conversion: when a seed is edited, drop the
-      // translation keys so the literal values become canonical.
-      const patch: Partial<Command> = {
-        name: trimmedName,
-        description: descriptionValue,
-        script: trimmedScript,
-        shell: form.shell,
-        tags: tagsValue,
-        // Explicit `categoryId` (including `undefined`) so clearing the
-        // category field drops it on the stored command rather than
-        // leaving the old value behind the store's spread merge.
-        categoryId: categoryValue,
-        runAsAdmin: runAsAdminValue,
-        // Explicit field on the patch so clearing all rows (transition
-        // from N>0 to 0) drops the field on the stored command. The
-        // store's spread merge would otherwise leave the old value.
-        variables: variablesValue,
-        timeoutSeconds: parseTimeoutSeconds(form.timeoutSeconds),
-        // Explicit field so clearing the schema (toggle off) drops it on
-        // the stored command rather than leaving the old value behind.
-        outputSchema: form.outputSchema,
-        // Explicit field so clearing all env rows drops Command.env.
-        env: envRowsToRecord(form.envRows),
-        // Explicit field so clearing the working dir resets it to the default.
-        workingDir: form.workingDir.trim() !== "" ? form.workingDir.trim() : undefined,
-        promptWorkingDir: form.promptWorkingDir || undefined,
-        // Explicit field (including `undefined`) so switching a remote command
-        // back to local drops the stored target rather than leaving the old
-        // value behind the store's spread merge.
-        target: targetValue,
-        // Explicit field so unchecking (or switching to local) drops the flag.
-        promptSshPassword: promptSshPasswordValue,
-        // HTTP API: explicit fields (including `undefined` slug) so clearing
-        // the slug or disabling access drops the value on the stored command.
-        apiEnabled: form.apiEnabled,
-        apiSlug: apiSlugValue,
-      };
-      if (command.nameKey !== undefined) patch.nameKey = undefined;
-      if (command.descriptionKey !== undefined) {
-        patch.descriptionKey = undefined;
-      }
-      updateCommand(command.id, patch);
-    } else {
-      const envValue = envRowsToRecord(form.envRows);
-      addCommand({
-        name: trimmedName,
-        description: descriptionValue,
-        script: trimmedScript,
-        shell: form.shell,
-        tags: tagsValue,
-        favorite: false,
-        runAsAdmin: runAsAdminValue,
-        // Omit the optional keys entirely when empty to match the
-        // `args`/`env` convention — `addCommand` accepts
-        // `Omit<Command, ...>` so optional fields are naturally elidable.
-        ...(categoryValue !== undefined ? { categoryId: categoryValue } : {}),
-        ...(variablesValue !== undefined ? { variables: variablesValue } : {}),
-        ...(parseTimeoutSeconds(form.timeoutSeconds) !== undefined
-          ? { timeoutSeconds: parseTimeoutSeconds(form.timeoutSeconds) }
-          : {}),
-        ...(form.outputSchema !== undefined
-          ? { outputSchema: form.outputSchema }
-          : {}),
-        ...(envValue !== undefined ? { env: envValue } : {}),
-        ...(form.workingDir.trim() !== "" ? { workingDir: form.workingDir.trim() } : {}),
-        ...(form.promptWorkingDir ? { promptWorkingDir: true } : {}),
-        ...(targetValue !== undefined ? { target: targetValue } : {}),
-        ...(promptSshPasswordValue !== undefined
-          ? { promptSshPassword: promptSshPasswordValue }
-          : {}),
-        // HTTP API: omit entirely when not opted in / no slug so the wire stays
-        // byte-identical to a command that predates this feature.
-        ...(form.apiEnabled ? { apiEnabled: true } : {}),
-        ...(apiSlugValue !== undefined ? { apiSlug: apiSlugValue } : {}),
-        // A command created from within a workflow editor is scoped LOCAL to
-        // that workflow (hidden from the global library). Stamp the scope +
-        // owning workflow id supplied by the host. Omitted entirely for a
-        // normal global create so the wire stays byte-identical.
-        ...(initialScope === "local" && initialWorkflowId !== undefined
-          ? { scope: "local" as const, workflowId: initialWorkflowId }
-          : {}),
-      });
-    }
-    // If a live-run is still active when the user saves, cancel it so
-    // we don't leak a background process after the modal closes.
-    cancelActiveRunForSave();
-    // The changes are now persisted, so the form is no longer "dirty".
-    // Clear the host's dirty flag BEFORE navigating: `onClose` funnels
-    // through `requestNavigation`, which would otherwise see a stale
-    // dirty signal (our `isDirty` compares `form` to the original
-    // `initial` snapshot and stays true even after the save) and park the
-    // navigation behind the unsaved-changes confirm dialog.
-    onDirtyChange?.(false);
-    teardownRun();
-    onClose();
-  }, [
-    addCommand,
+  // Save path: validation gating + create/edit DTO assembly + teardown.
+  // Extracted to a hook so the container stays a thin composition (SRP).
+  const { handleSave } = useCommandFormSave({
+    form,
+    mode,
     command,
-    form.description,
-    form.name,
-    form.script,
-    form.shell,
-    form.tags,
-    form.category,
-    form.runAsAdmin,
-    form.variables,
-    form.timeoutSeconds,
-    form.outputSchema,
-    form.envRows,
-    form.workingDir,
-    form.promptWorkingDir,
-    form.target,
-    form.promptSshPassword,
-    form.apiEnabled,
-    form.apiSlug,
     errors,
     hasErrors,
     hasVariableErrors,
-    mode,
+    setShowErrors,
+    setActiveTab,
+    initialScope,
+    initialWorkflowId,
     onClose,
     onDirtyChange,
     cancelActiveRunForSave,
     teardownRun,
-    updateCommand,
-    initialScope,
-    initialWorkflowId,
-  ]);
+  });
 
   // Focus the name input when the view opens (select all in edit mode for
   // a quick rename). Deferred a tick so the layout has painted first.
@@ -876,171 +663,30 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     });
   }, [utilityRanges, helpByUtility]);
 
-  // Flag builder: fetch parsed CLI on demand, then open the inline section.
-  const handleOpenFlagBuilder = useCallback((): void => {
-    if (!utilityRange) return;
-    const name = utilityRange.name;
-    setFlagBuilderLoading(true);
-    void parseUtilityFlags(name).then((parsed) => {
-      setFlagBuilderData(parsed);
-      setFlagsByUtility((prev) => new Map(prev).set(name, parsed));
-      setFlagBuilderOpen(true);
-      setFlagBuilderLoading(false);
-    }).catch(() => {
-      setFlagBuilderLoading(false);
-    });
-  }, [utilityRange]);
+  // Flag-builder concerns (open/loading state, on-demand + proactive
+  // ParsedCli fetch/prune, panel sync) — extracted to useUtilityFlagBuilder
+  // (SRP). The form remains the state owner; the hook calls back through
+  // `setForm` only when the user applies a builder edit.
+  const {
+    flagBuilderOpen,
+    flagBuilderData,
+    flagBuilderLoading,
+    flagsByUtility,
+    handleOpenFlagBuilder,
+    handleFlagBuilderChange,
+    handleFlagBuilderDismiss,
+  } = useUtilityFlagBuilder({
+    utilityRanges,
+    helpByUtility,
+    resolvedHelp,
+    utilityRange,
+    setForm,
+  });
 
-  // Proactively fetch ParsedCli for EVERY recognised+found utility (so flag
-  // highlights appear for each command without the user opening the
-  // builder). The fetched flags accumulate in `flagsByUtility`; the leading
-  // utility's flags also feed the single-utility flag-builder panel.
-  //
-  // We track which names have been fetched this session so a status
-  // transition loading→found for the same name doesn't refetch, and prune
-  // entries whose utility is no longer present in the script.
-  //
-  // `flagBuilderOpen` is intentionally NOT in the dep array: opening/closing
-  // the builder must not re-trigger this effect.
-  const fetchedUtilitiesRef = useRef<Set<string>>(new Set());
-  const flagBuilderOpenRef = useRef(flagBuilderOpen);
-  flagBuilderOpenRef.current = flagBuilderOpen;
-  // Stable key of the found-utility name set, so the effect only re-runs
-  // when which utilities are FOUND actually changes.
-  const foundUtilityKey = useMemo<string>(() => {
-    const found = new Set<string>();
-    for (const range of utilityRanges) {
-      if (helpByUtility.get(range.name)?.status === "found") {
-        found.add(range.name);
-      }
-    }
-    return [...found].sort().join("\n");
-  }, [utilityRanges, helpByUtility]);
-  useEffect(() => {
-    const found = foundUtilityKey === "" ? [] : foundUtilityKey.split("\n");
-    const foundSet = new Set(found);
-
-    // Prune cached flags + fetch markers for utilities no longer found.
-    fetchedUtilitiesRef.current = new Set(
-      [...fetchedUtilitiesRef.current].filter((n) => foundSet.has(n)),
-    );
-    setFlagsByUtility((prev) => {
-      let changed = false;
-      const next = new Map(prev);
-      for (const name of prev.keys()) {
-        if (!foundSet.has(name)) {
-          next.delete(name);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-
-    if (found.length === 0) {
-      setFlagBuilderData(null);
-      if (flagBuilderOpenRef.current) setFlagBuilderOpen(false);
-      return;
-    }
-
-    for (const name of found) {
-      if (fetchedUtilitiesRef.current.has(name)) continue;
-      fetchedUtilitiesRef.current.add(name);
-      void parseUtilityFlags(name)
-        .then((parsed) => {
-          setFlagsByUtility((prev) => new Map(prev).set(name, parsed));
-        })
-        .catch(() => {
-          fetchedUtilitiesRef.current.delete(name);
-        });
-    }
-  }, [foundUtilityKey]);
-
-  // Keep the single-utility flag-builder panel in sync with the leading
-  // utility's parsed flags (or clear it when the leading utility changes /
-  // is no longer found).
-  const leadingUtilityName =
-    resolvedHelp?.status === "found" ? utilityRange?.name ?? null : null;
-  useEffect(() => {
-    if (leadingUtilityName === null) {
-      setFlagBuilderData(null);
-      if (flagBuilderOpenRef.current) setFlagBuilderOpen(false);
-      return;
-    }
-    const flags = flagsByUtility.get(leadingUtilityName);
-    if (flags !== undefined) setFlagBuilderData(flags);
-  }, [leadingUtilityName, flagsByUtility]);
-
-  const handleFlagBuilderChange = useCallback((script: string): void => {
-    setForm((s) => ({ ...s, script }));
-  }, []);
-
-  const handleFlagBuilderDismiss = useCallback((): void => {
-    setFlagBuilderOpen(false);
-    // Do NOT clear flagBuilderData — it is still used for flag highlighting
-    // in the ScriptEditor overlay even when the builder panel is closed.
-  }, []);
-
-  // ---------------------------------------------------------------
-  // Variable-row mutation handlers. Each operates on the row at
-  // `index` (the row identity is the array position). The handlers
-  // are intentionally simple — no debouncing, no batching — because
-  // the row count is bounded by what a human will reasonably declare
-  // and re-rendering 30+ rows on every keystroke is still trivial.
-  // ---------------------------------------------------------------
-  const handleVariableAdd = useCallback((): void => {
-    setForm((s) => ({
-      ...s,
-      variables: [
-        ...s.variables,
-        {
-          rowId: makeRowId(),
-          name: "",
-          defaultValue: "",
-          description: "",
-          sensitive: false,
-          // New rows default to "prompt at runtime" — the safest
-          // default since an empty string is a meaningful value but
-          // unlikely to be what the user wants for a fresh variable.
-          promptAtRuntime: true,
-          // Fresh row: don't show the "invalid name" error yet. The
-          // flag flips to true on first input or blur, or via the
-          // global `showErrors` switch on save.
-          nameTouched: false,
-        },
-      ],
-    }));
-  }, []);
-
-  const handleVariableRemove = useCallback((index: number): void => {
-    setForm((s) => ({
-      ...s,
-      variables: s.variables.filter((_, i) => i !== index),
-    }));
-  }, []);
-
-  const updateVariableRow = useCallback(
-    (index: number, patch: Partial<VariableRow>): void => {
-      setForm((s) => {
-        const updatedVariables = s.variables.map((row, i) =>
-          i === index ? { ...row, ...patch } : row,
-        );
-        // When the default value of a named variable changes, keep every
-        // ${name} / ${name:old} reference in the script in sync.
-        if ('defaultValue' in patch) {
-          const name = updatedVariables[index]?.name;
-          if (name) {
-            return {
-              ...s,
-              variables: updatedVariables,
-              script: syncVariableDefaultToScript(s.script, name, patch.defaultValue ?? ''),
-            };
-          }
-        }
-        return { ...s, variables: updatedVariables };
-      });
-    },
-    [],
-  );
+  // Variable-row CRUD — extracted to useVariableRows (SRP). The form
+  // remains the state owner; the hook only wraps the `setForm` updates.
+  const { handleVariableAdd, handleVariableRemove, updateVariableRow } =
+    useVariableRows(setForm);
 
   const handleOutputSchemaChange = useCallback(
     (next: OutputSchema | undefined): void => {
@@ -1049,37 +695,9 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     [],
   );
 
-  // ---------------------------------------------------------------
-  // Env-row mutation handlers.
-  // ---------------------------------------------------------------
-  const handleEnvRowAdd = useCallback((): void => {
-    setForm((s) => ({
-      ...s,
-      envRows: [
-        ...s.envRows,
-        { rowId: makeRowId(), key: "", value: "" } satisfies EnvRow,
-      ],
-    }));
-  }, []);
-
-  const handleEnvRowRemove = useCallback((index: number): void => {
-    setForm((s) => ({
-      ...s,
-      envRows: s.envRows.filter((_, i) => i !== index),
-    }));
-  }, []);
-
-  const updateEnvRow = useCallback(
-    (index: number, patch: Partial<EnvRow>): void => {
-      setForm((s) => ({
-        ...s,
-        envRows: s.envRows.map((row, i) =>
-          i === index ? { ...row, ...patch } : row,
-        ),
-      }));
-    },
-    [],
-  );
+  // Env-row CRUD — extracted to useEnvRows (SRP).
+  const { handleEnvRowAdd, handleEnvRowRemove, updateEnvRow } =
+    useEnvRows(setForm);
 
   // stdout of the most recent in-form run, fed to the output-schema
   // editor so its "sample output" textarea auto-fills from a real run.
@@ -1331,847 +949,98 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
         </div>
 
         <div className="command-form__body">
-          {/* --- Tab: Main (metadata) --- */}
-          <div
-            role="tabpanel"
-            id="command-form-panel-main"
-            aria-labelledby="command-form-tab-main"
-            hidden={activeTab !== "main"}
-            className="command-form__panel"
-          >
-          <label className="command-form__field">
-            <span className="command-form__label command-form__label--required">
-              <span
-                className="command-form__required"
-                aria-hidden="true"
-              >
-                *
-              </span>
-              {t("commandForm.fields.name")}
-            </span>
-            <input
-              ref={nameInputRef}
-              type="text"
-              className="input"
-              value={form.name}
-              onChange={handleNameChange}
-              placeholder={t("commandForm.placeholders.name")}
-              aria-required="true"
-              aria-invalid={showErrors && errors.name ? true : undefined}
-              aria-describedby={
-                showErrors && errors.name ? "command-form-name-error" : undefined
-              }
-            />
-            {showErrors && errors.name ? (
-              <span
-                id="command-form-name-error"
-                className="command-form__error"
-                role="alert"
-              >
-                {errors.name}
-              </span>
-            ) : null}
-          </label>
-
-          <label className="command-form__field">
-            <span className="command-form__label">
-              {t("commandForm.fields.description")}
-            </span>
-            <textarea
-              className="input command-form__description"
-              value={form.description}
-              onChange={handleDescriptionChange}
-              placeholder={t("commandForm.placeholders.description")}
-              rows={3}
-            />
-          </label>
-
-          <div className="command-form__field">
-            <span className="command-form__label">
-              {t("commandForm.fields.tags")}
-            </span>
-            <div className="tag-input-wrap">
-              <div className="tag-input">
-                {form.tags.map((tag, index) => (
-                  <span key={tag} className="tag-input__chip">
-                    <span className="tag-input__chip-label">{tag}</span>
-                    <button
-                      type="button"
-                      className="tag-input__chip-remove"
-                      onClick={() => handleRemoveTag(index)}
-                      aria-label={t("commandForm.tags.remove", { tag })}
-                      title={t("commandForm.tags.remove", { tag })}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-                <input
-                  type="text"
-                  className="tag-input__field"
-                  value={tagDraft}
-                  onChange={(e) => setTagDraft(e.target.value)}
-                  onKeyDown={handleTagInputKeyDown}
-                  onBlur={() => {
-                    if (tagSuggestActiveIndex >= 0) return;
-                    commitTag(tagDraft);
-                  }}
-                  placeholder={t("commandForm.placeholders.tags")}
-                  aria-label={t("commandForm.fields.tags")}
-                  autoComplete="off"
-                />
-              </div>
-              {filteredTagSuggestions.length > 0 ? (
-                <ul className="tag-suggest" role="listbox" aria-label={t("commandForm.fields.tags")}>
-                  {filteredTagSuggestions.map((suggestion, idx) => (
-                    <li
-                      key={suggestion}
-                      className={
-                        "tag-suggest__option" +
-                        (idx === tagSuggestActiveIndex ? " tag-suggest__option--active" : "")
-                      }
-                      role="option"
-                      aria-selected={idx === tagSuggestActiveIndex}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        commitTag(suggestion);
-                      }}
-                      onMouseEnter={() => setTagSuggestActiveIndex(idx)}
-                    >
-                      {suggestion}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="command-form__field">
-            <span className="command-form__label">
-              {t("commandForm.fields.category")}
-            </span>
-            {addingCategory ? (
-              // Inline "new category" editor: a text input + confirm /
-              // cancel. Enter confirms, Escape cancels (stopped from
-              // bubbling so the modal's own Esc handler doesn't fire).
-              <div className="command-form__category-add">
-                <input
-                  type="text"
-                  className="input command-form__category-add-input"
-                  value={newCategoryDraft}
-                  autoFocus
-                  onChange={(e) => setNewCategoryDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleCategoryAddConfirm();
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleCategoryAddCancel();
-                    }
-                  }}
-                  placeholder={t("commandForm.category.addNewPlaceholder")}
-                  aria-label={t("commandForm.category.addNewTitle")}
-                />
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={handleCategoryAddConfirm}
-                >
-                  {t("commandForm.category.addNewConfirm")}
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={handleCategoryAddCancel}
-                >
-                  {t("commandForm.category.addNewCancel")}
-                </button>
-              </div>
-            ) : (
-              <Dropdown
-                value={form.category}
-                options={categoryOptions}
-                onChange={handleCategorySelect}
-                ariaLabel={t("commandForm.fields.category")}
-              />
-            )}
-          </div>
-
-          {/* --- HTTP API: opt-in + slug for the built-in REST server --- */}
-          <div className="command-form__field command-form__field--inline">
-            <ToggleSwitch
-              checked={form.apiEnabled}
-              onChange={(next) =>
-                setForm((s) => ({ ...s, apiEnabled: next }))
-              }
-              ariaLabel={t("commandForm.httpApi.enabled")}
-            />
-            <span>{t("commandForm.httpApi.enabled")}</span>
-          </div>
-          {/* The slug only matters when API access is on, so it's hidden until
-              the user opts in (keeps the form tidy and the intent clear). */}
-          {form.apiEnabled ? (
-            <div className="command-form__field">
-              <label
-                className="command-form__label"
-                htmlFor="command-form-api-slug"
-              >
-                {t("commandForm.httpApi.slug")}
-              </label>
-              <input
-                id="command-form-api-slug"
-                className={`input${
-                  showErrors && errors.apiSlug ? " input--error" : ""
-                }`}
-                value={form.apiSlug}
-                onChange={(e) =>
-                  setForm((s) => ({
-                    ...s,
-                    apiSlug: sanitizeApiSlugInput(e.target.value),
-                  }))
-                }
-                placeholder={t("commandForm.httpApi.slugPlaceholder")}
-                aria-invalid={showErrors && errors.apiSlug ? true : undefined}
-              />
-              {showErrors && errors.apiSlug ? (
-                <p className="command-form__error">{errors.apiSlug}</p>
-              ) : (
-                <span className="command-form__hint" role="note">
-                  {t("commandForm.httpApi.slugHint", {
-                    slug:
-                      form.apiSlug.trim() === "" ? "<slug>" : form.apiSlug.trim(),
-                  })}
-                </span>
-              )}
-            </div>
-          ) : null}
-          </div>
-
-          {/* --- Tab: Script (script editor + variables) --- */}
-          <div
-            role="tabpanel"
-            id="command-form-panel-script"
-            aria-labelledby="command-form-tab-script"
-            hidden={activeTab !== "script"}
-            className="command-form__panel"
-          >
-          <div className="command-form__field">
-            <span className="command-form__label command-form__label--required">
-              <span
-                className="command-form__required"
-                aria-hidden="true"
-              >
-                *
-              </span>
-              {t("commandForm.fields.script")}
-            </span>
-            {/*
-             * "Expert mode" toggle. Sits between the Script label and the
-             * editor. When checked it suppresses the leading-utility
-             * highlight + hover help (see `disableHints` in form state).
-             * Variable highlighting is unaffected — it reflects the
-             * command's own declared variables, not an external hint.
-             */}
-            <label className="command-form__field command-form__field--inline command-form__disable-hints">
-              <input
-                type="checkbox"
-                checked={form.disableHints}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, disableHints: e.target.checked }))
-                }
-              />
-              <span>{t("commandForm.fields.disableHints")}</span>
-            </label>
-            {/*
-             * Script field uses ScriptEditor (overlay-highlighting
-             * textarea) so `${var}` references — typed or inserted
-             * via the right-click "Insert variable" menu — are
-             * visually distinguished. Known variables (declared in
-             * the Variables section below) get one colour, unknown
-             * ones another so typos stand out.
-             *
-             * `scriptVariableSpecs` is derived from the current row
-             * state but only its `name` field is consulted by the
-             * editor — see the highlight regex. We pass full specs
-             * so future enhancements (e.g. show description on
-             * hover over a highlighted reference) don't need a
-             * prop-signature change.
-             */}
-            <ScriptEditor
-              value={form.script}
-              onChange={(next) =>
-                setForm((s) => ({
-                  ...s,
-                  script: next,
-                  variables: syncScriptDefaultsToRows(next, s.variables),
-                }))
-              }
-              variables={scriptVariableSpecs}
-              placeholder={t("commandForm.placeholders.script")}
-              rows={8}
-              ariaInvalid={showErrors && errors.script ? true : false}
-              ariaDescribedBy={
-                showErrors && errors.script
-                  ? "command-form-script-error"
-                  : undefined
-              }
-              utilityHighlights={utilityHighlights}
-              helpByUtility={helpByUtility}
-              utilityRanges={utilityRanges}
-              flagsByUtility={flagsByUtility}
-            />
-            {showErrors && errors.script ? (
-              <span
-                id="command-form-script-error"
-                className="command-form__error"
-                role="alert"
-              >
-                {errors.script}
-              </span>
-            ) : null}
-
-            {resolvedHelp?.status === "found" && !flagBuilderOpen ? (
-              <div className="command-form__build-flags-wrap">
-                <span className="command-form__build-flags-experimental">
-                  {t("scriptFirstCreator.actionBuildExperimental")}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn--ghost command-form__build-flags"
-                  onClick={handleOpenFlagBuilder}
-                  disabled={flagBuilderLoading}
-                >
-                  {flagBuilderLoading
-                    ? t("scriptFirstCreator.building")
-                    : t("scriptFirstCreator.actionBuild")}
-                </button>
-              </div>
-            ) : null}
-
-            {flagBuilderOpen && flagBuilderData !== null ? (
-              <FlagBuilder
-                script={form.script}
-                parsed={flagBuilderData}
-                onChange={handleFlagBuilderChange}
-                onDismiss={handleFlagBuilderDismiss}
-              />
-            ) : null}
-          </div>
-
-          {/*
-           * Admin toggle. When on, the command spawns with elevated
-           * privileges (sudo on Unix, UAC on Windows), rendered as the
-           * shared iOS-style ToggleSwitch with a visible label beside it.
-           * Hint copy is platform-conditional:
-           *   - Windows: warn that live-output capture is limited
-           *     (the UAC child runs in a different security context).
-           *   - Unix + no password stored yet: explain the first-run
-           *     password prompt so the modal doesn't surprise users.
-           *
-           * When the script itself starts with sudo/doas/pkexec, we
-           * force the toggle on and disable it (see
-           * `escalationDetected` above). The hint below explains why.
-           */}
-          <div
-            className={`command-form__field command-form__field--inline${
-              elevationLocked ? " command-form__field--locked" : ""
-            }`}
-            title={
-              isRemoteTarget
-                ? t("commandForm.tooltips.runAsAdminRemote", {
-                    defaultValue:
-                      "Run as administrator is not available for remote commands.",
-                  })
-                : escalationDetected
-                  ? t("commandForm.tooltips.runAsAdminAutoDetected", {
-                      defaultValue:
-                        "Detected sudo/doas/pkexec at the start of the script — admin mode is required.",
-                    })
-                  : undefined
+          <MainTab
+            t={t}
+            active={activeTab === "main"}
+            form={form}
+            errors={errors}
+            showErrors={showErrors}
+            nameInputRef={nameInputRef}
+            onNameChange={handleNameChange}
+            onDescriptionChange={handleDescriptionChange}
+            tagDraft={tagDraft}
+            setTagDraft={setTagDraft}
+            filteredTagSuggestions={filteredTagSuggestions}
+            tagSuggestActiveIndex={tagSuggestActiveIndex}
+            setTagSuggestActiveIndex={setTagSuggestActiveIndex}
+            onTagInputKeyDown={handleTagInputKeyDown}
+            commitTag={commitTag}
+            onRemoveTag={handleRemoveTag}
+            addingCategory={addingCategory}
+            newCategoryDraft={newCategoryDraft}
+            setNewCategoryDraft={setNewCategoryDraft}
+            categoryOptions={categoryOptions}
+            onCategorySelect={handleCategorySelect}
+            onCategoryAddConfirm={handleCategoryAddConfirm}
+            onCategoryAddCancel={handleCategoryAddCancel}
+            onApiEnabledChange={(next) =>
+              setForm((s) => ({ ...s, apiEnabled: next }))
             }
-          >
-            <ToggleSwitch
-              // Remote runs can't be elevated: force the switch off
-              // regardless of the persisted flag so the UI matches what the
-              // executor will actually do.
-              checked={!isRemoteTarget && form.runAsAdmin}
-              disabled={elevationLocked}
-              onChange={(next) =>
-                setForm((s) => ({ ...s, runAsAdmin: next }))
-              }
-              ariaLabel={t("commandForm.fields.runAsAdmin", {
-                defaultValue: "Run as administrator",
-              })}
-            />
-            <span>
-              {t("commandForm.fields.runAsAdmin", {
-                defaultValue: "Run as administrator",
-              })}
-            </span>
-          </div>
-          {isRemoteTarget ? (
-            <span className="command-form__hint" role="note">
-              {t("commandForm.hints.runAsAdminRemote", {
-                defaultValue:
-                  "Run as administrator is not available for remote commands.",
-              })}
-            </span>
-          ) : escalationDetected ? (
-            <span className="command-form__hint" role="note">
-              {t("commandForm.hints.runAsAdminAutoDetected", {
-                defaultValue:
-                  "Detected sudo/doas/pkexec at the start of the script. Admin mode is required and can't be disabled until you remove the escalation prefix.",
-              })}
-            </span>
-          ) : null}
-          {!isRemoteTarget && form.runAsAdmin && platform === "windows" ? (
-            <span className="command-form__hint" role="note">
-              {t("commandForm.warnings.windowsAdmin", {
-                defaultValue:
-                  "Windows will show a UAC prompt. Live output capture is limited.",
-              })}
-            </span>
-          ) : null}
-          {!isRemoteTarget &&
-          form.runAsAdmin &&
-          platform !== "windows" &&
-          !adminPasswordStored ? (
-            <span className="command-form__hint" role="note">
-              {t("commandForm.warnings.adminPasswordWillAsk", {
-                defaultValue:
-                  "You'll be asked for your administrator password on the first run.",
-              })}
-            </span>
-          ) : null}
+            onApiSlugChange={(next) =>
+              setForm((s) => ({ ...s, apiSlug: next }))
+            }
+          />
 
-          <div className="command-form__field">
-            <span className="command-form__label">
-              {t("commandForm.fields.timeoutSeconds", {
-                defaultValue: "Timeout (seconds)",
-              })}
-            </span>
-            {/*
-             * Timeout stepper. "Empty = no limit" — the value is stored as a
-             * string (`""` = no limit); we bridge it to NumberStepper's
-             * nullable mode (`null` ⇄ `""`). The shared component hides the
-             * native spinner arrows and renders the app's ghost-button
-             * steppers.
-             */}
-            <NumberStepper
-              allowEmpty
-              value={
-                form.timeoutSeconds.trim() === ""
-                  ? null
-                  : Number.parseInt(form.timeoutSeconds, 10)
-              }
-              onChange={(next) =>
-                setForm((s) => ({
-                  ...s,
-                  timeoutSeconds: next === null ? "" : String(next),
-                }))
-              }
-              min={1}
-              max={Number.MAX_SAFE_INTEGER}
-              placeholder={t("commandForm.placeholders.timeoutSeconds", {
-                defaultValue: "No limit",
-              })}
-              ariaLabel={t("commandForm.fields.timeoutSeconds", {
-                defaultValue: "Timeout (seconds)",
-              })}
-              decrementLabel={t("commandForm.timeout.decrement")}
-              incrementLabel={t("commandForm.timeout.increment")}
-            />
-          </div>
+          <ScriptTab
+            t={t}
+            active={activeTab === "script"}
+            form={form}
+            setForm={setForm}
+            errors={errors}
+            showErrors={showErrors}
+            platform={platform}
+            scriptVariableSpecs={scriptVariableSpecs}
+            utilityHighlights={utilityHighlights}
+            helpByUtility={helpByUtility}
+            utilityRanges={utilityRanges}
+            flagsByUtility={flagsByUtility}
+            resolvedHelp={resolvedHelp}
+            flagBuilderOpen={flagBuilderOpen}
+            flagBuilderData={flagBuilderData}
+            flagBuilderLoading={flagBuilderLoading}
+            onOpenFlagBuilder={handleOpenFlagBuilder}
+            onFlagBuilderChange={handleFlagBuilderChange}
+            onFlagBuilderDismiss={handleFlagBuilderDismiss}
+            isRemoteTarget={isRemoteTarget}
+            elevationLocked={elevationLocked}
+            escalationDetected={escalationDetected}
+            adminPasswordStored={adminPasswordStored}
+            variableErrors={variableErrors}
+            onVariableAdd={handleVariableAdd}
+            onVariableRemove={handleVariableRemove}
+            updateVariableRow={updateVariableRow}
+          />
 
-          {/*
-           * Variables section. Each row declares a `${name}` reference
-           * that the runner will resolve at execution time. The
-           * `promptAtRuntime` checkbox is the ONLY UI affordance that
-           * produces `defaultValue === undefined` on the saved spec —
-           * unchecking it preserves the empty string as a valid default
-           * (see VariableSpec docs for the semantics). Errors are
-           * computed by `computeVariableErrors` and shown inline; any
-           * error on any row blocks submit via the form-level
-           * `hasErrors` aggregation.
-           */}
-          <div className="command-form__field">
-            <div className="command-form__variables-header">
-              <span className="command-form__label">
-                {t("commandForm.variables.title")}
-              </span>
-              {/*
-               * Help affordance: an icon-only button paired with a
-               * custom popover so the cheat-sheet stays open as long
-               * as the cursor is over either the icon or the
-               * popover itself. Native `title` was tried first but
-               * browsers auto-dismiss it after a few seconds and
-               * don't expose its lifetime — the popover gives us
-               * that control. See `VariablesHelpTooltip` for the
-               * open/close logic (hover-intent close delay +
-               * focus/blur for keyboard users).
-               */}
-              <HelpTooltip
-                id="command-form-variables-help"
-                buttonLabel={t("commandForm.variables.help")}
-                body={t("commandForm.variables.helpTooltip")}
-              />
-            </div>
-            {form.variables.length > 0 ? (
-              <ul className="command-form__variables">
-                {form.variables.map((row, index) => {
-                  const errorKind = variableErrors[index];
-                  // Suppress `invalidName` until the user has actually
-                  // interacted with the name field, OR until they hit
-                  // Save (which flips `showErrors`). `duplicateName`
-                  // always shows because it can only happen after the
-                  // user has typed something. This keeps a freshly-
-                  // added blank row from screaming at the user before
-                  // they get a chance to type.
-                  const suppressInvalid =
-                    errorKind === "invalidName" &&
-                    !row.nameTouched &&
-                    !showErrors;
-                  const visibleErrorKind = suppressInvalid
-                    ? undefined
-                    : errorKind;
-                  const errorMessage =
-                    visibleErrorKind === "invalidName"
-                      ? t("commandForm.variables.errors.invalidName")
-                      : visibleErrorKind === "duplicateName"
-                        ? t("commandForm.variables.errors.duplicateName")
-                        : null;
-                  const errorId = `command-form-variable-${row.rowId}-error`;
-                  return (
-                    <li
-                      key={row.rowId}
-                      className="command-form__variables-row"
-                    >
-                      <div className="command-form__variables-row-fields">
-                        <input
-                          type="text"
-                          className="input command-form__variables-name"
-                          value={row.name}
-                          onChange={(e) =>
-                            updateVariableRow(index, {
-                              name: e.target.value,
-                              // Any keystroke counts as a touch so the
-                              // user sees feedback as they type. Once
-                              // touched, the flag stays true for the
-                              // life of the row.
-                              nameTouched: true,
-                            })
-                          }
-                          onBlur={() => {
-                            // Mark touched on blur too, in case the
-                            // user tabbed in/out without typing.
-                            if (!row.nameTouched) {
-                              updateVariableRow(index, { nameTouched: true });
-                            }
-                          }}
-                          placeholder={t(
-                            "commandForm.variables.namePlaceholder",
-                          )}
-                          aria-label={t(
-                            "commandForm.variables.namePlaceholder",
-                          )}
-                          aria-invalid={errorMessage ? true : undefined}
-                          aria-describedby={
-                            errorMessage ? errorId : undefined
-                          }
-                        />
-                        <input
-                          type="text"
-                          className="input command-form__variables-default"
-                          value={row.defaultValue}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            updateVariableRow(index, {
-                              defaultValue: val,
-                              ...(val === '' ? { promptAtRuntime: true } : {}),
-                            });
-                          }}
-                          placeholder={t(
-                            "commandForm.variables.defaultValuePlaceholder",
-                          )}
-                          aria-label={t(
-                            "commandForm.variables.defaultValuePlaceholder",
-                          )}
-                        />
-                        <input
-                          type="text"
-                          className="input command-form__variables-description"
-                          value={row.description}
-                          onChange={(e) =>
-                            updateVariableRow(index, {
-                              description: e.target.value,
-                            })
-                          }
-                          placeholder={t(
-                            "commandForm.variables.descriptionPlaceholder",
-                          )}
-                          aria-label={t(
-                            "commandForm.variables.descriptionPlaceholder",
-                          )}
-                        />
-                        <div className="command-form__variables-toggles">
-                          <label className="command-form__field command-form__field--inline">
-                            <input
-                              type="checkbox"
-                              checked={row.promptAtRuntime}
-                              onChange={(e) =>
-                                updateVariableRow(index, {
-                                  promptAtRuntime: e.target.checked,
-                                })
-                              }
-                            />
-                            <span>
-                              {t("commandForm.variables.promptAtRuntime")}
-                            </span>
-                          </label>
-                          <label className="command-form__field command-form__field--inline">
-                            <input
-                              type="checkbox"
-                              checked={row.sensitive}
-                              onChange={(e) =>
-                                updateVariableRow(index, {
-                                  sensitive: e.target.checked,
-                                })
-                              }
-                            />
-                            <span>{t("commandForm.variables.sensitive")}</span>
-                          </label>
-                          {row.sensitive ? (
-                            <p className="form-hint">
-                              {t("commandForm.variables.sensitiveLeakWarning")}
-                            </p>
-                          ) : null}
-                        </div>
-                        <button
-                          type="button"
-                          className="btn btn--ghost btn--icon command-form__variables-remove"
-                          onClick={() => handleVariableRemove(index)}
-                          aria-label={t("commandForm.variables.remove")}
-                          title={t("commandForm.variables.remove")}
-                        >
-                          <TrashIcon />
-                        </button>
-                      </div>
-                      {errorMessage ? (
-                        <span
-                          id={errorId}
-                          className="command-form__error"
-                          role="alert"
-                        >
-                          {errorMessage}
-                        </span>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={handleVariableAdd}
-            >
-              {t("commandForm.variables.add")}
-            </button>
-          </div>
-          </div>
-
-          {/* --- Tab: Output (extraction schema) --- */}
-          <div
-            role="tabpanel"
-            id="command-form-panel-output"
-            aria-labelledby="command-form-tab-output"
-            hidden={activeTab !== "output"}
-            className="command-form__panel"
-          >
-          <OutputSchemaEditor
+          <OutputTab
+            t={t}
+            active={activeTab === "output"}
             value={form.outputSchema}
             onChange={handleOutputSchemaChange}
             sampleOutput={runStdoutSample}
-            t={t}
           />
-          </div>
 
-          {/* --- Tab: Env (where-to-run, shell, working directory, and
-              per-command environment variable overrides) --- */}
-          <div
-            role="tabpanel"
-            id="command-form-panel-env"
-            aria-labelledby="command-form-tab-env"
-            hidden={activeTab !== "env"}
-            className="command-form__panel"
-          >
-          {/*
-           * Where-to-run selector (Local / Remote host / Ask at run time).
-           * Sourced from the shared SSH host store so the offered hosts match
-           * Environment → Connections exactly. Remote runs disable elevation
-           * (handled on the admin checkbox below).
-           */}
-          <TargetSelector
-            value={form.target}
-            onChange={(target) => setForm((s) => ({ ...s, target }))}
-            promptSshPassword={form.promptSshPassword}
+          <EnvTab
+            t={t}
+            active={activeTab === "env"}
+            form={form}
+            onTargetChange={(target) => setForm((s) => ({ ...s, target }))}
             onPromptSshPasswordChange={(promptSshPassword) =>
               setForm((s) => ({ ...s, promptSshPassword }))
             }
+            shellOptions={shellOptions}
+            showNoShellsWarning={showNoShellsWarning}
+            onShellChange={handleShellChange}
+            onWorkingDirChange={(value) =>
+              setForm((s) => ({ ...s, workingDir: value }))
+            }
+            onPromptWorkingDirChange={(next) =>
+              setForm((s) => ({ ...s, promptWorkingDir: next }))
+            }
+            systemVars={systemVars}
+            onEnvRowAdd={handleEnvRowAdd}
+            onEnvRowRemove={handleEnvRowRemove}
+            updateEnvRow={updateEnvRow}
           />
-
-          <div className="command-form__field">
-            <span className="command-form__label">
-              {t("commandForm.fields.shell")}
-            </span>
-            <Dropdown
-              value={form.shell}
-              options={shellOptions}
-              onChange={handleShellChange}
-              ariaLabel={t("commandForm.fields.shell")}
-            />
-            {showNoShellsWarning ? (
-              <span className="command-form__warning" role="note">
-                {t("commandForm.warnings.noShellsDetected")}
-              </span>
-            ) : null}
-          </div>
-
-          <div className="command-form__field">
-            <span className="command-form__label">
-              {t("commandForm.fields.workingDir")}
-            </span>
-            <input
-              type="text"
-              className="input command-form__working-dir-input"
-              value={form.workingDir}
-              onChange={(e) =>
-                setForm((s) => ({ ...s, workingDir: e.target.value }))
-              }
-              placeholder={t("commandForm.placeholders.workingDir")}
-              aria-label={t("commandForm.fields.workingDir")}
-            />
-            <div className="command-form__field command-form__field--inline">
-              <ToggleSwitch
-                checked={form.promptWorkingDir}
-                onChange={(next) =>
-                  setForm((s) => ({ ...s, promptWorkingDir: next }))
-                }
-                ariaLabel={t("commandForm.fields.promptWorkingDir")}
-              />
-              <span>{t("commandForm.fields.promptWorkingDir")}</span>
-            </div>
-          </div>
-
-            <div className="command-form__field">
-              <span className="command-form__label">
-                {t("commandForm.env.title", { defaultValue: "Environment variables" })}
-              </span>
-              <span className="command-form__hint" role="note">
-                {t("commandForm.env.hint", {
-                  defaultValue:
-                    "These KEY=VALUE pairs are injected into the command's environment at run time, overriding any inherited system variables with the same key.",
-                })}
-              </span>
-            </div>
-            {form.envRows.length > 0 ? (
-              <ul className="command-form__env-list">
-                {form.envRows.map((row, index) => {
-                  const overridesSystem = isOverridingSystem(row.key, systemVars);
-                  const invalidKey =
-                    row.key.trim() !== "" && !isValidEnvVarName(row.key.trim());
-                  return (
-                     <li key={row.rowId} className="command-form__env-row">
-                       <div className="command-form__env-row-controls">
-                       <input
-                        type="text"
-                        className={
-                          invalidKey
-                            ? "input command-form__env-key input--error"
-                            : overridesSystem
-                              ? "input command-form__env-key input--warning"
-                              : "input command-form__env-key"
-                        }
-                        value={row.key}
-                        onChange={(e) =>
-                          updateEnvRow(index, { key: e.target.value })
-                        }
-                        placeholder={t("commandForm.env.keyPlaceholder", {
-                          defaultValue: "KEY",
-                        })}
-                        aria-label={t("commandForm.env.keyLabel", {
-                          defaultValue: "Key",
-                        })}
-                        aria-invalid={invalidKey || overridesSystem}
-                        title={
-                          invalidKey
-                            ? t("commandForm.env.invalidKey", {
-                                defaultValue:
-                                  "Invalid name. Use letters, digits and underscore; must not start with a digit.",
-                              })
-                            : undefined
-                        }
-                        spellCheck={false}
-                      />
-                       <input
-                         type="text"
-                         className="input command-form__env-value"
-                         value={row.value}
-                         onChange={(e) =>
-                           updateEnvRow(index, { value: e.target.value })
-                         }
-                         placeholder={t("commandForm.env.valuePlaceholder", {
-                           defaultValue: "Value",
-                         })}
-                         aria-label={t("commandForm.env.valueLabel", {
-                           defaultValue: "Value",
-                         })}
-                         spellCheck={false}
-                       />
-                       <button
-                         type="button"
-                         className="btn btn--ghost btn--icon command-form__env-remove"
-                         onClick={() => handleEnvRowRemove(index)}
-                         aria-label={t("commandForm.env.removeRow", {
-                           defaultValue: "Remove",
-                         })}
-                         title={t("commandForm.env.removeRow", {
-                           defaultValue: "Remove",
-                         })}
-                       >
-                         <TrashIcon />
-                       </button>
-                        </div>
-                        {overridesSystem && (
-                          <p className="command-form__env-override-hint">
-                            {t("commandForm.env.overridesSystemValue", {
-                              defaultValue:
-                                "Overrides system variable. Current value: {{value}}",
-                              value: systemVars[row.key.trim()] ?? "",
-                            })}
-                          </p>
-                        )}
-                     </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <p className="command-form__env-empty">
-                {t("commandForm.env.empty", {
-                  defaultValue: "No environment variables set for this command.",
-                })}
-              </p>
-            )}
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={handleEnvRowAdd}
-            >
-              {t("commandForm.env.addRow", { defaultValue: "Add variable" })}
-            </button>
-          </div>
         </div>
 
         {/*
@@ -2204,4 +1073,3 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
       </div>
   );
 }
-

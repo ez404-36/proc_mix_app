@@ -5,10 +5,11 @@
 // component registers a handler here at mount time, and the runtime
 // helper `promptForAdminPassword` awaits it.
 //
-// Only one prompt can be active at a time. If `promptForAdminPassword`
-// is called twice in quick succession (rare — both triggers would have
-// to hit the sentinel before the user can respond), the second caller
-// gets the same Promise as the first.
+// Thin specialization of the shared `createPromptRegistry` factory — see
+// `createPromptRegistry.ts` for the singleton/registration contract. Only
+// one prompt can be active at a time.
+
+import { createPromptRegistry } from "./createPromptRegistry";
 
 /**
  * Result of a successful prompt. The modal exposes two confirm buttons:
@@ -35,7 +36,7 @@ export interface AdminPasswordPromptResult {
  */
 export type AdminPasswordPromptHandler = () => Promise<AdminPasswordPromptResult | null>;
 
-let registeredHandler: AdminPasswordPromptHandler | null = null;
+const registry = createPromptRegistry<[], AdminPasswordPromptResult>();
 
 /**
  * Register the modal's open-and-await function. Called once by the
@@ -46,7 +47,7 @@ let registeredHandler: AdminPasswordPromptHandler | null = null;
 export function registerAdminPasswordPromptHandler(
   handler: AdminPasswordPromptHandler | null,
 ): void {
-  registeredHandler = handler;
+  registry.register(handler);
 }
 
 /**
@@ -64,23 +65,10 @@ export function registerAdminPasswordPromptHandler(
  * written to the keychain.
  */
 export async function promptForAdminPassword(): Promise<AdminPasswordPromptResult | null> {
-  if (!registeredHandler) {
-    // No UI is mounted yet (or we're in a test that didn't bother to
-    // mount one). Treating this as "cancelled" preserves the contract
-    // for `triggerCommandRun`'s sentinel-retry loop: it gives up
-    // gracefully instead of throwing into the user's face.
-    return null;
-  }
-  return registeredHandler();
+  return registry.prompt();
 }
-
-// ------------------------------------------------------------------
-// Test-only helpers. Tests need to reset the registry between cases
-// because the module is loaded once per worker. Marked with a leading
-// underscore to discourage production callers.
-// ------------------------------------------------------------------
 
 /** @internal */
 export function _resetAdminPasswordPromptHandler(): void {
-  registeredHandler = null;
+  registry._reset();
 }

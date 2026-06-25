@@ -3,12 +3,16 @@
 // Mirrors variablePrompt.ts exactly — `triggerCommandRun` lives outside
 // the React tree, so the modal is opened via a handler the
 // `<WorkingDirPrompt>` component registers at mount.
+//
+// Thin specialization of the shared `createPromptRegistry` factory.
+
+import { createPromptRegistry } from "./createPromptRegistry";
 
 export type WorkingDirPromptHandler = (
   defaultValue: string,
 ) => Promise<string | null>;
 
-let registeredHandler: WorkingDirPromptHandler | null = null;
+const registry = createPromptRegistry<[defaultValue: string], string>();
 
 /**
  * Register the modal's open-and-await function. Called once by the
@@ -18,7 +22,7 @@ let registeredHandler: WorkingDirPromptHandler | null = null;
 export function registerWorkingDirPromptHandler(
   handler: WorkingDirPromptHandler | null,
 ): void {
-  registeredHandler = handler;
+  registry.register(handler);
 }
 
 /**
@@ -33,13 +37,10 @@ export function registerWorkingDirPromptHandler(
 export async function promptForWorkingDir(
   defaultValue: string,
 ): Promise<string | null> {
-  if (!registeredHandler) {
-    return null;
-  }
-  return registeredHandler(defaultValue);
+  return registry.prompt(defaultValue);
 }
 
 /** @internal */
 export function _resetWorkingDirPromptHandler(): void {
-  registeredHandler = null;
+  registry._reset();
 }

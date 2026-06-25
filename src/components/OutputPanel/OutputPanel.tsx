@@ -7,6 +7,7 @@ import type {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+import { useShallow } from "zustand/react/shallow";
 import { useContextMenu } from "../ContextMenu";
 import type { ContextMenuEntry } from "../ContextMenu";
 import { buildConsoleCopyMenu } from "../../utils/consoleClipboard";
@@ -253,31 +254,60 @@ function ResultView({ result, t }: ResultViewProps): ReactElement {
 
 export function OutputPanel(): ReactElement | null {
   const { t } = useTranslation();
-  const panelOpen = useExecutionStore((s) => s.panelOpen);
-  const activeExecutionId = useExecutionStore((s) => s.activeExecutionId);
-  const executions = useExecutionStore((s) => s.executions);
-  const recentIds = useExecutionStore((s) => s.recentIds);
-  const setPanelOpen = useExecutionStore((s) => s.setPanelOpen);
-  const setActiveExecution = useExecutionStore((s) => s.setActiveExecution);
-  const clearTerminated = useExecutionStore((s) => s.clearTerminated);
-  const clearExecution = useExecutionStore((s) => s.clearExecution);
-  const renameExecution = useExecutionStore((s) => s.renameExecution);
-  const setPinned = useExecutionStore((s) => s.setPinned);
-  const reorderRecent = useExecutionStore((s) => s.reorderRecent);
-  const panelHeight = useExecutionStore((s) => s.panelHeight);
-  const setPanelHeight = useExecutionStore((s) => s.setPanelHeight);
-  const panelWidth = useExecutionStore((s) => s.panelWidth);
-  const setPanelWidth = useExecutionStore((s) => s.setPanelWidth);
-  const consolePosition = useUIStore((s) => s.consolePosition);
-  const setConsolePosition = useUIStore((s) => s.setConsolePosition);
-  const commands = useCommandStore((s) => s.commands);
-  const workflows = useWorkflowStore((s) => s.workflows);
-  const { show } = useContextMenu();
+  const {
+    panelOpen,
+    activeExecutionId,
+    executions,
+    recentIds,
+    setPanelOpen,
+    setActiveExecution,
+    clearTerminated,
+    clearExecution,
+    renameExecution,
+    setPinned,
+    reorderRecent,
+    panelHeight,
+    setPanelHeight,
+    panelWidth,
+    setPanelWidth,
+  } = useExecutionStore(
+    useShallow((s) => ({
+      panelOpen: s.panelOpen,
+      activeExecutionId: s.activeExecutionId,
+      executions: s.executions,
+      recentIds: s.recentIds,
+      setPanelOpen: s.setPanelOpen,
+      setActiveExecution: s.setActiveExecution,
+      clearTerminated: s.clearTerminated,
+      clearExecution: s.clearExecution,
+      renameExecution: s.renameExecution,
+      setPinned: s.setPinned,
+      reorderRecent: s.reorderRecent,
+      panelHeight: s.panelHeight,
+      setPanelHeight: s.setPanelHeight,
+      panelWidth: s.panelWidth,
+      setPanelWidth: s.setPanelWidth,
+    })),
+  );
   // The command currently open in the full-screen editor (if any) and its
   // live, possibly-unsaved Script body. A re-run of that exact command must
   // replay what the user is editing — not the last-saved version.
-  const editorTarget = useUIStore((s) => s.commandEditorTarget);
-  const editorLiveScript = useUIStore((s) => s.commandEditorLiveScript);
+  const {
+    consolePosition,
+    setConsolePosition,
+    editorTarget,
+    editorLiveScript,
+  } = useUIStore(
+    useShallow((s) => ({
+      consolePosition: s.consolePosition,
+      setConsolePosition: s.setConsolePosition,
+      editorTarget: s.commandEditorTarget,
+      editorLiveScript: s.commandEditorLiveScript,
+    })),
+  );
+  const commands = useCommandStore((s) => s.commands);
+  const workflows = useWorkflowStore((s) => s.workflows);
+  const { show } = useContextMenu();
 
   const positionOptions: ReadonlyArray<DropdownOption> = [
     { value: "bottom", label: t("outputPanel.position.bottom", { defaultValue: "Снизу" }) },

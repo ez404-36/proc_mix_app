@@ -25,7 +25,7 @@ use tauri::{AppHandle, Runtime};
 use tokio::sync::oneshot;
 
 use crate::core::executor::{
-    self, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus,
+    self, ExecuteRequest, ExecutorState, NodeOutcome, RunOptions, TerminalStatus,
 };
 use crate::core::workflow::{self, WorkflowExecutorState};
 use crate::storage::commands::{self as storage_commands, CommandRecord};
@@ -155,7 +155,20 @@ pub async fn run_command<R: Runtime>(
     // is visible immediately; the executor's bridge finalises exit/output.
     record_command_run_started(pool, &cmd, &execution_id).await;
 
-    let req = build_command_request(&cmd, execution_id.clone(), variable_values, !log_to_console);
+    // An API command run is a standalone run (`workflow_run_id: None`) on the
+    // command's own timeout and saved target. It ALWAYS captures so the History
+    // record carries the output; it is silent only when console logging is off.
+    let req = ExecuteRequest::for_command(
+        &cmd,
+        RunOptions {
+            execution_id: execution_id.clone(),
+            variable_values,
+            workflow_run_id: None,
+            timeout_override: None,
+            capture_output: true,
+            silent: !log_to_console,
+        },
+    );
 
     // Both paths use a completion channel so the History row is finalised in
     // the BACKEND (status / exit / output) — a headless API run must not depend
@@ -329,45 +342,6 @@ pub async fn list_api_workflows(pool: &DbPool) -> Result<Vec<ApiEntitySummary>, 
         .collect())
 }
 
-/// Build an `ExecuteRequest` for an API command run. Mirrors the scheduler's
-/// `build_command_request`: inline-escalation detection, keychain admin
-/// fallback, the command's own timeout, and its saved target. A headless API
-/// run never streams an interactive SSH password, so `ssh_password` is `None`
-/// — a remote command addressed over the API must use key/agent auth.
-fn build_command_request(
-    cmd: &CommandRecord,
-    execution_id: String,
-    variable_values: BTreeMap<String, String>,
-    silent: bool,
-) -> ExecuteRequest {
-    let env = cmd
-        .env
-        .as_ref()
-        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
-    ExecuteRequest {
-        script: cmd.script.clone(),
-        shell: cmd.shell.clone(),
-        args: cmd.args.clone(),
-        working_dir: cmd.working_dir.as_ref().map(Into::into),
-        env,
-        command_id: Some(cmd.id.clone()),
-        execution_id: Some(execution_id),
-        elevated: cmd.run_as_admin
-            || crate::core::utility_help::detect_admin_escalation(&cmd.script),
-        admin_password: None,
-        variables: cmd.variables.clone(),
-        variable_values,
-        workflow_run_id: None,
-        timeout_seconds: cmd.timeout_seconds,
-        output_schema: cmd.output_schema.clone(),
-        // Always capture so the History record carries the output.
-        capture_output: true,
-        silent,
-        target: cmd.target.clone().unwrap_or_default(),
-        ssh_password: None,
-    }
-}
-
 /// Whether the command marks the variable `name` as `sensitive`. Unknown
 /// names (not declared by the command) are treated as sensitive — fail safe: a
 /// value we can't classify must not be shown in the log.
@@ -514,33 +488,19 @@ fn outcome_run_status(outcome: &NodeOutcome) -> RunStatus {
 }
 
 /// Map an executor `NodeOutcome`'s captured lines into bounded History log
-/// lines (mirrors the scheduler's `map_captured_output`). `None` when the run
-/// captured nothing.
+/// lines via the shared `storage_history::from_captured_lines`. `None` when the
+/// run captured nothing.
 fn outcome_output(outcome: &NodeOutcome) -> Option<Vec<storage_history::HistoryLogLine>> {
     let lines = outcome.output.as_ref()?;
-    let mapped = lines
-        .iter()
-        .map(|l| storage_history::HistoryLogLine {
-            stream: l.stream.as_str().to_string(),
-            line: l.line.clone(),
-        })
-        .collect();
-    Some(storage_history::bound_history_output(mapped))
+    Some(storage_history::from_captured_lines(lines))
 }
 
 /// Map an executor `NodeOutcome`'s structured extraction into the History
-/// shape. `None` when there was no extraction.
+/// shape via the shared `storage_history::extracted_to_history`. `None` when
+/// there was no extraction.
 fn outcome_result(outcome: &NodeOutcome) -> Option<storage_history::HistoryExtractedResult> {
     let extracted = outcome.extracted.as_ref()?;
-    Some(storage_history::HistoryExtractedResult {
-        fields: extracted
-            .fields
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-        return_value: extracted.return_value.clone(),
-        error: None,
-    })
+    Some(storage_history::extracted_to_history(extracted))
 }
 
 /// Finalise the `running` CommandRun history row (written by
@@ -609,19 +569,13 @@ fn workflow_status_str(run: &workflow::WorkflowRunCapture) -> &'static str {
 }
 
 /// Map a workflow run's aggregate captured lines into bounded History log
-/// lines. `None` when nothing was captured.
+/// lines via the shared `storage_history::from_captured_lines`. `None` when
+/// nothing was captured.
 fn workflow_output(
     run: &workflow::WorkflowRunCapture,
 ) -> Option<Vec<storage_history::HistoryLogLine>> {
     let lines = run.output.as_ref()?;
-    let mapped = lines
-        .iter()
-        .map(|l| storage_history::HistoryLogLine {
-            stream: l.stream.as_str().to_string(),
-            line: l.line.clone(),
-        })
-        .collect();
-    Some(storage_history::bound_history_output(mapped))
+    Some(storage_history::from_captured_lines(lines))
 }
 
 /// Finalise the `running` WorkflowRun history row with the terminal status and
@@ -758,9 +712,20 @@ mod tests {
     #[test]
     fn build_request_inverts_console_flag_into_silent() {
         let cmd = cmd_with_sensitive();
-        let req = build_command_request(&cmd, "x".into(), BTreeMap::new(), true);
+        let req = ExecuteRequest::for_command(
+            &cmd,
+            RunOptions {
+                execution_id: "x".into(),
+                variable_values: BTreeMap::new(),
+                workflow_run_id: None,
+                timeout_override: None,
+                capture_output: true,
+                silent: true,
+            },
+        );
         assert!(req.silent, "silent must be true when log_to_console is false");
         assert!(req.capture_output, "API runs always capture");
+        assert!(req.workflow_run_id.is_none(), "API command run is standalone");
     }
 
     /// The command request summary masks sensitive values, shows non-sensitive

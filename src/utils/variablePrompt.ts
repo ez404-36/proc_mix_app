@@ -2,12 +2,14 @@
 //
 // `triggerCommandRun` and the executor wrapper live outside the React
 // tree, so the modal is opened via a handler the `<VariablePrompt />`
-// component registers at mount. The pattern mirrors
-// `adminPasswordPrompt.ts` exactly — see the failures.md entry about
-// keeping `handlers.add` and the returned unsub in the same
-// synchronous tick.
+// component registers at mount. The pattern mirrors the other prompts —
+// see `createPromptRegistry.ts` for the singleton/registration contract.
+//
+// Thin specialization of the shared `createPromptRegistry` factory, plus a
+// domain-specific empty-specs short-circuit in `promptForVariables`.
 
 import type { VariableSpec } from "../types";
+import { createPromptRegistry } from "./createPromptRegistry";
 
 /**
  * Result of a successful prompt: a map of `name -> value` covering
@@ -24,7 +26,10 @@ export type VariablePromptHandler = (
   preset: Record<string, string>,
 ) => Promise<Record<string, string> | null>;
 
-let registeredHandler: VariablePromptHandler | null = null;
+const registry = createPromptRegistry<
+  [specs: VariableSpec[], preset: Record<string, string>],
+  Record<string, string>
+>();
 
 /**
  * Register the modal's open-and-await function. Called once by the
@@ -35,7 +40,7 @@ let registeredHandler: VariablePromptHandler | null = null;
 export function registerVariablePromptHandler(
   handler: VariablePromptHandler | null,
 ): void {
-  registeredHandler = handler;
+  registry.register(handler);
 }
 
 /**
@@ -65,18 +70,10 @@ export async function promptForVariables(
   if (specs.length === 0) {
     return {};
   }
-  if (!registeredHandler) {
-    return null;
-  }
-  return registeredHandler(specs, preset);
+  return registry.prompt(specs, preset);
 }
-
-// ------------------------------------------------------------------
-// Test-only helpers. Tests need to reset the registry between cases
-// because the module is loaded once per worker.
-// ------------------------------------------------------------------
 
 /** @internal */
 export function _resetVariablePromptHandler(): void {
-  registeredHandler = null;
+  registry._reset();
 }

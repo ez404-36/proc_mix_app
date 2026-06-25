@@ -31,13 +31,13 @@ use tauri::{AppHandle, Runtime};
 use tokio::sync::{Mutex, Notify};
 
 use crate::core::executor::{
-    self, CapturedLine, ExecuteRequest, ExecutorState, NodeOutcome, TerminalStatus,
+    self, CapturedLine, ExecuteRequest, ExecutorState, NodeOutcome, RunOptions, TerminalStatus,
 };
 use crate::core::workflow::{self, WorkflowExecutorState};
 use crate::storage::commands::{self as storage_commands, CommandRecord};
 use crate::storage::history::{
     self as storage_history, HistoryEvent, HistoryEventPayload, HistoryExtractedResult,
-    HistoryLogLine, MAX_HISTORY_OUTPUT_BYTES,
+    HistoryLogLine,
 };
 use crate::storage::schedules::{self as storage_schedules, ScheduleRecord};
 use crate::storage::workflows as storage_workflows;
@@ -524,51 +524,22 @@ struct CommandFire {
 }
 
 /// Map an executor [`NodeOutcome`]'s captured lines into the history layer's
-/// [`HistoryLogLine`] shape, applying the [`MAX_HISTORY_OUTPUT_BYTES`] cap.
-/// When the joined line bytes exceed the cap, the lines are truncated and a
-/// final `meta`-stream `"…(truncated)"` marker is appended. Returns `None` when
-/// the outcome carried no captured output (capture disabled).
+/// bounded [`HistoryLogLine`] shape (via [`storage_history::from_captured_lines`],
+/// which applies the [`MAX_HISTORY_OUTPUT_BYTES`] cap and the trailing
+/// `"…(truncated)"` marker). Returns `None` when the outcome carried no
+/// captured output (capture disabled).
 fn map_captured_output(outcome: &NodeOutcome) -> Option<Vec<HistoryLogLine>> {
     let lines = outcome.output.as_ref()?;
-    let mut out: Vec<HistoryLogLine> = Vec::with_capacity(lines.len());
-    let mut bytes = 0usize;
-    let mut truncated = false;
-    for line in lines {
-        if bytes.saturating_add(line.line.len()) > MAX_HISTORY_OUTPUT_BYTES {
-            truncated = true;
-            break;
-        }
-        bytes += line.line.len();
-        out.push(HistoryLogLine {
-            stream: line.stream.as_str().to_string(),
-            line: line.line.clone(),
-        });
-    }
-    if truncated {
-        out.push(HistoryLogLine {
-            stream: "meta".to_string(),
-            line: "…(truncated)".to_string(),
-        });
-    }
-    Some(out)
+    Some(storage_history::from_captured_lines(lines))
 }
 
 /// Map an executor [`NodeOutcome`]'s structured extraction into the history
-/// layer's [`HistoryExtractedResult`] shape. Returns `None` when the outcome
-/// carried no extraction (no schema, or extraction failed). The
-/// `BTreeMap<String, Value>` fields convert into a `serde_json::Map`.
+/// layer's [`HistoryExtractedResult`] shape (via
+/// [`storage_history::extracted_to_history`]). Returns `None` when the outcome
+/// carried no extraction (no schema, or extraction failed).
 fn map_extracted_result(outcome: &NodeOutcome) -> Option<HistoryExtractedResult> {
     let extracted = outcome.extracted.as_ref()?;
-    let fields = extracted
-        .fields
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    Some(HistoryExtractedResult {
-        fields,
-        return_value: extracted.return_value.clone(),
-        error: None,
-    })
+    Some(storage_history::extracted_to_history(extracted))
 }
 
 /// Spawn the scheduler loop on Tauri's managed Tokio runtime. Returns
@@ -1076,13 +1047,20 @@ async fn fire_command<R: Runtime>(
     let mut capture = CommandFireResult::default();
     for attempt in 0..attempts {
         let execution_id = uuid::Uuid::new_v4().to_string();
-        let req = build_command_request(
+        // A scheduled command is a standalone run (`workflow_run_id: None`).
+        // The schedule's per-run timeout overrides the command's own when set;
+        // capture is per-schedule (3C); silent is per fire-path (4): planned
+        // fires are silent, manual "Run now" is not.
+        let req = ExecuteRequest::for_command(
             &cmd,
-            execution_id,
-            variable_values.clone(),
-            timeout_override,
-            capture_output,
-            silent,
+            RunOptions {
+                execution_id,
+                variable_values: variable_values.clone(),
+                workflow_run_id: None,
+                timeout_override,
+                capture_output,
+                silent,
+            },
         );
 
         let (tx, rx) = tokio::sync::oneshot::channel::<NodeOutcome>();
@@ -1241,31 +1219,11 @@ async fn fire_workflow<R: Runtime>(
     CommandFire { status, capture }
 }
 
-/// Map a workflow run's aggregate [`CapturedLine`]s into history log lines,
-/// applying the [`MAX_HISTORY_OUTPUT_BYTES`] cap with a trailing truncation
-/// marker — the same shape `map_captured_output` produces for a command.
+/// Map a workflow run's aggregate [`CapturedLine`]s into bounded history log
+/// lines — the same shared mapper a command uses
+/// ([`storage_history::from_captured_lines`]).
 fn map_workflow_capture(lines: &[CapturedLine]) -> Vec<HistoryLogLine> {
-    let mut out: Vec<HistoryLogLine> = Vec::with_capacity(lines.len());
-    let mut bytes = 0usize;
-    let mut truncated = false;
-    for line in lines {
-        if bytes.saturating_add(line.line.len()) > MAX_HISTORY_OUTPUT_BYTES {
-            truncated = true;
-            break;
-        }
-        bytes += line.line.len();
-        out.push(HistoryLogLine {
-            stream: line.stream.as_str().to_string(),
-            line: line.line.clone(),
-        });
-    }
-    if truncated {
-        out.push(HistoryLogLine {
-            stream: "meta".to_string(),
-            line: "…(truncated)".to_string(),
-        });
-    }
-    out
+    storage_history::from_captured_lines(lines)
 }
 
 /// Launch a workflow target for a MANUAL "Run now": fire-and-return through
@@ -1347,67 +1305,6 @@ fn classify_outcome(outcome: &NodeOutcome) -> FireStatus {
     match outcome.status {
         TerminalStatus::Finished if outcome.exit_code == Some(0) => FireStatus::Success,
         _ => FireStatus::Error,
-    }
-}
-
-/// Build an `ExecuteRequest` for a scheduled command run. Mirrors
-/// `workflow::build_request` (shell, args, working dir, env, variables,
-/// elevated flag) so a scheduled run behaves identically to a direct library
-/// run. `workflow_run_id` is `None` — a scheduled command is a standalone run.
-fn build_command_request(
-    cmd: &CommandRecord,
-    execution_id: String,
-    variable_values: std::collections::BTreeMap<String, String>,
-    timeout_override: Option<u64>,
-    capture_output: bool,
-    silent: bool,
-) -> ExecuteRequest {
-    let env = cmd
-        .env
-        .as_ref()
-        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
-    ExecuteRequest {
-        script: cmd.script.clone(),
-        shell: cmd.shell.clone(),
-        args: cmd.args.clone(),
-        working_dir: cmd.working_dir.as_ref().map(Into::into),
-        env,
-        command_id: Some(cmd.id.clone()),
-        execution_id: Some(execution_id),
-        // Resolve elevation exactly like the UI/library path
-        // (`executor.ts`): the persisted flag OR a script whose LEADING
-        // command is an inline-escalation tool (`sudo`/`doas`/`pkexec`).
-        // Without the inline-escalation detection, a `sudo …` script with
-        // `run_as_admin = false` ran on the NON-elevated path (plain shell,
-        // `Stdio::null()` stdin, no TTY) and the inline `sudo` died with
-        // "a terminal is required to read the password" — the exact failure
-        // seen for scheduled runs. `admin_password: None` lets the executor
-        // fall back to the OS keychain (the scheduler has no UI to prompt;
-        // if the keychain is empty the executor surfaces the typed
-        // ADMIN_PASSWORD_REQUIRED error, recorded as a failed run).
-        elevated: cmd.run_as_admin
-            || crate::core::utility_help::detect_admin_escalation(&cmd.script),
-        admin_password: None,
-        variables: cmd.variables.clone(),
-        variable_values,
-        workflow_run_id: None,
-        // The schedule's per-run timeout overrides the command's own when set;
-        // otherwise the command's timeout (or none) applies.
-        timeout_seconds: timeout_override.or(cmd.timeout_seconds),
-        output_schema: cmd.output_schema.clone(),
-        // Capture is per-schedule (3C); silent is per fire-path (4): planned
-        // fires are silent, manual "Run now" is not.
-        capture_output,
-        silent,
-        // A scheduled command runs on whatever target it was saved with, so a
-        // remote-targeted command fires over SSH from the scheduler exactly as
-        // it would from the library. `unwrap_or_default()` maps a record with
-        // no stored target (legacy rows) to `Local`.
-        target: cmd.target.clone().unwrap_or_default(),
-        // A scheduled (headless) run cannot prompt for an SSH password — remote
-        // password auth is interactive-prompt-only. A remote-targeted scheduled
-        // command must use key/agent auth.
-        ssh_password: None,
     }
 }
 
@@ -1813,30 +1710,38 @@ mod compute_due_tests {
         }
     }
 
-    /// `build_command_request` must propagate the per-schedule `capture_output`
-    /// and the per-fire `silent` flags onto the `ExecuteRequest`, so a planned
-    /// fire both captures output and stays off the live console.
+    /// `ExecuteRequest::for_command` must propagate the per-schedule
+    /// `capture_output` and the per-fire `silent` flags onto the
+    /// `ExecuteRequest`, so a planned fire both captures output and stays off
+    /// the live console. A scheduled run carries no workflow run id.
     #[test]
     fn build_command_request_propagates_capture_and_silent() {
         let cmd = bare_command("cmd-1", "echo hi");
-        let req = build_command_request(
+        let req = ExecuteRequest::for_command(
             &cmd,
-            "exec-1".into(),
-            std::collections::BTreeMap::new(),
-            None,
-            true, // capture_output
-            true, // silent
+            RunOptions {
+                execution_id: "exec-1".into(),
+                variable_values: std::collections::BTreeMap::new(),
+                workflow_run_id: None,
+                timeout_override: None,
+                capture_output: true,
+                silent: true,
+            },
         );
         assert!(req.capture_output);
         assert!(req.silent);
+        assert!(req.workflow_run_id.is_none());
 
-        let req2 = build_command_request(
+        let req2 = ExecuteRequest::for_command(
             &cmd,
-            "exec-2".into(),
-            std::collections::BTreeMap::new(),
-            None,
-            false,
-            false,
+            RunOptions {
+                execution_id: "exec-2".into(),
+                variable_values: std::collections::BTreeMap::new(),
+                workflow_run_id: None,
+                timeout_override: None,
+                capture_output: false,
+                silent: false,
+            },
         );
         assert!(!req2.capture_output);
         assert!(!req2.silent);
@@ -1911,6 +1816,6 @@ mod compute_due_tests {
             .iter()
             .map(|l| l.line.len())
             .sum();
-        assert!(retained_bytes <= MAX_HISTORY_OUTPUT_BYTES);
+        assert!(retained_bytes <= storage_history::MAX_HISTORY_OUTPUT_BYTES);
     }
 }

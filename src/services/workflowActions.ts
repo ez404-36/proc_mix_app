@@ -97,6 +97,23 @@ export function updateWorkflow(
 }
 
 /**
+ * The set of API slugs currently in use by workflows in the live store.
+ *
+ * Exposed here (rather than letting callers read the store directly) so the
+ * import orchestrator can detect a slug collision without `src/services/`
+ * code reaching into `src/stores/` — store access stays behind this
+ * sanctioned actions facade. Slugless workflows are skipped.
+ */
+export function existingWorkflowApiSlugs(): Set<string> {
+  return new Set<string>(
+    useWorkflowStore
+      .getState()
+      .workflows.map((w) => w.apiSlug)
+      .filter((s): s is string => s !== undefined),
+  );
+}
+
+/**
  * Remove a workflow via the store and log a `workflowDeleted` event
  * carrying the full snapshot. The snapshot powers restore from the History
  * view.

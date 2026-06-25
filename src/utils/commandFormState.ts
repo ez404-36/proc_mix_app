@@ -14,6 +14,18 @@ export const INITIAL_RUN_RESULT: RunResult = {
   timedOut: false,
 };
 
+/**
+ * Generate a stable per-row React key. Uses `crypto.randomUUID` when
+ * available, falling back to a timestamp+random id in environments
+ * (older test runtimes) without it.
+ */
+export function makeRowId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `var-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function parseTimeoutSeconds(raw: string): number | undefined {
   const trimmed = raw.trim();
   if (trimmed === '') return undefined;

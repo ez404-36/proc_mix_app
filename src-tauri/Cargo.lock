@@ -4195,7 +4195,7 @@ dependencies = [
 
 [[package]]
 name = "procmix"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "axum",
  "base64 0.22.1",

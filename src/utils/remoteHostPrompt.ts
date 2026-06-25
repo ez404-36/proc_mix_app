@@ -5,10 +5,14 @@
 // `<RemoteHostPrompt>` component registers at mount. The component reads the
 // host inventory from the shared `useSshHostStore` (the same source as the
 // Environment → Connections tab), so the offered list always matches.
+//
+// Thin specialization of the shared `createPromptRegistry` factory.
+
+import { createPromptRegistry } from "./createPromptRegistry";
 
 export type RemoteHostPromptHandler = () => Promise<string | null>;
 
-let registeredHandler: RemoteHostPromptHandler | null = null;
+const registry = createPromptRegistry<[], string>();
 
 /**
  * Register the picker's open-and-await function. Called once by the
@@ -17,7 +21,7 @@ let registeredHandler: RemoteHostPromptHandler | null = null;
 export function registerRemoteHostPromptHandler(
   handler: RemoteHostPromptHandler | null,
 ): void {
-  registeredHandler = handler;
+  registry.register(handler);
 }
 
 /**
@@ -30,13 +34,10 @@ export function registerRemoteHostPromptHandler(
  * the working-dir / variable prompt contracts.
  */
 export async function promptForRemoteHost(): Promise<string | null> {
-  if (!registeredHandler) {
-    return null;
-  }
-  return registeredHandler();
+  return registry.prompt();
 }
 
 /** @internal */
 export function _resetRemoteHostPromptHandler(): void {
-  registeredHandler = null;
+  registry._reset();
 }

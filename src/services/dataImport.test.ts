@@ -8,9 +8,11 @@ vi.mock("./commandActions", () => ({
   createCommand: (input: unknown) => createCommandMock(input),
   updateCommand: (id: string, patch: unknown) =>
     updateCommandMock(id, patch),
+  existingCommandApiSlugs: () => new Set<string>(),
 }));
 vi.mock("./workflowActions", () => ({
   createWorkflow: (input: unknown) => createWorkflowMock(input),
+  existingWorkflowApiSlugs: () => new Set<string>(),
 }));
 
 import type { Command, Workflow } from "../types";

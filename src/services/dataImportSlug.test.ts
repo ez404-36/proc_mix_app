@@ -6,20 +6,22 @@ const createCommandMock = vi.fn();
 const createWorkflowMock = vi.fn();
 const updateCommandMock = vi.fn();
 
+// The actions facade owns store access; the importer reads existing slugs
+// through these helpers, so we stub them with the seeded sets directly.
 vi.mock("./commandActions", () => ({
   createCommand: (input: unknown) => createCommandMock(input),
   updateCommand: (id: string, patch: unknown) => updateCommandMock(id, patch),
+  existingCommandApiSlugs: () => new Set<string>(["taken-cmd"]),
 }));
 vi.mock("./workflowActions", () => ({
   createWorkflow: (input: unknown) => createWorkflowMock(input),
+  existingWorkflowApiSlugs: () => new Set<string>(["taken-wf"]),
 }));
 
 import type { Command, Workflow } from "../types";
 import type { ProcMixExport } from "../utils/dataTransfer";
 import { EXPORT_VERSION } from "../utils/dataTransfer";
 import { applyImport } from "./dataImport";
-import { useCommandStore } from "../stores/commandStore";
-import { useWorkflowStore } from "../stores/workflowStore";
 
 function command(id: string, overrides: Partial<Command> = {}): Command {
   return {
@@ -72,13 +74,6 @@ beforeEach(() => {
     ...workflow("new"),
     name: input.name,
   }));
-  // Seed the stores with one existing command slug and one workflow slug.
-  useCommandStore.setState({
-    commands: [command("existing", { apiSlug: "taken-cmd", apiEnabled: true })],
-  });
-  useWorkflowStore.setState({
-    workflows: [workflow("existing", { apiSlug: "taken-wf", apiEnabled: true })],
-  });
 });
 
 describe("applyImport API-slug conflict resolution", () => {

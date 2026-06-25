@@ -166,6 +166,23 @@ export function deleteCommand(id: string): Command | null {
 }
 
 /**
+ * The set of API slugs currently in use by commands in the live store.
+ *
+ * Exposed here (rather than letting callers read the store directly) so the
+ * import orchestrator can detect a slug collision without `src/services/`
+ * code reaching into `src/stores/` — store access stays behind this
+ * sanctioned actions facade. Slugless commands are skipped.
+ */
+export function existingCommandApiSlugs(): Set<string> {
+  return new Set<string>(
+    useCommandStore
+      .getState()
+      .commands.map((c) => c.apiSlug)
+      .filter((s): s is string => s !== undefined),
+  );
+}
+
+/**
  * Promote a workflow-LOCAL command to GLOBAL ("open global access"): clear
  * its `scope`/`workflowId` so it appears in the shared library and becomes
  * reusable from other workflows.

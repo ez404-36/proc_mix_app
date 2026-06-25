@@ -222,8 +222,17 @@ async fn history_row(pool: &DbPool, execution_id: &str) -> Option<(String, Strin
 /// Send one request through the router. `ConnectInfo` is injected as an
 /// extension because `oneshot` does not go through a real connection (the
 /// handlers extract the peer addr for the rate limiter / request log).
+///
+/// A `Host: localhost` header is injected when the request does not already
+/// carry one, so the DNS-rebinding `Host` gate (which fails closed on a missing
+/// Host) does not reject the normal-flow tests. Tests that exercise the Host
+/// gate set their own `Host` explicitly (it is preserved here).
 async fn send(router: Router, req: Request<Body>) -> (StatusCode, Value) {
     let mut req = req;
+    if !req.headers().contains_key("host") {
+        req.headers_mut()
+            .insert("host", axum::http::HeaderValue::from_static("localhost"));
+    }
     req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         12345,
@@ -569,6 +578,68 @@ async fn malformed_auth_header_is_rejected() {
     let (status, body) = send(router, req).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"], "unauthorized");
+}
+
+// ---------------------------------------------------------------------------
+// Host header / DNS-rebinding gate
+// ---------------------------------------------------------------------------
+
+/// A request whose `Host` is a foreign domain (a DNS-rebinding attempt) is
+/// rejected with 403 BEFORE the auth check — even with the correct token.
+#[tokio::test]
+async fn foreign_host_header_is_rejected() {
+    let pool = fresh_pool().await;
+    storage_commands::upsert(&pool, &command("c1", "true", Some("deploy"), true))
+        .await
+        .unwrap();
+    let router = router_with_token(pool, Some(TEST_TOKEN));
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/command/deploy/run")
+        .header("host", "evil.example")
+        .header("authorization", format!("Bearer {TEST_TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = send(router, req).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"], "forbiddenHost");
+}
+
+/// A request with NO `Host` header fails closed with 403 (every well-behaved
+/// HTTP/1.1 client sends one). The explicit empty Host bypasses the `send`
+/// helper's default injection.
+#[tokio::test]
+async fn missing_host_header_is_rejected() {
+    let pool = fresh_pool().await;
+    let router = router_with_token(pool, Some(TEST_TOKEN));
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/command/x/run")
+        .header("host", "")
+        .header("authorization", format!("Bearer {TEST_TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = send(router, req).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"], "forbiddenHost");
+}
+
+/// A loopback `Host` (here `127.0.0.1`) passes the gate and reaches the handler
+/// (404 for an unknown command proves we got past both the Host and auth gates).
+#[tokio::test]
+async fn loopback_host_header_is_accepted() {
+    let pool = fresh_pool().await;
+    let router = router_with_token(pool, Some(TEST_TOKEN));
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/command/ghost/run")
+        .header("host", "127.0.0.1")
+        .header("authorization", format!("Bearer {TEST_TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = send(router, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], "notFound");
 }
 
 // ---------------------------------------------------------------------------

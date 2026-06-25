@@ -257,6 +257,25 @@ async fn guard<R: Runtime>(
 ) -> Option<Response> {
     let ip = addr.ip();
 
+    // DNS-rebinding gate: reject any request whose `Host` header is not one we
+    // legitimately serve (loopback names, or the bound LAN IP when exposed).
+    // A browser page on an attacker domain that rebinds DNS to 127.0.0.1 cannot
+    // forge `Host`, so this stops it reaching the API even with a stolen token.
+    // `/api/health` is unauthenticated and never calls `guard`, so it is
+    // unaffected.
+    let host_header = headers.get("host").and_then(|v| v.to_str().ok());
+    let lan_ip = state.server_state.lan_ip().await;
+    if !auth::is_host_allowed(
+        host_header,
+        state.config.port,
+        state.config.bind_lan,
+        lan_ip,
+    ) {
+        let resp = forbidden_host_response();
+        log_request(state, addr, method, path, resp.status(), auth_detail("forbiddenHost"));
+        return Some(resp);
+    }
+
     // Brute-force gate first: a flooded IP is rejected without even comparing
     // the token (and without leaking whether the token would have matched).
     if state.server_state.is_rate_limited(ip).await {
@@ -306,6 +325,17 @@ fn unauthorized_response() -> Response {
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({ "error": "unauthorized" })),
+    )
+        .into_response()
+}
+
+/// Response for a request whose `Host` header is not one this server serves
+/// (DNS-rebinding defence). `403 Forbidden` rather than `401`: it is not an
+/// auth-credential problem, and it must not be retried with a different token.
+fn forbidden_host_response() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({ "error": "forbiddenHost" })),
     )
         .into_response()
 }

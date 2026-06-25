@@ -10,6 +10,10 @@
 // resolved string is handed to the executor for a single run and forgotten;
 // the backend parks it in a throwaway keychain entry that is cleared after the
 // run. See `docs/plans/ssh-remote-password-transient-keychain.md`.
+//
+// Thin specialization of the shared `createPromptRegistry` factory.
+
+import { createPromptRegistry } from "./createPromptRegistry";
 
 /**
  * Function shape the modal registers: show the password input, wait for submit
@@ -21,7 +25,7 @@ export type SshPasswordPromptHandler = (
   alias: string,
 ) => Promise<string | null>;
 
-let registeredHandler: SshPasswordPromptHandler | null = null;
+const registry = createPromptRegistry<[alias: string], string>();
 
 /**
  * Register the modal's open-and-await function. Called once by the
@@ -30,7 +34,7 @@ let registeredHandler: SshPasswordPromptHandler | null = null;
 export function registerSshPasswordPromptHandler(
   handler: SshPasswordPromptHandler | null,
 ): void {
-  registeredHandler = handler;
+  registry.register(handler);
 }
 
 /**
@@ -42,13 +46,10 @@ export function registerSshPasswordPromptHandler(
 export async function promptForSshPassword(
   alias: string,
 ): Promise<string | null> {
-  if (!registeredHandler) {
-    return null;
-  }
-  return registeredHandler(alias);
+  return registry.prompt(alias);
 }
 
 /** @internal */
 export function _resetSshPasswordPromptHandler(): void {
-  registeredHandler = null;
+  registry._reset();
 }
