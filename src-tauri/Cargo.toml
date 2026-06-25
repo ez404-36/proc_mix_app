@@ -45,9 +45,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # the helper is built (via `npm run build:askpass`) only for Unix bundles. On
 # Windows the binary would compile to a no-op stub, so there is nothing to
 # gain from building it there.
+# The source file stem MUST match this `name` (`procmix-askpass.rs`, not
+# `askpass.rs`). tauri-cli's bundler scans `src/bin/` by file stem and only
+# treats a disabled (required-features-off) bin as "skip" when the stem matches
+# the bin `name`; a mismatched stem makes the Windows bundle try to ship a
+# never-built `askpass.exe` and fail with "cannot find the file specified".
 [[bin]]
 name = "procmix-askpass"
-path = "src/bin/askpass.rs"
+path = "src/bin/procmix-askpass.rs"
 required-features = ["ssh-askpass"]
 
 [features]

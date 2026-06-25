@@ -81,7 +81,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       # The procmix-askpass sidecar is gated behind the `ssh-askpass` feature,
-      # so the default clippy/test above never compile `src/bin/askpass.rs`.
+      # so the default clippy/test above never compile `src/bin/procmix-askpass.rs`.
       # Lint + test it explicitly (on the Linux runner, where it actually ships)
       # so its code isn't merged unchecked.
       - name: Clippy (Rust, ssh-askpass)
