@@ -13,8 +13,11 @@
 //   service:  "app.procmix.desktop"
 //   account:  "http-api-token"
 //
-// Tests run against `keyring`'s in-memory mock backend (the same pattern as
-// admin_password) so CI never touches a real keychain.
+// The keychain round-trip itself is NOT unit-tested: on Linux `keyring` is
+// built with the real `sync-secret-service` backend (no in-memory mock), and
+// headless CI has no Secret Service, so writing to it would fail. Format-level
+// coverage tests `new_token()` directly; real-backend coverage happens at the
+// manual QA / smoke-test layer (same rationale as admin_password).
 
 use base64::Engine;
 use keyring::Entry;
@@ -100,11 +103,18 @@ pub fn has() -> Result<bool, ApiTokenError> {
 /// a URL-safe ASCII string with no `=` padding that is convenient to paste into
 /// an `Authorization: Bearer …` header.
 pub fn generate() -> Result<String, ApiTokenError> {
-    let mut bytes = [0u8; TOKEN_BYTES];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let token = new_token();
     set(&token)?;
     Ok(token)
+}
+
+/// Mint a fresh token value without touching the keychain. Split out from
+/// [`generate`] so the token format (entropy, encoding, URL-safety) can be
+/// unit-tested without a live keychain backend — CI has no Secret Service.
+fn new_token() -> String {
+    let mut bytes = [0u8; TOKEN_BYTES];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 #[cfg(test)]
@@ -133,13 +143,14 @@ mod tests {
         }
     }
 
-    /// A generated token must be non-empty, URL-safe (no `+`, `/`, or `=`), and
-    /// of the expected base64url length for 32 bytes (43 chars, unpadded).
-    /// Generation itself does not depend on a real keychain for the encoding —
-    /// only the `set` write does, which the mock backend accepts.
+    /// A minted token must be non-empty, URL-safe (no `+`, `/`, or `=`), and of
+    /// the expected base64url length for 32 bytes (43 chars, unpadded). We test
+    /// `new_token()` directly rather than `generate()` so the assertion never
+    /// touches the OS keychain — CI (headless Linux) has no Secret Service, and
+    /// the keychain round-trip is out of scope for a format check.
     #[test]
-    fn generate_produces_url_safe_token() {
-        let token = generate().expect("generate should succeed against the mock keychain");
+    fn new_token_is_url_safe_and_correct_length() {
+        let token = new_token();
         assert!(!token.is_empty(), "token must be non-empty");
         assert_eq!(token.len(), 43, "32 bytes base64url-no-pad = 43 chars");
         assert!(
