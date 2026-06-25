@@ -86,8 +86,22 @@ All data is stored locally — privacy by default. Move commands and workflows b
 <tr>
 <td width="50%" valign="top">
 
-**Plugin system**<br/>
-Extend functionality with JavaScript/TypeScript plugins or native modules written in Rust.
+**Remote execution over SSH**<br/>
+Run commands and workflows on remote hosts from your `~/.ssh/config`, or be prompted for a host at run time. The History view shows a target badge for each remote run.
+
+</td>
+<td width="50%" valign="top">
+
+**SFTP file transfer**<br/>
+A dual-pane browser for moving files between your machine and a remote host — upload, download, rename, and delete with live progress.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Built-in HTTP API server**<br/>
+Optionally expose selected commands and workflows over a local REST API to trigger runs from scripts or other tools. Disabled by default, bound to `127.0.0.1`, and protected by a Bearer token kept in the OS keychain.
 
 </td>
 </tr>
@@ -216,8 +230,22 @@ npm run tauri dev    # start full app (Rust + React hot-reload)
 <tr>
 <td width="50%" valign="top">
 
-**Система плагинов**<br/>
-Расширяйте возможности плагинами на JavaScript/TypeScript или нативными модулями на Rust.
+**Выполнение на удалённых хостах по SSH**<br/>
+Запускайте команды и сценарии на удалённых хостах из вашего `~/.ssh/config` или с запросом хоста при запуске. В Истории для каждого удалённого запуска показывается бейдж цели.
+
+</td>
+<td width="50%" valign="top">
+
+**Передача файлов по SFTP**<br/>
+Двухпанельный браузер для переноса файлов между вашей машиной и удалённым хостом — загрузка, скачивание, переименование и удаление с живым прогрессом.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Встроенный HTTP API сервер**<br/>
+При желании открывайте выбранные команды и сценарии по локальному REST API, чтобы запускать их из скриптов или других инструментов. По умолчанию выключен, слушает только `127.0.0.1` и защищён Bearer-токеном из системного хранилища ключей.
 
 </td>
 </tr>
