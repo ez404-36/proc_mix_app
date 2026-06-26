@@ -49,7 +49,7 @@ fn stdout_tail(text: &str) -> Option<String> {
 }
 
 #[cfg(unix)]
-use super::command_build::{libc_killpg, SIGKILL, SIGTERM};
+use super::command_build::{libc_killpg, pgid_is_safe_target, SIGKILL, SIGTERM};
 
 /// All state moved into the waiter task. Aggregating it into one struct
 /// keeps `spawn_waiter`'s signature manageable while preserving every
@@ -506,7 +506,11 @@ pub(super) async fn kill_child_tree(
             elevated_kill_pids(&targets2, SIGKILL, pw).await;
             return;
         }
-        if let Some(g) = pgid {
+        // Only take the group path when the group is provably isolated from
+        // our own session — defence-in-depth over the spawn-time check, so a
+        // killpg can never reach ProcMix's login/session group. If it is not
+        // safe, fall through to the single-child kill below.
+        if let Some(g) = pgid.filter(|&g| pgid_is_safe_target(g)) {
             if immediate {
                 // User cancel: hard-kill the whole group at once so a
                 // command that ignores SIGTERM can't keep running.
@@ -522,7 +526,7 @@ pub(super) async fn kill_child_tree(
             let _ = libc_killpg(g, SIGKILL);
             return;
         }
-        // No pgid available — fall back to direct-child kill (SIGKILL on
+        // No (usable) pgid — fall back to direct-child kill (SIGKILL on
         // Unix via start_kill, for both cancel and timeout).
         let _ = child.start_kill();
     }
@@ -640,6 +644,15 @@ async fn elevated_killpg(pgid: i32, sig: i32, password: &str) {
     use std::process::Stdio;
     use tokio::io::AsyncWriteExt;
     use tokio::process::Command;
+
+    // Last-line guard before signaling a whole group AS ROOT. The stored
+    // pgid is already validated at spawn (`resolve_isolated_pgid`), but here
+    // a mistaken value would let `sudo kill -9 -<pgid>` nuke ProcMix's own
+    // session — and root bypasses the EPERM that protects the unprivileged
+    // path. Refuse anything that is not provably isolated from our session.
+    if !pgid_is_safe_target(pgid) {
+        return;
+    }
 
     // `kill -<sig> -<pgid>`: a NEGATIVE pid argument signals the whole
     // process group. `-p ''` silences sudo's prompt; `-S` reads the

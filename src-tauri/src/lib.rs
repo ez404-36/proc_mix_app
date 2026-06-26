@@ -7,7 +7,7 @@ mod commands;
 // does not widen any private item.
 pub mod core;
 mod platform;
-mod plugins;
+pub mod plugins;
 pub mod security;
 pub mod storage;
 
@@ -42,6 +42,12 @@ fn init_tracing() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Load `app/.env` (if present) before anything reads the environment, so
+    // local-dev overrides like PROCMIX_PLUGIN_CATALOG take effect. Best-effort:
+    // a missing `.env` is normal and not an error. `.env` is gitignored;
+    // `.env.example` documents the available keys.
+    let _ = dotenvy::dotenv();
+
     init_tracing();
 
     let builder = tauri::Builder::default();
@@ -104,6 +110,32 @@ pub fn run() {
             let pool =
                 tauri::async_runtime::block_on(async { crate::storage::init_pool(db_path).await })?;
             app.manage(pool);
+
+            // Resolve the plugin roots once and store them in app state. The
+            // catalog source comes from `PROCMIX_PLUGIN_CATALOG` (or a
+            // build-aware default: the local `.mocks/plugins` in dev, the
+            // bundled catalog in release); `installed` is the per-user app-data
+            // dir. A missing directory is fine — treated as empty. Nothing is
+            // executed here; install copies data only.
+            {
+                let resource_dir = app
+                    .path()
+                    .resource_dir()
+                    .map_err(|e| format!("resolve resource_dir: {e}"))?;
+                // `dev_root` is the `app/` directory: in dev the crate lives at
+                // `app/src-tauri`, so its parent is `app/`. Used for the
+                // `.mocks/plugins` default and relative env paths.
+                let dev_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                let roots = crate::plugins::PluginRoots::new(
+                    &dev_root,
+                    &resource_dir,
+                    &app_data_dir,
+                );
+                app.manage(Arc::new(crate::commands::plugins::PluginState { roots }));
+            }
 
             // One-time security migration: move any PLAINTEXT sensitive
             // scheduled-variable values a pre-upgrade database stored in the
@@ -264,6 +296,11 @@ pub fn run() {
             commands::sftp::local_delete,
             commands::sftp::local_rename,
             commands::sftp::local_mkdir,
+            commands::list_plugins,
+            commands::set_plugin_enabled,
+            commands::remove_plugin,
+            commands::list_plugin_catalog,
+            commands::install_plugin_version,
         ])
         // Build (not `run`) so we can observe `RunEvent`s. The exit hook below
         // needs `app` and the managed `ExecutorState` to tear running children

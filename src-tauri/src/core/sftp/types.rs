@@ -175,16 +175,35 @@ pub fn is_safe_local_path(path: &str) -> bool {
     !path.chars().any(|c| c == '\0' || c.is_ascii_control())
 }
 
-/// `true` when `path` points at a filesystem or user root that a recursive
-/// delete must refuse, regardless of platform:
+/// Critical system directories a recursive delete must always refuse, even
+/// though the local pane is otherwise unconfined. These are the standard
+/// Unix top-level trees whose removal would brick the OS or another user's
+/// account. Compared case-sensitively against the normalised, separator-
+/// trimmed path (Unix paths are case-sensitive; the Windows drive-root and
+/// `\Windows`/`\Users` cases are handled separately below).
+const PROTECTED_SYSTEM_DIRS: &[&str] = &[
+    "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib32", "/lib64",
+    "/libx32", "/media", "/mnt", "/opt", "/proc", "/root", "/run", "/sbin",
+    "/srv", "/sys", "/usr", "/var", "/Applications", "/Library", "/System",
+    "/Users", "/private", "/Volumes",
+];
+
+/// `true` when `path` points at a filesystem, user, or critical system root
+/// that a recursive delete must refuse, regardless of platform:
 ///   - the Unix filesystem root `/`;
-///   - the current user's home directory itself (deleting the whole home from a
-///     file manager is never the intent — deleting a child of it is fine);
-///   - a Windows drive root (`C:\`, `C:/`, or a bare `C:`).
+///   - a Windows drive root (`C:\`, `C:/`, or a bare `C:`);
+///   - the current user's home directory itself (deleting the whole home from
+///     a file manager is never the intent — deleting a child of it is fine);
+///   - the PARENT of the home directory (e.g. `/home`, `/Users`) — removing it
+///     would wipe every user account;
+///   - a standard top-level system tree ([`PROTECTED_SYSTEM_DIRS`], plus the
+///     Windows `\Windows` / `\Users` / `\Program Files*` roots).
 ///
-/// The comparison trims a single trailing separator so `"/home/u"` and
-/// `"/home/u/"` are treated alike. This is a blocklist of *obviously* dangerous
-/// targets, not a confinement boundary.
+/// The comparison trims trailing separators so `"/usr"` and `"/usr/"` are
+/// treated alike, and collapses repeated separators. This is a blocklist of
+/// dangerous targets, not a full confinement boundary — the local pane is meant
+/// to browse and manage the whole filesystem with the app's own privileges, so
+/// arbitrary *user* directories outside these trees remain deletable.
 pub fn is_root_delete_target(path: &str) -> bool {
     let trimmed = path.trim_end_matches(['/', '\\']);
 
@@ -200,7 +219,50 @@ pub fn is_root_delete_target(path: &str) -> bool {
         return true;
     }
 
-    // The user's home directory itself.
+    // Normalise to forward slashes and collapse repeated separators so the
+    // blocklist comparisons below are robust to "/usr//", "\\Windows", etc.
+    let normalised: String = {
+        let mut out = String::with_capacity(trimmed.len());
+        let mut prev_sep = false;
+        for c in trimmed.chars() {
+            let is_sep = c == '/' || c == '\\';
+            if is_sep {
+                if !prev_sep {
+                    out.push('/');
+                }
+                prev_sep = true;
+            } else {
+                out.push(c);
+                prev_sep = false;
+            }
+        }
+        out
+    };
+
+    // Standard Unix/macOS top-level system trees.
+    if PROTECTED_SYSTEM_DIRS.contains(&normalised.as_str()) {
+        return true;
+    }
+
+    // Windows system roots: "<drive>:/Windows", "<drive>:/Users",
+    // "<drive>:/Program Files" / "Program Files (x86)" — match the segment
+    // after the drive letter, case-insensitively (Windows paths are not
+    // case-sensitive).
+    if let Some(after_drive) = normalised
+        .strip_prefix(|c: char| c.is_ascii_alphabetic())
+        .and_then(|rest| rest.strip_prefix(":/"))
+    {
+        let seg_lower = after_drive.to_ascii_lowercase();
+        if matches!(
+            seg_lower.as_str(),
+            "windows" | "users" | "program files" | "program files (x86)" | "programdata"
+        ) {
+            return true;
+        }
+    }
+
+    // The user's home directory itself, and its parent (which holds every
+    // user's home).
     #[allow(deprecated)]
     if let Some(home) = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -208,8 +270,18 @@ pub fn is_root_delete_target(path: &str) -> bool {
     {
         let home_str = home.to_string_lossy();
         let home_trimmed = home_str.trim_end_matches(['/', '\\']);
-        if !home_trimmed.is_empty() && trimmed == home_trimmed {
-            return true;
+        if !home_trimmed.is_empty() {
+            if trimmed == home_trimmed {
+                return true;
+            }
+            // Parent of home (e.g. "/home", "/Users") — strip the final
+            // path segment and compare.
+            if let Some(idx) = home_trimmed.rfind(['/', '\\']) {
+                let parent = &home_trimmed[..idx];
+                if !parent.is_empty() && (trimmed == parent || normalised == parent) {
+                    return true;
+                }
+            }
         }
     }
 
@@ -333,6 +405,63 @@ mod tests {
         match prev {
             Some(v) => std::env::set_var("HOME", v),
             None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn root_delete_target_flags_home_parent() {
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", "/home/tester");
+        // The parent of $HOME holds every account — must be refused.
+        assert!(is_root_delete_target("/home"));
+        assert!(is_root_delete_target("/home/"));
+        match prev {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn root_delete_target_flags_system_dirs() {
+        for p in [
+            "/etc", "/usr", "/var", "/bin", "/boot", "/lib", "/lib64", "/opt",
+            "/sbin", "/sys", "/proc", "/dev", "/root", "/run", "/srv", "/mnt",
+            "/media", "/usr/", "//usr", "/var//",
+        ] {
+            assert!(is_root_delete_target(p), "should flag system dir {p:?}");
+        }
+    }
+
+    #[test]
+    fn root_delete_target_flags_windows_system_roots() {
+        for p in [
+            "C:\\Windows",
+            "C:/Windows",
+            "c:\\windows",
+            "C:\\Users",
+            "D:\\Program Files",
+            "C:\\Program Files (x86)",
+            "C:\\ProgramData",
+        ] {
+            assert!(is_root_delete_target(p), "should flag windows root {p:?}");
+        }
+    }
+
+    #[test]
+    fn root_delete_target_still_allows_legit_subdirs() {
+        // Children of system trees and arbitrary user dirs remain deletable —
+        // the blocklist guards the roots, not their contents.
+        for p in [
+            "/var/log/app",
+            "/usr/local/share/scratch",
+            "/etc/myapp/cache",
+            "/home/user/Documents",
+            "/opt/tools/build",
+            "/data/project",
+            "C:\\Users\\me\\Downloads",
+            "C:\\Windows\\Temp\\scratch",
+        ] {
+            assert!(!is_root_delete_target(p), "should allow {p:?}");
         }
     }
 

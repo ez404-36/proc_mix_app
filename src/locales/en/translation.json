@@ -32,6 +32,7 @@
     "history": "History",
     "recorder": "Recorder",
     "env": "Environment",
+    "plugins": "Plugins",
     "settings": "Settings",
     "cycleThemeTitle": "Cycle theme",
     "themeLabel": "Theme: {{label}}",
@@ -542,6 +543,96 @@
     "saveFailed": "Failed to save the schedule.",
     "loadFailed": "Failed to load schedules.",
     "newLabel": "Schedule"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "subtitle": "Extend ProcMix with parsers, presets, integrations, and content — all running locally.",
+    "loadError": "Failed to load plugins.",
+    "searchPlaceholder": "Search plugins by name or description…",
+    "compatibleOnly": "Compatible only",
+    "osOnly": "For this OS",
+    "hideInstalled": "Hide installed",
+    "noMatches": "No plugins match \"{{query}}\".",
+    "noCompatibleMatches": "No plugins match the current filters.",
+    "types": {
+      "filterLabel": "Filter by type",
+      "clear": "Clear",
+      "parsers": "Parsers",
+      "presets": "Presets",
+      "eventHandlers": "Integrations",
+      "nodeKinds": "Nodes",
+      "content": "Content"
+    },
+    "installed": {
+      "title": "Installed"
+    },
+    "available": {
+      "title": "Available",
+      "empty": "The catalog is empty.",
+      "installing": "Installing…",
+      "changelog": "What's new:",
+      "selectVersion": "Select a version of {{name}}",
+      "versionLatest": "{{version}} (latest)",
+      "installedVersion": "Installed: {{version}}",
+      "updateAvailable": "Update available",
+      "action": {
+        "install": "Install",
+        "reinstall": "Reinstall",
+        "update": "Update",
+        "rollback": "Install this version"
+      }
+    },
+    "empty": {
+      "primary": "No plugins installed.",
+      "secondary": "Install a plugin from Available below."
+    },
+    "toggleLabel": "Enable {{name}}",
+    "status": {
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "incompatible": "Incompatible",
+      "osIncompatible": "Not for this OS",
+      "error": "Error"
+    },
+    "os": {
+      "hint": "This plugin doesn't target your operating system. It still works — e.g. for running commands on a remote host (SSH) with a different OS.",
+      "universal": "Any OS",
+      "linux": "Linux",
+      "macos": "macOS",
+      "windows": "Windows"
+    },
+    "source": {
+      "core": "Built-in",
+      "community": "Community",
+      "user": "Installed"
+    },
+    "contributes": {
+      "label": "Provides:",
+      "parsers": "{{count}} parser",
+      "parsers_other": "{{count}} parsers",
+      "presets": "{{count}} preset",
+      "presets_other": "{{count}} presets",
+      "eventHandlers": "{{count}} integration",
+      "eventHandlers_other": "{{count}} integrations",
+      "nodeKinds": "{{count}} node type",
+      "nodeKinds_other": "{{count}} node types",
+      "commands": "{{count}} command",
+      "commands_other": "{{count}} commands",
+      "workflows": "{{count}} workflow",
+      "workflows_other": "{{count}} workflows"
+    },
+    "permissions": {
+      "label": "Permissions:",
+      "network": "Network",
+      "fs": "Filesystem",
+      "process": "Run processes"
+    },
+    "remove": {
+      "action": "Remove",
+      "title": "Remove plugin",
+      "message": "Remove the plugin \"{{name}}\"? Its files will be deleted from disk.",
+      "confirm": "Remove"
+    }
   },
   "settings": {
     "title": "Settings",

@@ -252,3 +252,18 @@ CREATE TABLE IF NOT EXISTS http_server_config (
   created_at      TEXT NOT NULL DEFAULT '',
   updated_at      TEXT NOT NULL DEFAULT ''
 );
+
+-- Per-plugin user state (plugin system, Phase 1). ProcMix-owned state keyed by
+-- the plugin's manifest `id`. The plugin's DEFINITION lives on disk in its
+-- `plugin.json` and is parsed read-only by `plugins::discovery` — never
+-- duplicated here. This table stores only the bits that have no home in a
+-- manifest: whether the user has enabled the plugin. Rows are created lazily on
+-- first toggle; a plugin with no row defaults to ENABLED (a freshly discovered,
+-- compatible plugin is on until the user turns it off). See
+-- `storage/plugin_state.rs`.
+CREATE TABLE IF NOT EXISTS plugin_state (
+  plugin_id   TEXT PRIMARY KEY NOT NULL,
+  -- 1 = enabled, 0 = disabled (SQLite has no bool).
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  updated_at  TEXT NOT NULL DEFAULT ''
+);

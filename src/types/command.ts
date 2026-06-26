@@ -337,6 +337,7 @@ export type View =
   | "history"
   | "recorder"
   | "settings"
+  | "plugins"
   | "env";
 
 /**

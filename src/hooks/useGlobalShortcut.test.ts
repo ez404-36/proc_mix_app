@@ -44,7 +44,11 @@ beforeEach(() => {
 
 /** Flush a couple of microtasks so the async `apply()` IIFE runs to completion. */
 async function flush(): Promise<void> {
-  for (let i = 0; i < 5; i++) {
+  // The hook serializes all register/unregister work onto a shared promise
+  // chain (StrictMode safety), so an accelerator change queues the new
+  // apply() behind the previous op. Flush generously so the queued operation's
+  // internal awaits (isRegistered → unregister → register) all settle.
+  for (let i = 0; i < 20; i++) {
     await Promise.resolve();
   }
 }

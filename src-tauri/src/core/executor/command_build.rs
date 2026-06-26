@@ -826,11 +826,17 @@ pub(super) fn build_command(
 // positive. `getpgid(pid)` returns the pgid of `pid` or -1; we use it to
 // confirm that `setsid()` succeeded before issuing a killpg (otherwise
 // killpg with the wrong group could target unrelated processes).
+// `getsid(pid)` returns the session id of `pid` or -1; we use it (with a
+// `pid` of 0, meaning the calling process) to obtain ProcMix's OWN session
+// so the pgid guard can reject any group that is not provably isolated
+// from our login/session group — a `killpg` against that group would kill
+// the whole desktop session.
 #[cfg(unix)]
 extern "C" {
     fn setsid() -> i32;
     fn killpg(pgrp: i32, sig: i32) -> i32;
     fn getpgid(pid: i32) -> i32;
+    fn getsid(pid: i32) -> i32;
 }
 
 #[cfg(unix)]
@@ -853,12 +859,132 @@ pub(crate) fn libc_killpg(pgid: i32, sig: i32) -> i32 {
     unsafe { killpg(pgid, sig) }
 }
 
+/// `true` when `pgid` is safe to target with a group-wide signal: positive,
+/// above the init group, and NOT equal to ProcMix's own process group or
+/// session. This is a last-line, defence-in-depth re-check at the signal
+/// site (the authoritative isolation decision is made once, at spawn, by
+/// [`resolve_isolated_pgid`]). It exists because the elevated kill path runs
+/// `kill` as ROOT, where signaling our own session group would kill the whole
+/// desktop and EPERM no longer protects us — so even a stale/mistaken `pgid`
+/// must never reach `sudo kill -<pgid>`.
+#[cfg(unix)]
+pub(crate) fn pgid_is_safe_target(pgid: i32) -> bool {
+    if pgid <= 1 {
+        return false;
+    }
+    let own_pgrp = libc_getpgid(0);
+    if own_pgrp > 0 && pgid == own_pgrp {
+        return false;
+    }
+    let own_sid = libc_getsid(0);
+    if own_sid > 0 && pgid == own_sid {
+        return false;
+    }
+    true
+}
+
 #[cfg(unix)]
 #[inline]
 pub(crate) fn libc_getpgid(pid: i32) -> i32 {
     // SAFETY: getpgid has no memory side effects; -1 is a valid error
     // sentinel and callers handle it.
     unsafe { getpgid(pid) }
+}
+
+#[cfg(unix)]
+#[inline]
+pub(crate) fn libc_getsid(pid: i32) -> i32 {
+    // SAFETY: getsid has no memory side effects; -1 is a valid error
+    // sentinel and callers handle it.
+    unsafe { getsid(pid) }
+}
+
+/// Resolve the process group to use for a group-wide kill of `child_pid`,
+/// returning `Some(pgid)` ONLY when that group is provably a fresh, isolated
+/// group created by our `setsid()` in `pre_exec` — never the inherited
+/// login/session group ProcMix itself belongs to.
+///
+/// `getpgid(child) == child` is NECESSARY but NOT SUFFICIENT: when ProcMix is
+/// launched directly from the display manager / login shell it can already be
+/// a process-group leader, so `setsid()` fails with `EPERM` (silently, in
+/// `pre_exec`) and the child INHERITS ProcMix's group. If that inherited
+/// group's pgid happens to equal the child's pid, the old `g == pid` check
+/// passed and a cancel/timeout `killpg(g, SIGKILL)` nuked the entire desktop
+/// session (black screen, forced re-login). The elevated path is worse: it
+/// runs `sudo kill -9 -<pgid>` as root, where the in-process EPERM that would
+/// otherwise spare an unrelated group no longer applies.
+///
+/// We therefore additionally require the group to differ from ProcMix's OWN
+/// process group (`getpgid(0)`) and session (`getsid(0)`). A genuine
+/// `setsid()` always yields a brand-new session whose id equals the child pid
+/// and differs from ours; the EPERM-inherited group fails at least one of
+/// these checks and falls back to a single-child kill.
+#[cfg(unix)]
+pub(crate) fn resolve_isolated_pgid(child_pid: i32) -> Option<i32> {
+    if child_pid <= 1 {
+        return None;
+    }
+    let g = libc_getpgid(child_pid);
+    // Must be a positive group led by our child.
+    if g != child_pid || g <= 1 {
+        return None;
+    }
+    // Must NOT be ProcMix's own process group.
+    let own_pgrp = libc_getpgid(0);
+    if own_pgrp <= 0 || g == own_pgrp {
+        return None;
+    }
+    // Must NOT be ProcMix's own session. A successful setsid() makes the
+    // child its own session leader (sid == child pid), which by definition
+    // differs from ours; equality means setsid() did not isolate it.
+    let own_sid = libc_getsid(0);
+    let child_sid = libc_getsid(child_pid);
+    if own_sid <= 0 || child_sid <= 0 || child_sid == own_sid || child_sid != child_pid {
+        return None;
+    }
+    Some(g)
+}
+
+#[cfg(all(test, unix))]
+mod pgid_guard_tests {
+    use super::*;
+
+    extern "C" {
+        fn getpid() -> i32;
+    }
+
+    #[test]
+    fn own_process_group_is_never_a_safe_target() {
+        // ProcMix's own process group and session must always be rejected —
+        // signaling them would kill the test runner's own session.
+        let own_pgrp = libc_getpgid(0);
+        let own_sid = libc_getsid(0);
+        assert!(!pgid_is_safe_target(own_pgrp));
+        assert!(!pgid_is_safe_target(own_sid));
+    }
+
+    #[test]
+    fn nonpositive_and_init_pgids_are_unsafe_targets() {
+        assert!(!pgid_is_safe_target(0));
+        assert!(!pgid_is_safe_target(1));
+        assert!(!pgid_is_safe_target(-1));
+    }
+
+    #[test]
+    fn resolve_rejects_our_own_pid() {
+        // The current test process did NOT setsid() into a fresh isolated
+        // session, so even though getpgid(self) may equal our pid in some
+        // launch contexts, the session-equality check must reject it — we are
+        // never isolated from ourselves.
+        let me = unsafe { getpid() };
+        assert_eq!(resolve_isolated_pgid(me), None);
+    }
+
+    #[test]
+    fn resolve_rejects_pid_zero_and_one() {
+        assert_eq!(resolve_isolated_pgid(0), None);
+        assert_eq!(resolve_isolated_pgid(1), None);
+    }
 }
 
 #[cfg(test)]

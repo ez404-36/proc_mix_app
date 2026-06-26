@@ -24,6 +24,7 @@ import { CommandEditor } from "./components/CommandEditor";
 import { History } from "./components/History";
 import { Recorder } from "./components/Recorder";
 import { Settings } from "./components/Settings";
+import { Plugins } from "./components/Plugins";
 import { CommandPalette } from "./components/CommandPalette";
 import { HttpServerPanel } from "./components/HttpServerPanel";
 import { EnvManager } from "./components/EnvManager";
@@ -49,6 +50,7 @@ interface NavItem {
     | "nav.history"
     | "nav.recorder"
     | "nav.settings"
+    | "nav.plugins"
     | "nav.env";
   icon: string;
 }
@@ -70,6 +72,7 @@ const NAV_ITEMS: NavItem[] = [
   { view: "history", labelKey: "nav.history", icon: "⏱" },
   { view: "recorder", labelKey: "nav.recorder", icon: "⏺" },
   { view: "env", labelKey: "nav.env", icon: "⊞" },
+  { view: "plugins", labelKey: "nav.plugins", icon: "⧉" },
   { view: "settings", labelKey: "nav.settings", icon: "⚙" },
 ];
 
@@ -106,6 +109,8 @@ function renderView(view: View): ReactElement {
       return <EnvManager />;
     case "settings":
       return <Settings />;
+    case "plugins":
+      return <Plugins />;
   }
 }
 

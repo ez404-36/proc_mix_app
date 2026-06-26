@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import type {
+  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactElement,
 } from "react";
@@ -493,12 +494,30 @@ export function HttpServerPanel(): ReactElement {
     </div>
   );
 
+  // The indicator is a clickable row that ALSO contains the run/stop
+  // ToggleSwitch (itself a <button>). A native <button> here would nest a
+  // <button> inside a <button> — invalid HTML. So the row is a
+  // `role="button"` div with keyboard activation (Enter/Space), and the inner
+  // switch stays a real <button>; the toggle wrapper stops click/keydown from
+  // bubbling so interacting with the switch never opens the panel.
+  const openPanel = (): void => setOpen(true);
+  const handleIndicatorKeyDown = (
+    e: ReactKeyboardEvent<HTMLDivElement>,
+  ): void => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openPanel();
+    }
+  };
+
   return (
     <>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         className={`http-server-indicator ${indicatorState}`}
-        onClick={() => setOpen(true)}
+        onClick={openPanel}
+        onKeyDown={handleIndicatorKeyDown}
         title={statusLabel}
         aria-label={statusLabel}
       >
@@ -509,11 +528,12 @@ export function HttpServerPanel(): ReactElement {
           {t("httpServer.indicator.label")}
         </span>
         {/* Run / stop the server inline without opening the panel; the wrapper
-            stops the click from bubbling to the panel-opening button. */}
+            stops click/keydown from bubbling to the panel-opening row. */}
         <span
           className="http-server-indicator__toggle"
           onClick={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
         >
           <ToggleSwitch
             checked={status.running}
@@ -526,7 +546,7 @@ export function HttpServerPanel(): ReactElement {
             }
           />
         </span>
-      </button>
+      </div>
       {open ? createPortal(panel, document.body) : null}
     </>
   );

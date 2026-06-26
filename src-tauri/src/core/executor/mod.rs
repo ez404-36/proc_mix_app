@@ -328,19 +328,16 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
 
     // Resolve the child's process group. setsid() ran in pre_exec; if it
     // succeeded the child IS a session leader and pgid == pid. We confirm
-    // via getpgid before storing — if the call fails (or returns a value
-    // != pid), we fall back to single-process kill, never to a killpg
-    // against an unrelated group.
+    // genuine ISOLATION (not just leadership) before storing — if setsid()
+    // failed with EPERM the child inherited ProcMix's own login/session
+    // group, and a killpg against that would kill the whole desktop. The
+    // resolver rejects any group equal to our own pgid/session, so we fall
+    // back to single-process kill, never to a killpg against the session.
+    // This guard protects every group-kill site (cancel, timeout, the
+    // elevated `sudo kill -<pgid>`, and the shutdown hook) since they all
+    // consume this one stored `pgid`.
     #[cfg(unix)]
-    let pgid: Option<i32> = pid.and_then(|p| {
-        let p_i = p as i32;
-        let g = command_build::libc_getpgid(p_i);
-        if g == p_i && g > 0 {
-            Some(g)
-        } else {
-            None
-        }
-    });
+    let pgid: Option<i32> = pid.and_then(|p| command_build::resolve_isolated_pgid(p as i32));
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -516,8 +513,12 @@ pub fn shutdown_all_sync(state: &ExecutorState) {
         {
             // SIGTERM the whole group (best-effort). The group leader is the
             // spawned child (setsid made it a session/group leader); for a
-            // remote run that's the local `ssh`.
-            if let Some(g) = _entry.pgid {
+            // remote run that's the local `ssh`. Re-check isolation so app
+            // exit can never SIGTERM ProcMix's own login/session group.
+            if let Some(g) = _entry
+                .pgid
+                .filter(|&g| command_build::pgid_is_safe_target(g))
+            {
                 let _ = command_build::libc_killpg(g, command_build::SIGTERM);
             }
             // Clear any one-shot SSH password parked under this run id.

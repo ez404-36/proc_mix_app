@@ -37,6 +37,21 @@ async function safeUnregister(accel: string): Promise<void> {
   }
 }
 
+// Serialize all register/unregister work onto a single promise chain. React 19
+// dev double-invokes effects (mount → unmount → mount); without serialization,
+// the second mount's register() can interleave with the first cycle's still
+// in-flight register() and the OS reports "HotKey already registered". Chaining
+// every operation guarantees one settles before the next begins.
+let opChain: Promise<void> = Promise.resolve();
+
+function runSerialized(op: () => Promise<void>): Promise<void> {
+  const next = opChain.then(op, op);
+  // Swallow rejection on the chain so one failed op doesn't poison the next;
+  // individual ops already log their own errors.
+  opChain = next.catch(() => undefined);
+  return next;
+}
+
 export function useGlobalShortcut(): void {
   const accelerator = useUIStore((s) => s.toggleShortcut);
   const lastRegistered = useRef<string | null>(null);
@@ -84,13 +99,19 @@ export function useGlobalShortcut(): void {
       }
     };
 
-    void apply();
+    // Run apply() and the cleanup unregister on the shared serial chain so a
+    // StrictMode mount/unmount/mount burst never overlaps register/unregister
+    // calls (which the OS rejects as "already registered").
+    void runSerialized(apply);
 
     return () => {
       cancelled = true;
-      const current = lastRegistered.current;
-      if (!current) return;
-      void safeUnregister(current);
+      void runSerialized(async () => {
+        const current = lastRegistered.current;
+        if (!current) return;
+        await safeUnregister(current);
+        lastRegistered.current = null;
+      });
     };
   }, [accelerator]);
 }

@@ -32,6 +32,7 @@
     "history": "История",
     "recorder": "Запись",
     "env": "Окружение",
+    "plugins": "Плагины",
     "settings": "Настройки",
     "cycleThemeTitle": "Сменить тему",
     "themeLabel": "Тема: {{label}}",
@@ -548,6 +549,102 @@
     "saveFailed": "Не удалось сохранить расписание.",
     "loadFailed": "Не удалось загрузить расписания.",
     "newLabel": "Расписание"
+  },
+  "plugins": {
+    "title": "Плагины",
+    "subtitle": "Расширяйте ProcMix парсерами, пресетами, интеграциями и контентом — всё работает локально.",
+    "loadError": "Не удалось загрузить плагины.",
+    "searchPlaceholder": "Поиск плагинов по названию или описанию…",
+    "compatibleOnly": "Только совместимые",
+    "osOnly": "Для этой ОС",
+    "hideInstalled": "Скрыть установленные",
+    "noMatches": "Нет плагинов по запросу «{{query}}».",
+    "noCompatibleMatches": "Нет плагинов под текущие фильтры.",
+    "types": {
+      "filterLabel": "Фильтр по типу",
+      "clear": "Сбросить",
+      "parsers": "Парсеры",
+      "presets": "Пресеты",
+      "eventHandlers": "Интеграции",
+      "nodeKinds": "Узлы",
+      "content": "Контент"
+    },
+    "installed": {
+      "title": "Установленные"
+    },
+    "available": {
+      "title": "Доступные",
+      "empty": "Каталог пуст.",
+      "installing": "Установка…",
+      "changelog": "Что нового:",
+      "selectVersion": "Выбрать версию плагина {{name}}",
+      "versionLatest": "{{version}} (последняя)",
+      "installedVersion": "Установлено: {{version}}",
+      "updateAvailable": "Доступно обновление",
+      "action": {
+        "install": "Установить",
+        "reinstall": "Переустановить",
+        "update": "Обновить",
+        "rollback": "Установить эту версию"
+      }
+    },
+    "empty": {
+      "primary": "Плагины не установлены.",
+      "secondary": "Установите плагин из раздела «Доступные» ниже."
+    },
+    "toggleLabel": "Включить {{name}}",
+    "status": {
+      "enabled": "Включён",
+      "disabled": "Выключен",
+      "incompatible": "Несовместим",
+      "osIncompatible": "Не для этой ОС",
+      "error": "Ошибка"
+    },
+    "os": {
+      "hint": "Плагин не предназначен для вашей операционной системы. Он всё равно работает — например, для запуска команд на удалённом хосте (SSH) с другой ОС.",
+      "universal": "Любая ОС",
+      "linux": "Linux",
+      "macos": "macOS",
+      "windows": "Windows"
+    },
+    "source": {
+      "core": "Встроенный",
+      "community": "Сообщество",
+      "user": "Установленный"
+    },
+    "contributes": {
+      "label": "Добавляет:",
+      "parsers_one": "{{count}} парсер",
+      "parsers_few": "{{count}} парсера",
+      "parsers_many": "{{count}} парсеров",
+      "presets_one": "{{count}} пресет",
+      "presets_few": "{{count}} пресета",
+      "presets_many": "{{count}} пресетов",
+      "eventHandlers_one": "{{count}} интеграция",
+      "eventHandlers_few": "{{count}} интеграции",
+      "eventHandlers_many": "{{count}} интеграций",
+      "nodeKinds_one": "{{count}} тип узла",
+      "nodeKinds_few": "{{count}} типа узлов",
+      "nodeKinds_many": "{{count}} типов узлов",
+      "commands_one": "{{count}} команда",
+      "commands_few": "{{count}} команды",
+      "commands_many": "{{count}} команд",
+      "workflows_one": "{{count}} сценарий",
+      "workflows_few": "{{count}} сценария",
+      "workflows_many": "{{count}} сценариев"
+    },
+    "permissions": {
+      "label": "Разрешения:",
+      "network": "Сеть",
+      "fs": "Файловая система",
+      "process": "Запуск процессов"
+    },
+    "remove": {
+      "action": "Удалить",
+      "title": "Удалить плагин",
+      "message": "Удалить плагин «{{name}}»? Его файлы будут удалены с диска.",
+      "confirm": "Удалить"
+    }
   },
   "settings": {
     "title": "Настройки",

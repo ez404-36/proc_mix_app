@@ -8671,3 +8671,221 @@ body.is-editor-fullscreen .output-panel {
 .toggle-switch.is-on .toggle-switch__thumb {
   transform: translateX(18px);
 }
+
+/* Plugins section (plugin system, Phase 1). Card list of discovered plugins
+   with status/source badges, contribution + permission chips, and per-row
+   actions. Tokens only — no hardcoded colours. */
+.plugin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plugin-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+.plugin-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plugin-card__identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.plugin-card__name {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.plugin-card__version {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.plugin-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.plugin-card__description {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.plugin-card__error {
+  margin: 0;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--color-danger);
+}
+
+.plugin-card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plugin-card__chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plugin-card__meta-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+/* Status / source badge — pill, mirrors `.type-badge`. */
+.plugin-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
+}
+
+.plugin-badge--enabled {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-success);
+}
+
+.plugin-badge--disabled {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
+}
+
+.plugin-badge--incompatible {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-danger);
+}
+
+.plugin-badge--error {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-danger);
+}
+
+.plugin-badge--source {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+/* Contribution / permission chip — subtle bordered tag. */
+.plugin-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-subtle);
+  color: var(--color-text);
+}
+
+.plugin-chip--permission {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+
+/* Catalog version changelog ("what's new") — compact bulleted list. */
+.plugin-changelog {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.plugin-changelog li {
+  margin: 2px 0;
+}
+
+/* OS-incompatibility status badge — advisory (warning tone), not an error. */
+.plugin-badge--osIncompatible,
+.plugin-badge--os {
+  background: var(--color-warning-subtle, rgba(245, 158, 11, 0.14));
+  color: var(--color-warning, #b45309);
+}
+
+/* Toolbar filter toggle (switch + label) — e.g. "Compatible only". */
+.plugin-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Plugin-type multi-select filter — row of toggleable chips + clear. */
+.plugin-type-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 12px;
+}
+
+.plugin-type-filter__clear {
+  margin-left: 4px;
+}
+
+/* Version management control (version dropdown + install/update/rollback). */
+.plugin-version-installer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Type badges on a plugin card (which extension points it contributes to). */
+.plugin-types {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.plugin-badge--type {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+/* Target-OS chips group + the chips themselves (informational). */
+.plugin-os {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.plugin-chip--os {
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+}

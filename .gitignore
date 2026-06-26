@@ -21,6 +21,9 @@ yarn-error.log*
 .env.local
 .env.*.local
 
+# Local mock data (e.g. mock plugin catalog for dev/testing)
+.mocks/
+
 # Rust / Tauri
 target/
 src-tauri/target/

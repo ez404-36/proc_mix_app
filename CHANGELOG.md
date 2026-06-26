@@ -5,6 +5,92 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] - 2026-06-26
+
+**A new Plugins section with a full plugin delivery framework (manifest →
+discovery → catalog → install/update/rollback/remove), plus a critical executor
+fix that could kill the whole desktop session on cancel.** This release lands the
+foundation of the plugin system: a new top-level **Plugins** view lists installed
+plugins (name, version, author, source, status, declared permissions, and a
+summary of what each contributes), and a versioned **catalog** lets a user install
+a chosen version, update to a newer one, or roll back to an older one — all as the
+single "install version" operation, with removal — without ever executing plugin
+code. Nothing here runs plugin logic yet: the catalog reads from a local source
+(`PROCMIX_PLUGIN_CATALOG`, defaulting to `.mocks/plugins` in dev); a network
+GitHub-backed source is reserved (`CatalogLocation::Remote`) and intentionally
+deferred. The release also fixes a serious Unix bug where cancelling or timing out
+a run — or app shutdown — could signal ProcMix's own login/session process group
+and tear down the entire desktop, hardens local SFTP recursive-delete safety, and
+fixes a "HotKey already registered" race on the global shortcut under React 19.
+All changes are backward-compatible and require no migration.
+
+### Added
+
+- **Plugins section (Phase 1).** A new top-level **Plugins** view (added to the
+  navigation after Environment) lists installed plugins with name, version,
+  author, source, lifecycle status (`enabled` / `disabled` / `incompatible` /
+  `osIncompatible` / `error`), the declared `permissions`, and a summary of what
+  the plugin contributes (parsers, presets, event handlers, node kinds, bundled
+  commands/workflows). A broken plugin surfaces with an error instead of silently
+  vanishing. Enable / disable / remove are wired end to end. New backend module
+  `plugins::{manifest,discovery,registry}` mirrors the trait+registry isolation
+  model (per-plugin error isolation, `apiVersion` major-compatibility check,
+  dedup by id); new frontend `types/plugin.ts`, `services/pluginService.ts`,
+  `stores/pluginStore.ts`, and `components/Plugins/`.
+- **Plugin delivery framework (Phase 2).** A versioned **catalog** of installable
+  plugins (`<name>/v<semver>/`), with semver-aware "latest" selection
+  (`plugins::semver`), a catalog source abstraction (`plugins::catalog`,
+  `LocalCatalogSource`), and an atomic installer (`plugins::install`) that writes a
+  chosen version into the per-user installed directory (`<app-data>/plugins/`),
+  replacing whatever was there. Install / update / rollback are one operation
+  (`install_plugin_version`); per-user disabled state persists in
+  `storage::plugin_state` (new `schema.sql` table). New Tauri commands
+  `list_plugins`, `set_plugin_enabled`, `remove_plugin`, `list_plugin_catalog`,
+  `install_plugin_version`.
+- **`.env` support for local dev.** `dotenvy` loads `app/.env` (gitignored) on
+  startup so overrides like `PROCMIX_PLUGIN_CATALOG` take effect; `.env.example`
+  documents the available keys.
+
+### Fixed
+
+- **Cancel/timeout/shutdown could kill the entire desktop session (Unix).** The
+  executor inferred process-group isolation solely from `getpgid(child) == pid`,
+  which an inherited login/session group also satisfies when `setsid()` fails with
+  `EPERM` (e.g. ProcMix launched directly from a display manager). A `killpg`
+  against that group — including the elevated `sudo kill -<pgid>` path — could
+  signal ProcMix's own session and tear down the whole desktop. The stored pgid is
+  now accepted only when **provably isolated** from our own process group and
+  session (`resolve_isolated_pgid`), and every group-kill site (cancel, timeout,
+  the elevated kill, and the shutdown hook) re-checks `pgid_is_safe_target` before
+  signaling. When isolation can't be proven, ProcMix falls back to a single-child
+  kill and never to a group kill.
+- **"HotKey already registered" race on the global shortcut.** Register/unregister
+  of the palette accelerator are now serialized onto a single promise chain, so a
+  React 19 mount → unmount → mount burst can no longer overlap an in-flight
+  register with the next one.
+
+### Security
+
+- **Local SFTP recursive-delete protection broadened.** Beyond `/`, a drive root,
+  and the user's home, recursive delete now also refuses the home's parent (e.g.
+  `/home`, `/Users`) and a list of critical top-level system trees
+  (`/etc`, `/usr`, `/var`, `/System`, `\Windows`, `\Program Files*`, …), comparing
+  against a normalised, separator-collapsed path. Arbitrary user directories
+  outside these trees remain deletable.
+- **Plugin install copies data only.** Installing, updating, or rolling back a
+  plugin downloads/copies a manifest and assets and never executes plugin code;
+  `name`/`version` are validated (semver shape, no `/`/`..`) before forming any
+  path. Declared `permissions` are surfaced in the UI ahead of any future
+  execution phase.
+
+### Notes
+
+- The plugin system stops at lifecycle management: no extension point (content
+  packs, presets, output parsers, integrations, custom workflow nodes) executes
+  plugin code yet — those are later phases. The catalog's GitHub-backed remote
+  source is reserved but not wired; a `Remote` location returns a clear error
+  rather than silently doing nothing.
+
 ## [0.10.3] - 2026-06-25
 
 **Remote execution over SSH, an SFTP file manager, a built-in HTTP API server,
@@ -1918,6 +2004,7 @@ licensing client.
 - Parameterized SQL throughout; a restrictive Content Security Policy for the
   webview.
 
+[0.10.4]: https://github.com/procmix/proc_mix/releases/tag/v0.10.4
 [0.10.1]: https://github.com/procmix/proc_mix/releases/tag/v0.10.1
 [0.10.0]: https://github.com/procmix/proc_mix/releases/tag/v0.10.0
 [0.4.0]: https://github.com/procmix/proc_mix/releases/tag/v0.4.0

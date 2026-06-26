@@ -5,5 +5,6 @@ export * from "./httpServer";
 export * from "./listView";
 export * from "./outputSchema";
 export * from "./platform";
+export * from "./plugin";
 export * from "./schedule";
 export * from "./workflow";

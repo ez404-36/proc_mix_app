@@ -1,6 +1,6 @@
 [package]
 name = "procmix"
-version = "0.10.3"
+version = "0.10.4"
 description = "ProcMix - cross-platform automation tool"
 authors = ["Zenkin Egor Andreevich"]
 edition = "2021"
