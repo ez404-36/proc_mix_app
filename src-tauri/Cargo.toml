@@ -45,14 +45,18 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # the helper is built (via `npm run build:askpass`) only for Unix bundles. On
 # Windows the binary would compile to a no-op stub, so there is nothing to
 # gain from building it there.
-# The source file stem MUST match this `name` (`procmix-askpass.rs`, not
-# `askpass.rs`). tauri-cli's bundler scans `src/bin/` by file stem and only
-# treats a disabled (required-features-off) bin as "skip" when the stem matches
-# the bin `name`; a mismatched stem makes the Windows bundle try to ship a
-# never-built `askpass.exe` and fail with "cannot find the file specified".
+#
+# IMPORTANT: the source lives at `src/askpass_main.rs`, NOT under `src/bin/`.
+# tauri-cli's bundler scans `tauri_dir/src/bin/` and auto-adds every file there
+# as an app binary to bundle. Released CLI versions don't reliably skip a
+# `required-features`-gated `[[bin]]` from that scan, so a file in `src/bin/`
+# makes the Windows bundle try to ship a never-built `procmix-askpass.exe`
+# (off there) and fail with "cannot find the file specified". Keeping the
+# source out of `src/bin/` removes it from the scan entirely; the `[[bin]]`
+# below still builds it via `--features ssh-askpass` on Unix.
 [[bin]]
 name = "procmix-askpass"
-path = "src/bin/procmix-askpass.rs"
+path = "src/askpass_main.rs"
 required-features = ["ssh-askpass"]
 
 [features]
@@ -152,6 +156,11 @@ sha2 = "0.10"
 
 # RFC 3339 timestamp parsing for lease expiry / signed-clock comparisons.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+# Loads `app/.env` at startup so local dev can set overrides (e.g.
+# PROCMIX_PLUGIN_CATALOG) without exporting shell vars. Best-effort: a missing
+# `.env` is not an error. Only read in the binary entrypoint.
+dotenvy = "0.15"
 
 # Cron expression parser used by the Scheduler (core::scheduler). PARSE /
 # next-fire only — the scheduling loop itself is hand-written (a single Tokio

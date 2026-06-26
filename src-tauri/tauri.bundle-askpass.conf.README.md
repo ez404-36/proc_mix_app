@@ -10,6 +10,16 @@ bundled resource.
 - The npm script builds the release helper first (`build:askpass:release`).
 - The helper is Unix-only, so this overlay is used only for Linux/macOS bundles.
 
+## Resource path
+
+The source path `target/release/procmix-askpass` is resolved **relative to this
+config file's directory** (`src-tauri/`), per Tauri's `bundle.resources` rules.
+The helper is produced by `build:askpass:release`, which runs
+`cargo build --manifest-path src-tauri/Cargo.toml` → output at
+`src-tauri/target/release/procmix-askpass`. Do **not** prefix it with `../`
+(that would point at `<repo>/target/...`, which doesn't exist → bundling fails
+with `resource path ... doesn't exist`).
+
 > Keep this file as **strict JSON** — do not add `_comment`/`$comment` or any property
 > outside the Tauri config schema. `tauri-action` validates the overlay and rejects
 > unknown properties (`Additional properties are not allowed`). Put explanations here
