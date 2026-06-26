@@ -122,18 +122,35 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           tag='${{ github.ref_name }}'
           repo='${{ github.repository }}'
-          # Idempotent: reuse an existing draft for this tag (e.g. on re-run)
-          # rather than creating a duplicate.
-          if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+
+          # A DRAFT release has no git tag attached until it is published, so it
+          # cannot be looked up by `gh release view <tag>` or the
+          # `releases/tags/<tag>` API (both 404, and the draft shows as
+          # `untagged-...`). Find it by scanning the releases list for one whose
+          # `tag_name` matches — this also makes a re-run idempotent instead of
+          # creating a second draft.
+          find_id() {
+            gh api --paginate "repos/$repo/releases" \
+              -q ".[] | select(.tag_name == \"$tag\") | .id" | head -n1
+          }
+
+          release_id="$(find_id || true)"
+          if [ -z "$release_id" ]; then
             gh release create "$tag" \
               --repo "$repo" \
               --draft \
               --title "ProcMix $tag" \
               --notes "Installers for ProcMix $tag."
+            release_id="$(find_id || true)"
           fi
-          release_id="$(gh api "repos/$repo/releases/tags/$tag" -q '.id')"
+
+          if [ -z "$release_id" ]; then
+            echo "::error::Could not resolve a release id for tag $tag" >&2
+            exit 1
+          fi
           echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
 
   build-windows:
