@@ -96,8 +96,48 @@ jobs:
         working-directory: src-tauri
         run: cargo test --features ssh-askpass
 
-  build-windows:
+  # Create the draft GitHub Release ONCE, before the parallel build jobs run.
+  # tauri-action's create-or-find-release step is not atomic: when build-windows
+  # and build-linux both ran it concurrently, each found no release for the tag
+  # and created its own draft, splitting the artifacts across two drafts (see
+  # tauri-apps/tauri-action#914). Creating the release up front and passing its
+  # id to the build jobs (which then only UPLOAD to it) removes the race and also
+  # lets the second job merge its platform into the existing latest.json.
+  #
+  # Only runs on tag pushes; for workflow_dispatch there is no release and the
+  # build jobs upload workflow artifacts instead.
+  create-release:
     needs: check
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      release-id: ${{ steps.create.outputs.release-id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create or reuse draft release
+        id: create
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag='${{ github.ref_name }}'
+          repo='${{ github.repository }}'
+          # Idempotent: reuse an existing draft for this tag (e.g. on re-run)
+          # rather than creating a duplicate.
+          if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$repo" \
+              --draft \
+              --title "ProcMix $tag" \
+              --notes "Installers for ProcMix $tag."
+          fi
+          release_id="$(gh api "repos/$repo/releases/tags/$tag" -q '.id')"
+          echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    needs: [check, create-release]
     runs-on: windows-latest
     env:
       # Surfaced as an env var so the conditional signing step can be gated
@@ -163,13 +203,14 @@ jobs:
         with:
           # Only emit the per-user NSIS installer; skip MSI/WiX.
           args: --bundles nsis
-          # On tag pushes, create/attach to a draft GitHub Release. Empty for
-          # workflow_dispatch runs (no tag ref) -> installer is uploaded as a
-          # workflow artifact instead.
+          # Upload to the pre-created draft release (see the create-release job).
+          # `releaseId` makes tauri-action upload to that exact release instead of
+          # racing to create its own. `tagName` is still set so latest.json points
+          # at the tag download URL (not releases/latest). Both are empty for
+          # workflow_dispatch (no tag) -> tauri-action builds without uploading and
+          # the installer is captured by the upload-artifact step below.
+          releaseId: ${{ needs.create-release.outputs.release-id || '' }}
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: ${{ github.ref_type == 'tag' && format('ProcMix {0}', github.ref_name) || '' }}
-          releaseDraft: true
-          prerelease: false
           includeUpdaterJson: true
 
       - name: Upload installer artifact
@@ -180,13 +221,13 @@ jobs:
           if-no-files-found: error
 
   build-linux:
-    needs: check
     # Build on the oldest supported base (Ubuntu 22.04) so the resulting
     # artifacts link against an older glibc and run on a wider range of
     # distributions. 22.04 also provides WebKitGTK 4.1 from the standard
     # repositories. Both the .deb and the AppImage are produced from the same
     # compiled binary in this single job, so AppImage adds bundling time but
     # not a second Rust compile.
+    needs: [check, create-release]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -244,12 +285,13 @@ jobs:
           # remote SSH password auth works in the installed app. The path is
           # resolved relative to projectPath (the repo root), per tauri-action.
           args: --bundles deb,appimage --config src-tauri/tauri.bundle-askpass.conf.json
-          # On tag pushes, attach to the same draft GitHub Release as the
-          # Windows job. Empty for workflow_dispatch runs (no tag ref).
+          # Upload to the SAME pre-created draft release as the Windows job, by
+          # id (see the create-release job). Whichever build job runs second
+          # merges its platform into the existing latest.json. `tagName` keeps
+          # the latest.json URLs pointing at the tag. Both empty for
+          # workflow_dispatch -> build only, no upload.
+          releaseId: ${{ needs.create-release.outputs.release-id || '' }}
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: ${{ github.ref_type == 'tag' && format('ProcMix {0}', github.ref_name) || '' }}
-          releaseDraft: true
-          prerelease: false
           includeUpdaterJson: true
 
       - name: Upload deb artifact
