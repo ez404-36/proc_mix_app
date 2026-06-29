@@ -132,25 +132,53 @@ jobs:
           # `untagged-...`). Find it by scanning the releases list for one whose
           # `tag_name` matches — this also makes a re-run idempotent instead of
           # creating a second draft.
+          #
+          # The releases LIST endpoint is eventually consistent: a draft created
+          # one line earlier is frequently absent from the very next list call,
+          # so we retry the lookup a few times before giving up. The `awk 'NR==1'`
+          # (instead of `head -n1`) avoids a SIGPIPE that would make the upstream
+          # `gh` exit non-zero under `pipefail`.
           find_id() {
             gh api --paginate "repos/$repo/releases" \
-              -q ".[] | select(.tag_name == \"$tag\") | .id" | head -n1
+              -q ".[] | select(.tag_name == \"$tag\") | .id" 2>/dev/null \
+              | awk 'NR==1'
           }
 
-          release_id="$(find_id || true)"
+          find_id_retry() {
+            local id=""
+            for _ in 1 2 3 4 5; do
+              id="$(find_id || true)"
+              [ -n "$id" ] && { printf '%s' "$id"; return 0; }
+              sleep 3
+            done
+            return 0
+          }
+
+          release_id="$(find_id_retry)"
           if [ -z "$release_id" ]; then
-            gh release create "$tag" \
+            # `gh release create` prints the release's HTML URL on success; that
+            # URL is also exposed verbatim by the API's `html_url`, so we can map
+            # it straight back to the release id without relying on the list call
+            # becoming consistent.
+            release_url="$(gh release create "$tag" \
               --repo "$repo" \
               --draft \
               --title "ProcMix $tag" \
-              --notes "Installers for ProcMix $tag."
-            release_id="$(find_id || true)"
+              --notes "Installers for ProcMix $tag.")"
+            echo "Created draft release: $release_url"
+            release_id="$(gh api --paginate "repos/$repo/releases" \
+              -q ".[] | select(.html_url == \"$release_url\") | .id" 2>/dev/null \
+              | awk 'NR==1' || true)"
+            # Fall back to the tag-name scan (with retries) if the URL match
+            # missed (e.g. a trailing-newline mismatch).
+            [ -z "$release_id" ] && release_id="$(find_id_retry)"
           fi
 
           if [ -z "$release_id" ]; then
             echo "::error::Could not resolve a release id for tag $tag" >&2
             exit 1
           fi
+          echo "Resolved release id: $release_id"
           echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
 
   build-windows:
