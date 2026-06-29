@@ -8474,6 +8474,37 @@ body.is-editor-fullscreen .output-panel {
   color: var(--color-text);
 }
 
+.http-server-panel__port-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.http-server-panel__port-input {
+  width: 10ch;
+  flex: 0 0 auto;
+  /* Hide the native number-spinner arrows (app convention, mirrors
+     `.number-stepper__input`); typing/validation still work. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.http-server-panel__port-input::-webkit-outer-spin-button,
+.http-server-panel__port-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.http-server-panel__port-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.http-server-panel__port-hint {
+  color: var(--color-danger);
+}
+
 .http-server-panel__toggle {
   display: flex;
   align-items: center;

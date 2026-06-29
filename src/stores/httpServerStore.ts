@@ -24,6 +24,17 @@ import type {
   HttpServerStatus,
   RequestLogEntry,
 } from "../types/httpServer";
+import { useUIStore } from "./uiStore";
+
+/**
+ * Resolve the app's current UI language for the web-UI locale snapshot. The
+ * desktop language lives in `uiStore`; the backend snapshots whatever we pass at
+ * server start so the browser-served web UI mirrors it. Read lazily (inside the
+ * action) via `getState()` so there is no import-time coupling.
+ */
+function currentUiLanguage(): string {
+  return useUIStore.getState().language;
+}
 
 /**
  * Max request-log entries retained in the store. Matches the backend ring
@@ -37,6 +48,7 @@ const DEFAULT_CONFIG: HttpServerConfig = {
   port: 48610,
   bindLan: false,
   logToConsole: true,
+  serveWebUi: false,
 };
 
 export interface HttpServerStoreState {
@@ -100,7 +112,7 @@ export const useHttpServerStore = create<HttpServerStoreState>((set) => ({
   start: async () => {
     set({ error: null });
     try {
-      await startHttpServer();
+      await startHttpServer(currentUiLanguage());
       const status = await getHttpServerStatus();
       set({ status });
     } catch (err) {
@@ -125,7 +137,7 @@ export const useHttpServerStore = create<HttpServerStoreState>((set) => ({
     set({ error: null });
     // Let the error propagate so the panel can render it inline; on success
     // re-read the authoritative status + config the backend now holds.
-    await setHttpServerConfig(config);
+    await setHttpServerConfig(config, currentUiLanguage());
     const [status, fresh] = await Promise.all([
       getHttpServerStatus(),
       getHttpServerConfig(),

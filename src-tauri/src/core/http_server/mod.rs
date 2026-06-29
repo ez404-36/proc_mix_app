@@ -27,6 +27,7 @@ pub mod log;
 pub mod mdns;
 pub mod router;
 pub mod state;
+pub mod static_assets;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -60,6 +61,11 @@ pub async fn start<R: Runtime>(
     app: &AppHandle<R>,
     state: &Arc<HttpServerState>,
     config: HttpServerConfig,
+    // App UI language snapshot (e.g. `Some("ru")`) captured by the caller at
+    // start time. Served to the browser web UI via `GET /api/bootstrap` so its
+    // language mirrors the desktop app's. `None` on the autostart path (no
+    // window/frontend yet) — the web UI then uses its built-in default.
+    ui_language: Option<String>,
 ) -> Result<(), String> {
     // Stop any existing instance first so a restart with a new port/bind does
     // not leave the old listener bound.
@@ -128,7 +134,7 @@ pub async fn start<R: Runtime>(
     let announcement = lan_ip.and_then(|ip| mdns::MdnsAnnouncement::start(ip, config.port));
 
     state
-        .set_running(handle, shutdown, config, announcement, lan_ip)
+        .set_running(handle, shutdown, config, announcement, lan_ip, ui_language)
         .await;
     Ok(())
 }
@@ -147,6 +153,12 @@ pub async fn stop(state: &Arc<HttpServerState>) {
 /// and swallowed so the app always finishes starting. Called AFTER
 /// `app.manage(pool)` so the pool / executor states exist.
 pub async fn autostart_if_enabled<R: Runtime>(app: &AppHandle<R>, state: &Arc<HttpServerState>) {
+    // Serialise against `set_http_server_config`: hold the config-operation lock
+    // across this load + start so a user toggling a setting the instant the
+    // window paints cannot interleave a save/reconcile with our autostart
+    // decision. Whichever writer takes the lock first runs to completion; the
+    // other then sees the committed config.
+    let _op = state.config_lock().await;
     let pool = app.state::<DbPool>().inner().clone();
     let config = match http_server::load(&pool).await {
         Ok(cfg) => cfg,
@@ -158,7 +170,12 @@ pub async fn autostart_if_enabled<R: Runtime>(app: &AppHandle<R>, state: &Arc<Ht
     if !config.enabled {
         return;
     }
-    if let Err(e) = start(app, state, config).await {
+    // Autostart happens during `setup`, before any window/frontend can report
+    // its language, so the snapshot is `None` here; the web UI uses its built-in
+    // default until the server is restarted from the running app (which passes
+    // the live language). Restarting on an app language change is the documented
+    // way to update the served locale.
+    if let Err(e) = start(app, state, config, None).await {
         tracing::error!("http_server: autostart failed: {e}");
     }
 }

@@ -80,9 +80,12 @@ pub async fn start_http_server(
     app: AppHandle,
     state: State<'_, Arc<HttpServerState>>,
     pool: State<'_, DbPool>,
+    // The current app UI language (e.g. `"ru"`), passed by the frontend so the
+    // browser-served web UI mirrors it. Snapshotted at start; not persisted.
+    ui_language: Option<String>,
 ) -> Result<(), String> {
     let cfg = storage_http_server::load(pool.inner()).await?;
-    http_server::start(&app, state.inner(), cfg).await
+    http_server::start(&app, state.inner(), cfg, ui_language).await
 }
 
 /// Stop the server. Idempotent.
@@ -121,13 +124,25 @@ pub async fn set_http_server_config(
     state: State<'_, Arc<HttpServerState>>,
     pool: State<'_, DbPool>,
     config: storage_http_server::HttpServerConfig,
+    // The current app UI language, re-snapshotted on the auto-restart so the web
+    // UI's locale stays in sync after a config change. `None` leaves the served
+    // locale to the web UI's default.
+    ui_language: Option<String>,
 ) -> Result<(), String> {
+    // Hold the config-operation lock across the WHOLE save + reconcile so a
+    // concurrent writer (e.g. launch-time `autostart_if_enabled`, or another
+    // settings toggle firing near-simultaneously) cannot interleave its own
+    // save/reconcile between ours. Without this the persisted `enabled` flag and
+    // the live running state could diverge: two `save()`s race on the single
+    // SQLite row while each makes a `is_running` check-then-act decision on a
+    // stale snapshot. The guard serialises both writers end-to-end.
+    let _op = state.config_lock().await;
     storage_http_server::save(pool.inner(), &config).await?;
     if state.is_running().await {
         // Auto-restart on the new config. `start` stops the running instance
         // first, so this is an atomic restart that picks up the new port/bind/
-        // console-log setting.
-        http_server::start(&app, state.inner(), config).await?;
+        // console-log/web-UI setting.
+        http_server::start(&app, state.inner(), config, ui_language).await?;
     }
     Ok(())
 }

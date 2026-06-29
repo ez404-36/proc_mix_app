@@ -38,9 +38,11 @@ describe("httpServerService command wrappers", () => {
 
   it("startHttpServer / stopHttpServer invoke their commands", async () => {
     invokeMock.mockResolvedValue(undefined);
-    await startHttpServer();
+    await startHttpServer("ru");
     await stopHttpServer();
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "start_http_server");
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "start_http_server", {
+      uiLanguage: "ru",
+    });
     expect(invokeMock).toHaveBeenNthCalledWith(2, "stop_http_server");
   });
 
@@ -50,22 +52,27 @@ describe("httpServerService command wrappers", () => {
       port: 50000,
       bindLan: true,
       logToConsole: false,
+      serveWebUi: true,
     };
     invokeMock.mockResolvedValue(cfg);
     expect(await getHttpServerConfig()).toEqual(cfg);
     expect(invokeMock).toHaveBeenCalledWith("get_http_server_config");
   });
 
-  it("setHttpServerConfig passes the config under the `config` key", async () => {
+  it("setHttpServerConfig passes the config and language", async () => {
     invokeMock.mockResolvedValue(undefined);
     const cfg: HttpServerConfig = {
       enabled: false,
       port: 48610,
       bindLan: false,
       logToConsole: true,
+      serveWebUi: false,
     };
-    await setHttpServerConfig(cfg);
-    expect(invokeMock).toHaveBeenCalledWith("set_http_server_config", { config: cfg });
+    await setHttpServerConfig(cfg, "en");
+    expect(invokeMock).toHaveBeenCalledWith("set_http_server_config", {
+      config: cfg,
+      uiLanguage: "en",
+    });
   });
 
   it("token wrappers map to their commands", async () => {

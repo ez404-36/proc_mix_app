@@ -8,6 +8,7 @@
 // undo/restore flows; `schedules` backs the cron Scheduler (v0.2.0) that
 // fires commands / workflows automatically while the app is running.
 
+pub mod autostart;
 pub mod commands;
 pub mod db;
 pub mod env_config;
@@ -16,6 +17,7 @@ pub mod http_server;
 pub mod plugin_state;
 pub mod schedules;
 pub mod ssh_host_meta;
+pub mod window_behavior;
 pub mod workflows;
 
 pub use db::{init_pool, DbPool};

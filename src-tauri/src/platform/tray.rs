@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use tauri::{
@@ -8,6 +9,32 @@ use tauri::{
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "main-tray";
+
+/// Runtime cache of the user's "close to tray" preference, mirrored from
+/// `storage::window_behavior`. The `CloseRequested` window-event callback is
+/// synchronous and cannot await SQLite, so the flag is read from this atomic
+/// instead. Initialised once at startup from the DB via [`set_close_to_tray`]
+/// and updated live whenever the user toggles the setting (the
+/// `set_close_to_tray` Tauri command writes both the DB and this cache).
+///
+/// Defaults to `true` so that if — for any reason — the startup load has not run
+/// yet, closing the window hides to the tray (the historical behaviour) rather
+/// than unexpectedly quitting the app.
+static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
+
+/// Update the runtime "close to tray" preference. Called at startup with the
+/// value loaded from SQLite, and again whenever the user toggles the Settings →
+/// Tray switch. Read by the `CloseRequested` handler in
+/// [`install_close_to_tray`].
+pub fn set_close_to_tray(enabled: bool) {
+    CLOSE_TO_TRAY.store(enabled, Ordering::Relaxed);
+}
+
+/// Current runtime "close to tray" preference. `true` (default) → closing the
+/// window hides it to the tray; `false` → closing quits ProcMix.
+fn close_to_tray() -> bool {
+    CLOSE_TO_TRAY.load(Ordering::Relaxed)
+}
 
 /// The window's outer position and inner size captured immediately before it
 /// is hidden to the tray. On X11/Wayland `hide()` unmaps the window and a
@@ -214,9 +241,23 @@ pub fn install_close_to_tray<R: Runtime>(window: &WebviewWindow<R>) {
     let window_clone = window.clone();
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            capture_geometry(&window_clone);
-            let _ = window_clone.hide();
+            if close_to_tray() {
+                // Default behaviour: keep the app alive in the tray. Cancel the
+                // close, persist geometry while the window is still valid, and
+                // hide it.
+                api.prevent_close();
+                capture_geometry(&window_clone);
+                let _ = window_clone.hide();
+            } else {
+                // Opt-out: closing the window quits ProcMix. Persist geometry
+                // first (the window is still visible here, so the values are
+                // valid) and exit explicitly — mirrors the `tray-quit` path so
+                // the next launch restores the right size/position. We do NOT
+                // `prevent_close`, but `app.exit(0)` is the authoritative
+                // shutdown that also tears down the tray + background tasks.
+                capture_geometry(&window_clone);
+                window_clone.app_handle().exit(0);
+            }
         }
     });
 }

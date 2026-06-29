@@ -28,9 +28,13 @@ export async function getHttpServerStatus(): Promise<HttpServerStatus> {
 /**
  * Start the server using the persisted config. Rejects with an error whose
  * message starts with `PORT_IN_USE:` when the configured port is taken.
+ *
+ * `uiLanguage` is the current app language (e.g. `"ru"`), snapshotted by the
+ * backend so the browser-served web UI mirrors the desktop app's language at
+ * start time. Omit it to leave the served locale to the web UI's default.
  */
-export async function startHttpServer(): Promise<void> {
-  await invoke("start_http_server");
+export async function startHttpServer(uiLanguage?: string): Promise<void> {
+  await invoke("start_http_server", { uiLanguage });
 }
 
 /** Stop the server. Idempotent — stopping when not running succeeds. */
@@ -51,8 +55,9 @@ export async function getHttpServerConfig(): Promise<HttpServerConfig> {
  */
 export async function setHttpServerConfig(
   config: HttpServerConfig,
+  uiLanguage?: string,
 ): Promise<void> {
-  await invoke("set_http_server_config", { config });
+  await invoke("set_http_server_config", { config, uiLanguage });
 }
 
 /** Whether an API token is currently stored in the keychain. */

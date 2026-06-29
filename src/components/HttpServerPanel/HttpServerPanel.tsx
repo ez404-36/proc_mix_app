@@ -11,9 +11,8 @@ import { useShallow } from "zustand/react/shallow";
 import { useHttpServerStore } from "../../stores/httpServerStore";
 import type { HttpServerConfig } from "../../types/httpServer";
 import { HelpTooltip } from "../HelpTooltip";
-import { NumberStepper } from "../NumberStepper/NumberStepper";
 import { ToggleSwitch } from "../ToggleSwitch";
-import { ServerIcon } from "../icons";
+import { CancelIcon, CheckIcon, EditIcon, ServerIcon } from "../icons";
 
 /** Lowest port the backend accepts (mirrors `storage::http_server::MIN_PORT`). */
 const MIN_PORT = 1024;
@@ -96,10 +95,16 @@ export function HttpServerPanel(): ReactElement {
   // copy it. Cleared when the panel closes.
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Port is read-only until the user clicks the pencil. While editing,
+  // `portDraft` holds the raw input string so any value can be typed (no hard
+  // clamp); "Apply" is gated on the draft parsing to a port in range.
+  const [portEditing, setPortEditing] = useState(false);
+  const [portDraft, setPortDraft] = useState("");
 
   const closePanel = useCallback((): void => {
     setOpen(false);
     setRevealedToken(null);
+    setPortEditing(false);
   }, []);
 
   const handleBackdropClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
@@ -138,13 +143,36 @@ export function HttpServerPanel(): ReactElement {
     }
   };
 
-  // `NumberStepper` already clamps to `[MIN_PORT, MAX_PORT]` and never emits
-  // NaN, so we only persist when the chosen port actually differs from the
-  // saved one.
-  const handlePortChange = (port: number): void => {
-    if (port !== config.port) {
-      void persist({ ...config, port });
+  // Enter edit mode: seed the draft from the saved port.
+  const startEditingPort = (): void => {
+    setPortDraft(String(config.port));
+    setPortEditing(true);
+  };
+
+  const cancelEditingPort = (): void => {
+    setPortEditing(false);
+  };
+
+  // The draft parses to an integer port within the allowed range. Drives both
+  // the "Apply" enabled state and the invalid-input styling.
+  const parsedPort = Number.parseInt(portDraft, 10);
+  const portDraftValid =
+    /^\d+$/.test(portDraft.trim()) &&
+    parsedPort >= MIN_PORT &&
+    parsedPort <= MAX_PORT;
+
+  // Apply the edited port. Only persists when it actually changed; either way
+  // it leaves edit mode.
+  const applyPort = (): void => {
+    if (!portDraftValid) return;
+    setPortEditing(false);
+    if (parsedPort !== config.port) {
+      void persist({ ...config, port: parsedPort });
     }
+  };
+
+  const handleToggleAutostart = (next: boolean): void => {
+    void persist({ ...config, enabled: next });
   };
 
   const handleToggleLan = (next: boolean): void => {
@@ -153,6 +181,10 @@ export function HttpServerPanel(): ReactElement {
 
   const handleToggleLogToConsole = (next: boolean): void => {
     void persist({ ...config, logToConsole: next });
+  };
+
+  const handleToggleServeWebUi = (next: boolean): void => {
+    void persist({ ...config, serveWebUi: next });
   };
 
   const handleRegenerateToken = async (): Promise<void> => {
@@ -226,6 +258,19 @@ export function HttpServerPanel(): ReactElement {
     status.running && status.lanAddress !== undefined
       ? `http://${status.lanAddress}:${status.port}`
       : null;
+
+  // Browsable web-UI URLs (only when the web UI is enabled AND running). The web
+  // UI is served at `/`, so these are the addresses LAN users open in a browser.
+  // When LAN is enabled we prefer the friendly mDNS host + the raw LAN IP; when
+  // bound to loopback only, the local URL is the sole reachable address.
+  const webUiUrls: string[] =
+    status.running && config.serveWebUi
+      ? status.bindLan
+        ? [mdnsUrl, lanUrl]
+            .filter((u): u is string => u !== null)
+            .map((u) => `${u}/`)
+        : [`http://127.0.0.1:${status.port}/`]
+      : [];
 
   // The request log rendered as plain text for a read-only textarea, so the
   // user can select and copy lines. Newest first; one request per line:
@@ -349,6 +394,31 @@ export function HttpServerPanel(): ReactElement {
             </section>
           ) : null}
 
+          {/* Browsable web UI URLs — only while the web UI is enabled + running.
+              These open the reduced read-only ProcMix in a browser. */}
+          {webUiUrls.length > 0 ? (
+            <section className="http-server-panel__section http-server-panel__addresses">
+              <h3 className="http-server-panel__section-title">
+                {t("httpServer.webUi.title")}
+              </h3>
+              {webUiUrls.map((url) => (
+                <div key={url} className="http-server-panel__address-row">
+                  <code className="http-server-panel__address-value">{url}</code>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--icon"
+                    onClick={() => void handleCopyUrl(url)}
+                    aria-label={t("httpServer.address.copy")}
+                    title={t("httpServer.address.copy")}
+                  >
+                    {t("httpServer.address.copy")}
+                  </button>
+                </div>
+              ))}
+              <p className="form-hint">{t("httpServer.webUi.hint")}</p>
+            </section>
+          ) : null}
+
           {error !== null ? (
             <p className="http-server-panel__error" role="alert">
               {localizeServerError(error, t)}
@@ -365,15 +435,86 @@ export function HttpServerPanel(): ReactElement {
               <span className="http-server-panel__field-label">
                 {t("httpServer.settings.port")}
               </span>
-              <NumberStepper
-                value={config.port}
-                min={MIN_PORT}
-                max={MAX_PORT}
-                ariaLabel={t("httpServer.settings.port")}
-                decrementLabel={t("httpServer.settings.portStepDown")}
-                incrementLabel={t("httpServer.settings.portStepUp")}
-                onChange={handlePortChange}
+              {portEditing ? (
+                <div className="http-server-panel__port-edit">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    className={`input http-server-panel__port-input${
+                      portDraftValid ? "" : " input--error"
+                    }`}
+                    value={portDraft}
+                    autoFocus
+                    aria-label={t("httpServer.settings.port")}
+                    aria-invalid={!portDraftValid}
+                    onChange={(e) => setPortDraft(e.target.value)}
+                    onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        applyPort();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancelEditingPort();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--icon"
+                    onClick={applyPort}
+                    disabled={!portDraftValid || busy}
+                    aria-label={t("common.apply")}
+                    title={t("common.apply")}
+                  >
+                    <CheckIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--icon"
+                    onClick={cancelEditingPort}
+                    aria-label={t("common.cancel")}
+                    title={t("common.cancel")}
+                  >
+                    <CancelIcon />
+                  </button>
+                </div>
+              ) : (
+                <div className="http-server-panel__port-edit">
+                  <span className="http-server-panel__port-value">
+                    {config.port}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--icon"
+                    onClick={startEditingPort}
+                    disabled={busy}
+                    aria-label={t("common.edit")}
+                    title={t("common.edit")}
+                  >
+                    <EditIcon />
+                  </button>
+                </div>
+              )}
+              {portEditing && !portDraftValid ? (
+                <p className="form-hint http-server-panel__port-hint">
+                  {t("httpServer.errors.invalidPort", {
+                    min: MIN_PORT,
+                    max: MAX_PORT,
+                  })}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="http-server-panel__toggle">
+              <ToggleSwitch
+                checked={config.enabled}
+                onChange={handleToggleAutostart}
+                disabled={busy}
+                ariaLabel={t("httpServer.settings.autostart")}
               />
+              <span className="http-server-panel__toggle-label">
+                {t("httpServer.settings.autostart")}
+              </span>
             </div>
 
             <div className="http-server-panel__toggle">
@@ -406,6 +547,21 @@ export function HttpServerPanel(): ReactElement {
                 {t("httpServer.settings.logToConsole")}
               </span>
             </div>
+
+            <div className="http-server-panel__toggle">
+              <ToggleSwitch
+                checked={config.serveWebUi}
+                onChange={handleToggleServeWebUi}
+                disabled={busy}
+                ariaLabel={t("httpServer.settings.serveWebUi")}
+              />
+              <span className="http-server-panel__toggle-label">
+                {t("httpServer.settings.serveWebUi")}
+              </span>
+            </div>
+            <p className="form-hint">
+              {t("httpServer.settings.serveWebUiHint")}
+            </p>
           </section>
 
           {/* Token */}

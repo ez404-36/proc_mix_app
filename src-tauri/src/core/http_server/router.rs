@@ -98,14 +98,33 @@ impl<R: Runtime> Clone for ApiState<R> {
 }
 
 /// Build the API router with all routes and shared state.
+///
+/// When `state.config.serve_web_ui` is on, a catch-all fallback serves the
+/// embedded browser web UI (B5) for every non-`/api` path — OUTSIDE the Bearer
+/// guard (the login page must load tokenless), but still behind the
+/// DNS-rebinding `Host` check. When off, no fallback is mounted and an unknown
+/// path 404s, leaving the server API-only and byte-identical to before.
 pub fn build_router<R: Runtime>(state: ApiState<R>) -> Router {
-    Router::new()
+    let serve_web_ui = state.config.serve_web_ui;
+    let router = Router::new()
         .route("/api/health", get(health))
+        .route("/api/bootstrap", get(bootstrap::<R>))
         .route("/api/commands", get(list_commands::<R>))
         .route("/api/workflows", get(list_workflows::<R>))
+        .route("/api/command/:reference", get(get_command::<R>))
+        .route("/api/workflow/:reference", get(get_workflow::<R>))
         .route("/api/command/:reference/run", post(run_command::<R>))
         .route("/api/workflow/:reference/run", post(run_workflow::<R>))
-        .with_state(state)
+        .route("/api/history", get(get_history::<R>))
+        .route("/api/run/:executionId", get(get_run::<R>));
+
+    let router = if serve_web_ui {
+        router.fallback(super::static_assets::serve_web_asset::<R>)
+    } else {
+        router
+    };
+
+    router.with_state(state)
 }
 
 /// Query string for the run endpoints (`?wait=true`).
@@ -115,10 +134,50 @@ struct RunQuery {
     wait: bool,
 }
 
+/// Query string for `GET /api/history` (`?page=&pageSize=`). 1-based page;
+/// `page_size` is clamped by the storage layer. Defaults: page 1, 20 rows.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryQuery {
+    #[serde(default = "default_page")]
+    page: u32,
+    #[serde(default = "default_page_size")]
+    page_size: u32,
+}
+
+impl Default for HistoryQuery {
+    fn default() -> Self {
+        Self {
+            page: default_page(),
+            page_size: default_page_size(),
+        }
+    }
+}
+
+fn default_page() -> u32 {
+    1
+}
+
+fn default_page_size() -> u32 {
+    20
+}
+
 /// Unauthenticated liveness probe. Returns only that the server is up — no
 /// data, no entity list — so it is safe without a token.
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "status": "ok" })))
+}
+
+/// Unauthenticated bootstrap for the browser web UI (B7). Returns the non-secret
+/// startup configuration the SPA needs BEFORE the user logs in — currently just
+/// the UI `language` snapshot captured when the server started, so the web UI's
+/// locale mirrors the desktop app's language at start time. Carries no entity
+/// data and no token, so it is safe without auth (like `/api/health`). A missing
+/// snapshot (autostart path) yields `language: null` and the SPA falls back to
+/// its built-in default.
+async fn bootstrap<R: Runtime>(State(state): State<ApiState<R>>) -> impl IntoResponse {
+    let language = state.server_state.ui_language().await;
+    (StatusCode::OK, Json(json!({ "language": language })))
 }
 
 async fn list_commands<R: Runtime>(
@@ -263,6 +322,80 @@ async fn run_workflow<R: Runtime>(
         Err(e) => (api_error_response(&e), error_detail(&e)),
     };
     log_request(&state, addr, "POST", &path, resp.status(), detail);
+    resp
+}
+
+async fn get_command<R: Runtime>(
+    State(state): State<ApiState<R>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(reference): Path<String>,
+) -> Response {
+    let path = format!("/api/command/{reference}");
+    if let Some(resp) = guard(&state, &headers, addr, &path, "GET").await {
+        return resp;
+    }
+    let result = handlers::get_api_command(&state.pool, &reference).await;
+    let (resp, _) =
+        finish(result.map(|rec| (StatusCode::OK, Json(json!(rec)).into_response())));
+    log_request(&state, addr, "GET", &path, resp.status(), LogDetail::default());
+    resp
+}
+
+async fn get_workflow<R: Runtime>(
+    State(state): State<ApiState<R>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(reference): Path<String>,
+) -> Response {
+    let path = format!("/api/workflow/{reference}");
+    if let Some(resp) = guard(&state, &headers, addr, &path, "GET").await {
+        return resp;
+    }
+    let result = handlers::get_api_workflow(&state.pool, &reference).await;
+    let (resp, _) =
+        finish(result.map(|rec| (StatusCode::OK, Json(json!(rec)).into_response())));
+    log_request(&state, addr, "GET", &path, resp.status(), LogDetail::default());
+    resp
+}
+
+async fn get_history<R: Runtime>(
+    State(state): State<ApiState<R>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Query(q): Query<HistoryQuery>,
+) -> Response {
+    if let Some(resp) = guard(&state, &headers, addr, "/api/history", "GET").await {
+        return resp;
+    }
+    let result = handlers::list_api_history(&state.pool, q.page, q.page_size).await;
+    let (resp, _) =
+        finish(result.map(|page| (StatusCode::OK, Json(json!(page)).into_response())));
+    log_request(
+        &state,
+        addr,
+        "GET",
+        "/api/history",
+        resp.status(),
+        LogDetail::default(),
+    );
+    resp
+}
+
+async fn get_run<R: Runtime>(
+    State(state): State<ApiState<R>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(execution_id): Path<String>,
+) -> Response {
+    let path = format!("/api/run/{execution_id}");
+    if let Some(resp) = guard(&state, &headers, addr, &path, "GET").await {
+        return resp;
+    }
+    let result = handlers::get_run_status(&state.pool, &execution_id).await;
+    let (resp, _) =
+        finish(result.map(|run| (StatusCode::OK, Json(json!(run)).into_response())));
+    log_request(&state, addr, "GET", &path, resp.status(), LogDetail::default());
     resp
 }
 

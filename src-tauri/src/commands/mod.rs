@@ -8,6 +8,7 @@
 //! is left as a plain `pub mod`.
 
 pub mod app;
+pub mod autostart;
 pub mod capture;
 pub mod command;
 pub mod history;
@@ -17,6 +18,7 @@ pub mod schedules;
 pub mod security;
 pub mod sftp;
 pub mod ssh;
+pub mod window_behavior;
 pub mod workflows;
 
 /// Convert any error into the IPC error string the frontend receives.
@@ -42,6 +44,7 @@ pub(crate) fn to_ipc_err<E: std::fmt::Display>(e: E) -> String {
 // flattened here.
 
 pub use app::*;
+pub use autostart::*;
 pub use capture::*;
 pub use command::*;
 pub use history::*;
@@ -50,4 +53,5 @@ pub use plugins::*;
 pub use schedules::*;
 pub use security::*;
 pub use ssh::*;
+pub use window_behavior::*;
 pub use workflows::*;

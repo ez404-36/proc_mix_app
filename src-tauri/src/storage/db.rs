@@ -56,7 +56,10 @@ pub async fn init_pool(db_path: PathBuf) -> Result<DbPool, String> {
     ensure_schedules_columns(&pool).await?;
     ensure_history_columns(&pool).await?;
     ensure_ssh_host_meta_columns(&pool).await?;
+    ensure_http_server_config_columns(&pool).await?;
     ensure_http_server_config(&pool).await?;
+    ensure_autostart_config(&pool).await?;
+    ensure_window_behavior_config(&pool).await?;
 
     Ok(Arc::new(pool))
 }
@@ -254,6 +257,20 @@ async fn ensure_ssh_host_meta_columns(pool: &SqlitePool) -> Result<(), String> {
     apply_column_migrations(pool, "ssh_host_meta", migrations).await
 }
 
+/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `http_server_config` table.
+///
+/// `serve_web_ui` (the browser-served web UI toggle) was added after the
+/// initial v0.10.0 table, so existing databases need it back-filled. NOT NULL
+/// DEFAULT 0 keeps the existing single row's value defined (web UI off) without
+/// touching it — the API-only posture is preserved on upgrade.
+async fn ensure_http_server_config_columns(pool: &SqlitePool) -> Result<(), String> {
+    let migrations: &[(&str, &'static str)] = &[(
+        "serve_web_ui",
+        "ALTER TABLE http_server_config ADD COLUMN serve_web_ui INTEGER NOT NULL DEFAULT 0",
+    )];
+    apply_column_migrations(pool, "http_server_config", migrations).await
+}
+
 /// Ensure the single default row of the `http_server_config` table exists.
 ///
 /// The table itself is created by `schema.sql`'s `CREATE TABLE IF NOT EXISTS`;
@@ -275,6 +292,52 @@ async fn ensure_http_server_config(pool: &SqlitePool) -> Result<(), String> {
     .execute(pool)
     .await
     .map_err(|e| format!("seed http_server_config default row: {e}"))?;
+    Ok(())
+}
+
+/// Ensure the single default row of the `autostart_config` table exists.
+///
+/// Mirrors [`ensure_http_server_config`]: the table is created by `schema.sql`'s
+/// `CREATE TABLE IF NOT EXISTS`; this seeds its one-and-only row (id = 1) so
+/// `storage::autostart::load` always finds a config. `INSERT OR IGNORE` is
+/// idempotent — on first launch it inserts the defaults (`start_minimized = 0`),
+/// on every later launch it is a no-op. The `CHECK(id = 1)` constraint plus the
+/// fixed-id insert make a second row impossible.
+async fn ensure_autostart_config(pool: &SqlitePool) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT OR IGNORE INTO autostart_config \
+         (id, start_minimized, created_at, updated_at) \
+         VALUES (1, 0, ?, ?)",
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("seed autostart_config default row: {e}"))?;
+    Ok(())
+}
+
+/// Ensure the single default row of the `window_behavior_config` table exists.
+///
+/// Mirrors [`ensure_autostart_config`]: the table is created by `schema.sql`'s
+/// `CREATE TABLE IF NOT EXISTS`; this seeds its one-and-only row (id = 1) so
+/// `storage::window_behavior::load` always finds a config. `INSERT OR IGNORE` is
+/// idempotent — on first launch it inserts the default (`close_to_tray = 1`, the
+/// historical behaviour), on every later launch it is a no-op. The `CHECK(id =
+/// 1)` constraint plus the fixed-id insert make a second row impossible.
+async fn ensure_window_behavior_config(pool: &SqlitePool) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT OR IGNORE INTO window_behavior_config \
+         (id, close_to_tray, created_at, updated_at) \
+         VALUES (1, 1, ?, ?)",
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("seed window_behavior_config default row: {e}"))?;
     Ok(())
 }
 
@@ -993,6 +1056,57 @@ mod tests {
         assert_eq!(row.try_get::<i64, _>("port").unwrap(), 48610);
         assert_eq!(row.try_get::<i64, _>("bind_lan").unwrap(), 0);
         assert_eq!(row.try_get::<i64, _>("log_to_console").unwrap(), 1);
+    }
+
+    /// Simulate a database created BEFORE the `serve_web_ui` column existed
+    /// (the initial v0.10.0 http_server_config table). The migration must add
+    /// the column with NOT NULL DEFAULT 0 — so an upgraded install keeps the web
+    /// UI OFF — leave the existing row otherwise untouched, and be idempotent.
+    #[tokio::test]
+    async fn ensure_http_server_config_columns_adds_serve_web_ui() {
+        let pool = fresh_pool().await;
+        // The pre-serve_web_ui table shape.
+        sqlx::raw_sql(
+            "CREATE TABLE http_server_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                enabled INTEGER NOT NULL DEFAULT 0,
+                port INTEGER NOT NULL DEFAULT 48610,
+                bind_lan INTEGER NOT NULL DEFAULT 0,
+                log_to_console INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO http_server_config \
+             (id, enabled, port, bind_lan, log_to_console, created_at, updated_at) \
+             VALUES (1, 1, 50000, 1, 0, '', '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_http_server_config_columns(&pool).await.unwrap();
+        // Idempotent: a second pass must not error.
+        ensure_http_server_config_columns(&pool).await.unwrap();
+
+        let row = sqlx::query(
+            "SELECT enabled, serve_web_ui FROM http_server_config WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // The pre-existing row is untouched (enabled stays 1) and the new column
+        // defaults to 0 (web UI off) on the back-filled row.
+        assert_eq!(row.try_get::<i64, _>("enabled").unwrap(), 1);
+        assert_eq!(
+            row.try_get::<i64, _>("serve_web_ui").unwrap(),
+            0,
+            "back-filled serve_web_ui must default to 0 (off)"
+        );
     }
 
     /// Simulate a database created BEFORE the `api_slug` / `api_enabled` columns

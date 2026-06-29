@@ -5,6 +5,47 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-06-29
+
+**Settings get a home and ProcMix learns to start with your computer.** The
+Settings view is now split into four tabs (Appearance / System / Security &
+data / About) instead of one long scroll, and gains an **Autostart** option to
+launch ProcMix at system login (optionally minimized to the tray). The Tray
+section adds a **"close to tray"** toggle so closing the window can quit the app
+instead of hiding it. The Appearance tab is tidied up: the redundant section
+heading is gone and the theme switcher now has a **"Theme:"** label, matching
+the language switcher.
+
+### Added
+
+- **Settings tabs.** The Settings view is organized into four tabs — **Appearance**
+  (theme + language), **System** (tray + autostart), **Security & data**
+  (administrator password + export/import), and **About** (updates + version).
+  Reuses the existing underline-tab pattern (`library-tabs`); the active tab's
+  sections are the only ones in the DOM.
+- **Autostart at login.** A new **Settings → System → Autostart** section lets
+  you launch ProcMix automatically when you sign in, with an optional **"start
+  minimized to tray"** mode (the app opens in the tray without a window). Backed
+  by `tauri-plugin-autostart` (Windows registry / macOS LaunchAgent / Linux
+  `~/.config/autostart`); the OS registration is the source of truth for
+  enabled/disabled, and ProcMix stores only the `start_minimized` flag in a new
+  single-row `autostart_config` table.
+- **"Close to tray" toggle.** The Tray section adds a switch controlling what
+  happens when you close the main window: hide to the tray (default, historical
+  behaviour) or quit ProcMix. Persisted in a new single-row
+  `window_behavior_config` table and cached at runtime for the
+  `CloseRequested` handler.
+
+### Changed
+
+- **Appearance tab cleanup.** Removed the duplicate "Appearance" section heading
+  above the theme switcher and gave the theme switcher a **"Theme:"** inline
+  label, so it is symmetric with the **"Language:"** switcher.
+- **Shortcuts section removed.** The "Shortcuts" block was removed from Settings
+  (along with its now-unused i18n keys and the `ShortcutsSection` /
+  `ShortcutRow` components). The global toggle shortcut continues to work; only
+  the in-Settings editor UI is gone.
+
 ## [0.10.5] - 2026-06-29
 
 **Three quality-of-life fixes around running things and seeing where they ran:**

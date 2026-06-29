@@ -1,0 +1,6 @@
+# Ignore built web UI assets, but KEEP the dist folder itself (and its
+# .gitkeep) so the rust-embed macro in src-tauri compiles on a fresh checkout.
+/dist/*
+!/dist/.gitkeep
+node_modules
+*.local

@@ -102,6 +102,11 @@ describe("Settings import flow", () => {
 
     render(<Settings />);
 
+    // DataSection lives under the "Security & data" tab, hidden by default.
+    await act(async () => {
+      screen.getByRole("tab", { name: "Security & data" }).click();
+    });
+
     const importBtn = screen.getByRole("button", { name: /Import…/ });
     await act(async () => {
       importBtn.click();
@@ -137,6 +142,9 @@ describe("Settings import flow", () => {
     mocks.importData.mockRejectedValue(new mocks.InvalidImportError("bad"));
 
     render(<Settings />);
+    await act(async () => {
+      screen.getByRole("tab", { name: "Security & data" }).click();
+    });
     const importBtn = screen.getByRole("button", { name: /Import…/ });
     await act(async () => {
       importBtn.click();
@@ -155,6 +163,9 @@ describe("Settings import flow", () => {
     mocks.importData.mockResolvedValue(null);
 
     render(<Settings />);
+    await act(async () => {
+      screen.getByRole("tab", { name: "Security & data" }).click();
+    });
     const importBtn = screen.getByRole("button", { name: /Import…/ });
     await act(async () => {
       importBtn.click();

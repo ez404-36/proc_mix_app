@@ -72,6 +72,18 @@ pub fn run() {
             .build(),
     );
 
+    // Autostart at system login (Settings → Autostart). Desktop-only — the
+    // plugin (and the whole feature) is not available on mobile. The app is
+    // registered with the `--autostart` argument so the setup hook can tell a
+    // system-launched start from a manual one and apply the "start minimized to
+    // tray" preference. macOS uses the LaunchAgent backend (not AppleScript) to
+    // avoid a Terminal window / Automation prompt.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        Some(vec!["--autostart"]),
+    ));
+
     builder
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let _ = crate::platform::tray::show_main_window(app);
@@ -208,8 +220,49 @@ pub fn run() {
 
             crate::platform::tray::build_tray(app.handle())?;
 
+            // The main window is configured `"visible": false` so it never
+            // flashes on screen before we decide whether to show it. Show it now
+            // UNLESS the process was launched by the OS at login (`--autostart`)
+            // AND the user enabled "start minimized to tray" — in that case the
+            // app lives only in the tray until the user opens it. A manual launch
+            // (no `--autostart`) always shows the window, regardless of the flag.
+            //
+            // The `tauri-plugin-window-state` plugin restores geometry on the
+            // window independently of visibility, so the restored size/position
+            // is correct whether we show it now or later from the tray.
+            let launched_by_os = std::env::args().any(|arg| arg == "--autostart");
+            let start_hidden = launched_by_os && {
+                let pool = app.state::<crate::storage::DbPool>().inner().clone();
+                tauri::async_runtime::block_on(async move {
+                    crate::storage::autostart::load(&pool)
+                        .await
+                        .map(|cfg| cfg.start_minimized)
+                        .unwrap_or(false)
+                })
+            };
+
+            // Initialise the runtime "close to tray" cache from SQLite before the
+            // CloseRequested handler can fire, so the very first window close
+            // honours the persisted preference. Defaults to `true` (hide to tray)
+            // if the load fails, matching the historical behaviour.
+            {
+                let pool = app.state::<crate::storage::DbPool>().inner().clone();
+                let close_to_tray = tauri::async_runtime::block_on(async move {
+                    crate::storage::window_behavior::load(&pool)
+                        .await
+                        .map(|cfg| cfg.close_to_tray)
+                        .unwrap_or(true)
+                });
+                crate::platform::tray::set_close_to_tray(close_to_tray);
+            }
+
             if let Some(main_window) = app.get_webview_window("main") {
                 crate::platform::tray::install_close_to_tray(&main_window);
+
+                if !start_hidden {
+                    let _ = main_window.show();
+                    let _ = main_window.set_focus();
+                }
 
                 #[cfg(debug_assertions)]
                 main_window.open_devtools();
@@ -246,6 +299,10 @@ pub fn run() {
             commands::admin_password_status,
             commands::set_admin_password,
             commands::clear_admin_password,
+            commands::autostart_status,
+            commands::set_autostart,
+            commands::get_window_behavior,
+            commands::set_window_behavior,
             commands::http_server_status,
             commands::start_http_server,
             commands::stop_http_server,

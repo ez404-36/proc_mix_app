@@ -1,6 +1,6 @@
 [package]
 name = "procmix"
-version = "0.10.5"
+version = "0.11.0"
 description = "ProcMix - cross-platform automation tool"
 authors = ["Zenkin Egor Andreevich"]
 edition = "2021"
@@ -85,6 +85,13 @@ tokio = { version = "1.52.3", features = ["full"] }
 # docs/http-server.md and core::http_server. Default features cover routing,
 # JSON, and the `tokio` TCP listener used by `axum::serve`.
 axum = "0.7"
+# Embeds the browser-served web UI bundle (app/web/dist) INTO the binary at
+# compile time, so the server can serve the SPA with no external files and no
+# runtime path resolution (core::http_server::static_assets, step B5). The dist
+# is produced by `app/web`'s `npm run build`; a missing dist embeds as empty and
+# the web UI 404s (the REST API is unaffected). Only mounted when the
+# `serve_web_ui` config flag is on.
+rust-embed = "8"
 # Constant-time byte comparison for the Bearer-token check in
 # core::http_server::auth — defeats timing side-channels that a naive `==`
 # would leak. Tiny, pure-Rust, no_std-friendly.
@@ -207,6 +214,16 @@ rfd = "0.15"
 # the plugin is meaningless on mobile, so it is gated to desktop targets.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2.4.1"
+
+# Launch ProcMix at system startup when the user opts in (Settings → Autostart).
+# Cross-platform: Windows (HKCU\…\Run), macOS (LaunchAgent — chosen over the
+# AppleScript backend so no Terminal window flashes and no Automation
+# permission prompt is needed), Linux (~/.config/autostart/*.desktop). The OS
+# registration is the source of truth for whether autostart is on; ProcMix
+# stores only the `start_minimized` behaviour flag (storage::autostart). The app
+# is registered with an `--autostart` arg so the setup hook can tell a
+# system-launched start from a manual one. Desktop-only — meaningless on mobile.
+tauri-plugin-autostart = "2"
 
 # OS keychain access for storing the sudo password used by the
 # "Run as administrator" feature on Unix. On Windows the keychain is

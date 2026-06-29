@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ProcMix</title>
+    <!--
+      No-FOUC theme bootstrap (F10). Apply the persisted/resolved theme to
+      <html> SYNCHRONOUSLY, before React mounts, so there is no flash of the
+      wrong theme. The web UI keeps its OWN localStorage key (`procmix-web-ui`)
+      so it is independent from the desktop app's preference. The startup
+      LANGUAGE is fetched at runtime from `/api/bootstrap` (B7); only the theme
+      needs the inline pre-paint pass.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("procmix-web-ui");
+          var theme = "system";
+          if (stored) {
+            var parsed = JSON.parse(stored);
+            if (
+              parsed &&
+              parsed.state &&
+              typeof parsed.state.theme === "string"
+            ) {
+              theme = parsed.state.theme;
+            }
+          }
+          var resolved =
+            theme === "system"
+              ? window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light"
+              : theme;
+          document.documentElement.setAttribute("data-theme", resolved);
+        } catch (e) {
+          /* localStorage unavailable — fall back to React-side init */
+        }
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

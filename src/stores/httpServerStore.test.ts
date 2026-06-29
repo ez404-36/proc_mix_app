@@ -44,7 +44,13 @@ function entry(n: number): RequestLogEntry {
 function resetStore() {
   useHttpServerStore.setState({
     status: { running: false, port: 48610, bindLan: false },
-    config: { enabled: false, port: 48610, bindLan: false, logToConsole: true },
+    config: {
+      enabled: false,
+      port: 48610,
+      bindLan: false,
+      logToConsole: true,
+      serveWebUi: false,
+    },
     hasToken: false,
     log: [],
     isLoading: false,
@@ -104,6 +110,7 @@ describe("load", () => {
       port: 50000,
       bindLan: true,
       logToConsole: false,
+      serveWebUi: false,
     };
     getConfigMock.mockResolvedValue(cfg);
     getTokenStatusMock.mockResolvedValue(true);
@@ -165,6 +172,7 @@ describe("saveConfig", () => {
       port: 50001,
       bindLan: false,
       logToConsole: true,
+      serveWebUi: false,
     };
     setConfigMock.mockResolvedValue(undefined);
     getStatusMock.mockResolvedValue({ running: true, port: 50001, bindLan: false });
@@ -184,6 +192,7 @@ describe("saveConfig", () => {
         port: 80,
         bindLan: false,
         logToConsole: true,
+        serveWebUi: false,
       }),
     ).rejects.toThrow("INVALID_PORT");
   });

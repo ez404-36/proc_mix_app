@@ -1064,6 +1064,43 @@ pub async fn get_by_id(pool: &DbPool, id: &str) -> Result<Option<HistoryEvent>, 
     }))
 }
 
+/// Fetch the single run event (`commandRun` / `workflowRun`) carrying
+/// `execution_id`. Used by the HTTP API's run-status poll endpoint to report a
+/// run's current status + captured output. Mirrors the lookup in
+/// [`update_run_event`] (`execution_id` + run kinds). Returns `Ok(None)` when no
+/// run row matches that execution id (cleared / pruned / never existed).
+pub async fn find_run_by_execution_id(
+    pool: &DbPool,
+    execution_id: &str,
+) -> Result<Option<HistoryEvent>, String> {
+    let row = sqlx::query(
+        "SELECT id, created_at, payload_json FROM history_events \
+         WHERE execution_id = ? AND kind IN ('commandRun', 'workflowRun') \
+         ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(execution_id)
+    .fetch_optional(pool.as_ref())
+    .await
+    .map_err(|e| format!("find run by execution_id: {e}"))?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let row_id: String = row.try_get("id").map_err(|e| format!("read id: {e}"))?;
+    let created_at: String = row
+        .try_get("created_at")
+        .map_err(|e| format!("read created_at: {e}"))?;
+    let payload_json: String = row
+        .try_get("payload_json")
+        .map_err(|e| format!("read payload_json: {e}"))?;
+    let payload: HistoryEventPayload =
+        serde_json::from_str(&payload_json).map_err(|e| format!("decode payload: {e}"))?;
+    Ok(Some(HistoryEvent {
+        id: row_id,
+        created_at,
+        payload,
+    }))
+}
+
 /// Idempotent delete by id — matches `commands::delete` semantics.
 pub async fn delete(pool: &DbPool, id: &str) -> Result<(), String> {
     sqlx::query("DELETE FROM history_events WHERE id = ?")

@@ -637,24 +637,38 @@
   "settings": {
     "title": "Settings",
     "subtitle": "Personalize ProcMix to match your workflow.",
+    "tabs": {
+      "appearance": "Appearance",
+      "system": "System",
+      "security": "Security & data",
+      "about": "About"
+    },
     "appearance": {
-      "title": "Appearance",
+      "themeLabel": "Theme",
       "themeLight": "Light",
       "themeDark": "Dark",
       "themeSystem": "System",
       "languageLabel": "Language"
     },
-    "shortcuts": {
-      "title": "Shortcuts",
-      "toggleLabel": "Toggle ProcMix",
-      "toggleDescription": "Show, focus, or hide the ProcMix window from anywhere. Opens the command palette when bringing the window forward.",
-      "paletteHintPrefix": "The in-window command palette also responds to",
-      "paletteHintSuffix": "when the window is focused."
-    },
     "tray": {
       "title": "Tray",
-      "primary": "ProcMix minimizes to the system tray when you close the window.",
-      "secondary": "Left-click the tray icon to toggle the window. Right-click for the menu (Show, Hide, Quit). An option to opt out is coming soon."
+      "primary": "ProcMix lives in the system tray.",
+      "secondary": "Left-click the tray icon to toggle the window. Right-click for the menu (Show, Hide, Quit).",
+      "closeToTrayLabel": "Minimize to tray on close",
+      "closeToTrayOnHint": "Closing the window hides ProcMix to the tray; it keeps running. Use the tray menu to quit.",
+      "closeToTrayOffHint": "Closing the window quits ProcMix completely.",
+      "loadError": "Failed to load tray settings",
+      "saveError": "Failed to save tray settings"
+    },
+    "autostart": {
+      "title": "Autostart",
+      "description": "Launch ProcMix automatically when you sign in to your computer.",
+      "modeOff": "Disabled",
+      "modeOn": "Launch at login",
+      "startMinimized": "Start minimized to tray",
+      "subhint": "When started minimized, ProcMix opens in the tray without a window — click the tray icon to open it.",
+      "loadError": "Failed to read autostart status",
+      "saveError": "Failed to change autostart settings"
     },
     "admin": {
       "title": "Administrator privileges",
@@ -722,13 +736,6 @@
     "duplicateChoiceLabel": "What to do with the duplicate \"{{name}}\"",
     "choiceRename": "Keep with a new name",
     "choiceSkip": "Skip"
-  },
-  "shortcutRow": {
-    "recording": "Press a key combination… (Esc to cancel)",
-    "resetTooltip": "Reset to default",
-    "alreadyInUse": "Shortcut \"{{accel}}\" is already in use.",
-    "registerFailed": "Cannot use \"{{accel}}\" — another application may already own it.",
-    "updated": "Shortcut updated to {{accel}}"
   },
   "tray": {
     "show": "Show ProcMix",
@@ -1463,12 +1470,17 @@
     "settings": {
       "title": "Settings",
       "port": "Port",
-      "portStepUp": "Increase port",
-      "portStepDown": "Decrease port",
       "bindLan": "Allow LAN access (bind 0.0.0.0)",
       "bindLanWarning": "The server will be reachable from other machines on your network. Anyone with the token can run your commands. Keep the token secret.",
       "bindLocalHint": "The server is reachable only from this machine (127.0.0.1).",
-      "logToConsole": "Show API runs in the console"
+      "logToConsole": "Show API runs in the console",
+      "autostart": "Start when the app opens",
+      "serveWebUi": "Serve the web interface",
+      "serveWebUiHint": "Also serve a read-only ProcMix in the browser. LAN users open it, sign in with the token, and can view and run (but not edit) commands, workflows, and history."
+    },
+    "webUi": {
+      "title": "Open in a browser",
+      "hint": "Share these addresses with people on your network. They sign in with the access token to view and run your published commands and workflows."
     },
     "token": {
       "title": "Access token",
@@ -1490,6 +1502,45 @@
     "errors": {
       "portInUse": "That port is already in use. Choose a different port.",
       "invalidPort": "Port must be between {{min}} and {{max}}."
+    }
+  },
+  "web": {
+    "login": {
+      "subtitle": "Enter your API token to continue",
+      "tokenLabel": "API token",
+      "signIn": "Sign in",
+      "signingIn": "Signing in…",
+      "invalid": "Invalid token.",
+      "rateLimited": "Too many attempts. Wait a minute and try again.",
+      "forbiddenHost": "This host is not allowed to access the server.",
+      "network": "Cannot reach the server."
+    },
+    "nav": {
+      "label": "Sections",
+      "logout": "Log out"
+    },
+    "error": {
+      "load": "Could not load. Check your connection."
+    },
+    "placeholder": {
+      "section": "Section: {{section}} (coming soon)"
+    },
+    "detail": {
+      "steps": "Steps",
+      "noSteps": "No steps."
+    },
+    "run": {
+      "title": "Run {{name}}",
+      "subtitle": "Provide values for this run.",
+      "starting": "Starting…",
+      "failed": "Could not start the run.",
+      "missingVariable": "A required value is missing: {{name}}"
+    },
+    "console": {
+      "title": "Console",
+      "toggle": "Toggle console",
+      "stale": "Still running — check History",
+      "noOutput": "No output."
     }
   }
 }

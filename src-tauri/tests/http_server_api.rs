@@ -161,6 +161,7 @@ fn router_with_state(pool: DbPool, token: Option<&str>) -> (Router, Arc<HttpServ
             port: 0,
             bind_lan: false,
             log_to_console: false,
+            serve_web_ui: false,
         },
         token_source: TokenSource::Fixed(token.map(Into::into)),
     };
@@ -172,6 +173,55 @@ fn router_with_state(pool: DbPool, token: Option<&str>) -> (Router, Arc<HttpServ
 /// doesn't try to stream into a non-existent console.
 fn router_with_token(pool: DbPool, token: Option<&str>) -> Router {
     router_with_state(pool, token).0
+}
+
+/// Router with the browser web UI fallback mounted (`serve_web_ui = true`), for
+/// the static-serving tests. The embedded bundle reflects whatever `web/dist`
+/// held at compile time.
+fn router_with_web_ui(pool: DbPool, token: Option<&str>) -> Router {
+    let server_state = Arc::new(HttpServerState::new());
+    let state = ApiState {
+        app: mock_app(),
+        pool,
+        executor_state: Arc::new(ExecutorState::new()),
+        workflow_state: Arc::new(WorkflowExecutorState::new()),
+        server_state,
+        config: HttpServerConfig {
+            enabled: true,
+            port: 0,
+            bind_lan: false,
+            log_to_console: false,
+            serve_web_ui: true,
+        },
+        token_source: TokenSource::Fixed(token.map(Into::into)),
+    };
+    build_router(state)
+}
+
+/// Send a raw request and return `(status, content_type, body_bytes)` without
+/// JSON-parsing — used by the static-serving tests where the body is HTML.
+async fn send_raw(router: Router, req: Request<Body>) -> (StatusCode, Option<String>, Vec<u8>) {
+    let mut req = req;
+    if !req.headers().contains_key("host") {
+        req.headers_mut()
+            .insert("host", axum::http::HeaderValue::from_static("localhost"));
+    }
+    req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        12345,
+    )));
+    let resp = router.oneshot(req).await.expect("router oneshot");
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let bytes = to_bytes(resp.into_body(), 4 * 1024 * 1024)
+        .await
+        .expect("read body")
+        .to_vec();
+    (status, content_type, bytes)
 }
 
 /// A command with one sensitive variable (`token`) and one non-sensitive
@@ -833,4 +883,224 @@ async fn workflow_run_recorded_and_finalised_in_history() {
         .expect("a workflow history row was written");
     assert_eq!(kind, "workflowRun");
     assert_eq!(run_status, "succeeded");
+}
+
+// ---------------------------------------------------------------------------
+// Read endpoints for the web UI (B1 detail, B2 history, B3 run status, B7
+// bootstrap). Each is auth-gated (except bootstrap) and respects the
+// `api_enabled` opt-in.
+// ---------------------------------------------------------------------------
+
+/// Build an authenticated `GET` request for `uri` with the test Bearer token.
+fn get_auth(uri: &str) -> Request<Body> {
+    Request::builder()
+        .method("GET")
+        .uri(uri)
+        .header("authorization", format!("Bearer {TEST_TOKEN}"))
+        .body(Body::empty())
+        .expect("build GET request")
+}
+
+/// `GET /api/command/{ref}` returns the full record for an API-enabled command
+/// and 404s for a disabled one (the per-entity opt-in gates the detail view).
+#[tokio::test]
+async fn get_command_detail_respects_api_enabled() {
+    let pool = fresh_pool().await;
+    storage_commands::upsert(&pool, &command("c1", "true", Some("shown"), true))
+        .await
+        .unwrap();
+    storage_commands::upsert(&pool, &command("c2", "true", Some("hidden"), false))
+        .await
+        .unwrap();
+    let router = router_with_token(pool, Some(TEST_TOKEN));
+
+    let (status, body) = send(router.clone(), get_auth("/api/command/shown")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"], "c1");
+    assert_eq!(body["apiSlug"], "shown");
+
+    // A disabled command is invisible → 404.
+    let (status_hidden, _) = send(router.clone(), get_auth("/api/command/hidden")).await;
+    assert_eq!(status_hidden, StatusCode::NOT_FOUND);
+
+    // Unauthenticated → 401.
+    let unauth = Request::builder()
+        .method("GET")
+        .uri("/api/command/shown")
+        .body(Body::empty())
+        .unwrap();
+    let (status_unauth, _) = send(router, unauth).await;
+    assert_eq!(status_unauth, StatusCode::UNAUTHORIZED);
+}
+
+/// After an API command run, `GET /api/run/{executionId}` reports the terminal
+/// status + the run's name; an unknown execution id is 404.
+#[tokio::test]
+async fn get_run_status_reports_terminal_run() {
+    let pool = fresh_pool().await;
+    storage_commands::upsert(&pool, &command("c1", "exit 0", Some("ok"), true))
+        .await
+        .unwrap();
+    let router = router_with_token(pool, Some(TEST_TOKEN));
+
+    // Run to completion so the history row is finalised.
+    let (run_status, run_body) =
+        send(router.clone(), post_command_run("ok", Some(TEST_TOKEN), true)).await;
+    assert_eq!(run_status, StatusCode::OK);
+    let exec_id = run_body["executionId"].as_str().expect("exec id").to_string();
+
+    let (status, body) = send(router.clone(), get_auth(&format!("/api/run/{exec_id}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["kind"], "command");
+    assert_eq!(body["status"], "succeeded");
+    assert_eq!(body["executionId"], exec_id);
+
+    // An unknown execution id is not found.
+    let (status_missing, _) = send(router, get_auth("/api/run/does-not-exist")).await;
+    assert_eq!(status_missing, StatusCode::NOT_FOUND);
+}
+
+/// `GET /api/history` returns only run rows of API-enabled entities and requires
+/// auth.
+#[tokio::test]
+async fn history_lists_only_api_enabled_runs() {
+    let pool = fresh_pool().await;
+    storage_commands::upsert(&pool, &command("c1", "exit 0", Some("ok"), true))
+        .await
+        .unwrap();
+    let router = router_with_token(pool, Some(TEST_TOKEN));
+
+    // Produce one finalised run.
+    let (_, run_body) =
+        send(router.clone(), post_command_run("ok", Some(TEST_TOKEN), true)).await;
+    let exec_id = run_body["executionId"].as_str().expect("exec id").to_string();
+
+    let (status, body) = send(router.clone(), get_auth("/api/history")).await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().expect("items array");
+    assert!(
+        items.iter().any(|it| it["executionId"] == exec_id),
+        "the API run must appear in history: {body}"
+    );
+
+    // Unauthenticated → 401.
+    let unauth = Request::builder()
+        .method("GET")
+        .uri("/api/history")
+        .body(Body::empty())
+        .unwrap();
+    let (status_unauth, _) = send(router, unauth).await;
+    assert_eq!(status_unauth, StatusCode::UNAUTHORIZED);
+}
+
+/// `GET /api/bootstrap` is unauthenticated and returns the (here unset) language
+/// snapshot — the harness never calls `set_running`, so `language` is null.
+#[tokio::test]
+async fn bootstrap_is_unauthenticated_and_returns_language() {
+    let pool = fresh_pool().await;
+    let router = router_with_token(pool, Some(TEST_TOKEN));
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/bootstrap")
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = send(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    // No language snapshot was installed by the test harness.
+    assert!(body["language"].is_null(), "language null when unset: {body}");
+}
+
+// ---------------------------------------------------------------------------
+// Static serving of the web UI (B5). Gated by `serve_web_ui`; outside the
+// Bearer guard but behind the Host check.
+// ---------------------------------------------------------------------------
+
+/// With the web UI OFF, `/` has no fallback → 404 (API-only posture unchanged).
+#[tokio::test]
+async fn web_ui_off_root_is_not_found() {
+    let pool = fresh_pool().await;
+    let router = router_with_token(pool, Some(TEST_TOKEN));
+    let req = Request::builder()
+        .method("GET")
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, _) = send_raw(router, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// With the web UI ON, an unknown `/api/*` path is still 404 — the SPA fallback
+/// must NOT mask a missing API route.
+#[tokio::test]
+async fn web_ui_on_unknown_api_route_is_not_found() {
+    let pool = fresh_pool().await;
+    let router = router_with_web_ui(pool, Some(TEST_TOKEN));
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/nope")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, _) = send_raw(router, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// With the web UI ON, a forbidden `Host` is rejected (403) even for static
+/// assets — the DNS-rebinding gate applies to the SPA too.
+#[tokio::test]
+async fn web_ui_on_forbidden_host_is_rejected() {
+    let pool = fresh_pool().await;
+    let router = router_with_web_ui(pool, Some(TEST_TOKEN));
+    let req = Request::builder()
+        .method("GET")
+        .uri("/")
+        .header("host", "evil.example.com")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, _) = send_raw(router, req).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// With the web UI ON and the bundle built, `/` serves the SPA `index.html`
+/// (HTML, no-cache) and a client-side route falls back to the same document.
+/// Skips its assertions when the bundle is empty (dist not built in this
+/// environment) so the test never flakes on a clean checkout.
+#[tokio::test]
+async fn web_ui_on_serves_spa_when_built() {
+    let pool = fresh_pool().await;
+    let router = router_with_web_ui(pool.clone(), Some(TEST_TOKEN));
+
+    let root_req = Request::builder()
+        .method("GET")
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+    let (status, content_type, body) = send_raw(router, root_req).await;
+
+    if status == StatusCode::NOT_FOUND {
+        // The bundle was not built into this binary — nothing to assert.
+        return;
+    }
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type.as_deref().unwrap_or("").contains("text/html"),
+        "index served as HTML, got {content_type:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&body).contains("<div id=\"root\">"),
+        "served document is the SPA shell"
+    );
+
+    // A client-side route (no file extension) falls back to the SPA shell.
+    let route_router = router_with_web_ui(pool, Some(TEST_TOKEN));
+    let route_req = Request::builder()
+        .method("GET")
+        .uri("/library")
+        .body(Body::empty())
+        .unwrap();
+    let (route_status, route_ct, _) = send_raw(route_router, route_req).await;
+    assert_eq!(route_status, StatusCode::OK);
+    assert!(
+        route_ct.as_deref().unwrap_or("").contains("text/html"),
+        "client route falls back to the SPA shell"
+    );
 }

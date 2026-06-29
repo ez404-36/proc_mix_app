@@ -37,6 +37,10 @@ pub struct HttpServerConfig {
     /// `true` (default) → an API-triggered run streams to the live console
     /// (`silent = false`); `false` → runs are silent (history-only).
     pub log_to_console: bool,
+    /// `false` (default) → REST API only; `true` → also serve the browser-served
+    /// read-only web UI over the same port. Off by default so an existing
+    /// install's API-only posture is unchanged on upgrade.
+    pub serve_web_ui: bool,
 }
 
 impl Default for HttpServerConfig {
@@ -46,6 +50,7 @@ impl Default for HttpServerConfig {
             port: DEFAULT_PORT,
             bind_lan: false,
             log_to_console: true,
+            serve_web_ui: false,
         }
     }
 }
@@ -66,7 +71,7 @@ pub fn validate_port(port: u16) -> Result<u16, String> {
 /// DB), fall back to defaults rather than erroring.
 pub async fn load(pool: &DbPool) -> Result<HttpServerConfig, String> {
     let row = sqlx::query(
-        "SELECT enabled, port, bind_lan, log_to_console \
+        "SELECT enabled, port, bind_lan, log_to_console, serve_web_ui \
          FROM http_server_config WHERE id = 1",
     )
     .fetch_optional(pool.as_ref())
@@ -87,6 +92,9 @@ pub async fn load(pool: &DbPool) -> Result<HttpServerConfig, String> {
     let log_to_console: i64 = row
         .try_get("log_to_console")
         .map_err(|e| format!("read log_to_console: {e}"))?;
+    let serve_web_ui: i64 = row
+        .try_get("serve_web_ui")
+        .map_err(|e| format!("read serve_web_ui: {e}"))?;
 
     Ok(HttpServerConfig {
         enabled: enabled != 0,
@@ -95,6 +103,7 @@ pub async fn load(pool: &DbPool) -> Result<HttpServerConfig, String> {
         port: u16::try_from(port).unwrap_or(DEFAULT_PORT),
         bind_lan: bind_lan != 0,
         log_to_console: log_to_console != 0,
+        serve_web_ui: serve_web_ui != 0,
     })
 }
 
@@ -106,13 +115,15 @@ pub async fn save(pool: &DbPool, cfg: &HttpServerConfig) -> Result<(), String> {
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
         "UPDATE http_server_config SET \
-            enabled = ?, port = ?, bind_lan = ?, log_to_console = ?, updated_at = ? \
+            enabled = ?, port = ?, bind_lan = ?, log_to_console = ?, serve_web_ui = ?, \
+            updated_at = ? \
          WHERE id = 1",
     )
     .bind(if cfg.enabled { 1_i64 } else { 0_i64 })
     .bind(cfg.port as i64)
     .bind(if cfg.bind_lan { 1_i64 } else { 0_i64 })
     .bind(if cfg.log_to_console { 1_i64 } else { 0_i64 })
+    .bind(if cfg.serve_web_ui { 1_i64 } else { 0_i64 })
     .bind(&now)
     .execute(pool.as_ref())
     .await
@@ -142,8 +153,8 @@ mod tests {
         // Seed the single default row (mirrors db::ensure_http_server_config).
         sqlx::query(
             "INSERT OR IGNORE INTO http_server_config \
-             (id, enabled, port, bind_lan, log_to_console, created_at, updated_at) \
-             VALUES (1, 0, 48610, 0, 1, '', '')",
+             (id, enabled, port, bind_lan, log_to_console, serve_web_ui, created_at, updated_at) \
+             VALUES (1, 0, 48610, 0, 1, 0, '', '')",
         )
         .execute(&pool)
         .await
@@ -166,6 +177,7 @@ mod tests {
             port: 50000,
             bind_lan: true,
             log_to_console: false,
+            serve_web_ui: true,
         };
         save(&pool, &cfg).await.unwrap();
         let loaded = load(&pool).await.unwrap();

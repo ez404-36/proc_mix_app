@@ -92,13 +92,31 @@ pub struct RunOutcome {
 }
 
 /// One entry in the `GET /api/commands` / `GET /api/workflows` listing.
+///
+/// Enriched (beyond id/name/slug) with the metadata the browser Home / Library
+/// views need to render cards, favorites, and a recent-activity list WITHOUT an
+/// N+1 detail fetch per entity: `kind` (discriminator), the optional i18n
+/// name/description keys (so built-in entities localise client-side), the
+/// `favorite` flag, and `lastRunAt`. Sensitive data is never included — these
+/// are display fields only.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiEntitySummary {
+    /// `"command"` or `"workflow"` so a merged list can render either card.
+    pub kind: &'static str,
     pub id: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub api_slug: Option<String>,
+    pub favorite: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<String>,
 }
 
 /// Typed failure an endpoint can return, mapped to an HTTP status + JSON body
@@ -322,9 +340,15 @@ pub async fn list_api_commands(pool: &DbPool) -> Result<Vec<ApiEntitySummary>, A
         .into_iter()
         .filter(|c| c.api_enabled)
         .map(|c| ApiEntitySummary {
+            kind: "command",
             id: c.id,
             name: c.name,
+            name_key: c.name_key,
+            description: c.description,
+            description_key: c.description_key,
             api_slug: c.api_slug,
+            favorite: c.favorite,
+            last_run_at: c.last_run_at,
         })
         .collect())
 }
@@ -338,11 +362,240 @@ pub async fn list_api_workflows(pool: &DbPool) -> Result<Vec<ApiEntitySummary>, 
         .into_iter()
         .filter(|w| w.api_enabled)
         .map(|w| ApiEntitySummary {
+            kind: "workflow",
             id: w.id,
             name: w.name,
+            // Workflows are user-created and carry no i18n keys.
+            name_key: None,
+            description: w.description,
+            description_key: None,
             api_slug: w.api_slug,
+            favorite: w.favorite,
+            last_run_at: w.last_run_at,
         })
         .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Read endpoints (B1/B2/B3) — power the browser-served web UI. Every one is
+// gated on the SAME `api_enabled` opt-in as the run endpoints: a command /
+// workflow that is not API-enabled is invisible (404 / filtered out), so the
+// web UI never exposes an entity the operator did not deliberately publish.
+// ---------------------------------------------------------------------------
+
+/// Fetch a single API-enabled command's full record (B1). Reuses
+/// [`storage_commands::find_by_api_ref`], which gates on `api_enabled = 1` in
+/// SQL, so a disabled command returns [`ApiError::NotFound`]. Sensitive variable
+/// defaults are already stripped at the storage boundary, so the record is safe
+/// to return to the browser for the read-only detail view.
+pub async fn get_api_command(pool: &DbPool, reference: &str) -> Result<CommandRecord, ApiError> {
+    storage_commands::find_by_api_ref(pool, reference)
+        .await
+        .map_err(ApiError::RunFailed)?
+        .ok_or(ApiError::NotFound)
+}
+
+/// Fetch a single API-enabled workflow's full record (B1).
+pub async fn get_api_workflow(pool: &DbPool, reference: &str) -> Result<WorkflowRecord, ApiError> {
+    storage_workflows::find_by_api_ref(pool, reference)
+        .await
+        .map_err(ApiError::RunFailed)?
+        .ok_or(ApiError::NotFound)
+}
+
+/// One page of API-visible history (B2). Only run events whose underlying
+/// command / workflow is currently API-enabled are returned — a row referencing
+/// a non-API-enabled (or deleted) entity is filtered out so the web UI cannot
+/// read output of entities the operator did not publish. Non-run events
+/// (create / edit / delete / ssh) are excluded entirely: the web History view
+/// is run-only.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiHistoryPage {
+    pub items: Vec<storage_history::HistoryEvent>,
+    pub total: u64,
+    pub page: u32,
+    pub page_size: u32,
+}
+
+/// List API-visible run history, newest first. `page` is 1-based; `page_size`
+/// is clamped by the storage layer. The `api_enabled` filter is applied AFTER
+/// paging at the storage layer would mis-count, so we resolve the enabled id
+/// sets once and filter the page in memory — the page is small (bounded by
+/// `page_size`) so this is cheap.
+pub async fn list_api_history(
+    pool: &DbPool,
+    page: u32,
+    page_size: u32,
+) -> Result<ApiHistoryPage, ApiError> {
+    let enabled = ApiEnabledIds::load(pool).await?;
+
+    // Restrict to the two run kinds up front (the web History view is run-only),
+    // then drop rows whose entity is not API-enabled.
+    let filter = storage_history::HistoryFilter {
+        kinds: Some(vec!["commandRun".to_string(), "workflowRun".to_string()]),
+        ..Default::default()
+    };
+    let stored = storage_history::list_paginated(pool, &filter, page, page_size)
+        .await
+        .map_err(ApiError::RunFailed)?;
+
+    let items: Vec<storage_history::HistoryEvent> = stored
+        .items
+        .into_iter()
+        .filter(|ev| enabled.allows(&ev.payload))
+        .collect();
+
+    Ok(ApiHistoryPage {
+        items,
+        // `total` is the storage total for the two run kinds; the in-memory
+        // `api_enabled` filter can only shrink a page, so the count is an upper
+        // bound. The web paginator treats it as such (it never asserts an exact
+        // visible count), matching the desktop History paginator's contract.
+        total: stored.total,
+        page: stored.page,
+        page_size: stored.page_size,
+    })
+}
+
+/// Status + captured output of a single run, keyed by `execution_id` (B3).
+/// Returns [`ApiError::NotFound`] when no run row matches OR when the run's
+/// command / workflow is not (or no longer) API-enabled — this stops a caller
+/// reading the output of an un-published entity by guessing execution ids.
+///
+/// Per decision O2 (option B): a still-running row carries `status: "running"`
+/// with whatever output the History row holds (currently none until the run
+/// finalises); a terminal row carries the full captured output. Live
+/// line-by-line streaming is a planned follow-up (it needs the executor to
+/// expose its in-progress capture buffer).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunStatusResponse {
+    pub execution_id: String,
+    pub kind: &'static str,
+    pub name: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timed_out: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<Vec<storage_history::HistoryLogLine>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<storage_history::HistoryExtractedResult>,
+}
+
+pub async fn get_run_status(
+    pool: &DbPool,
+    execution_id: &str,
+) -> Result<RunStatusResponse, ApiError> {
+    let event = storage_history::find_run_by_execution_id(pool, execution_id)
+        .await
+        .map_err(ApiError::RunFailed)?
+        .ok_or(ApiError::NotFound)?;
+
+    let enabled = ApiEnabledIds::load(pool).await?;
+    if !enabled.allows(&event.payload) {
+        // The run exists but its entity is not API-visible → treat as not found
+        // so existence of the run is not leaked for an un-published entity.
+        return Err(ApiError::NotFound);
+    }
+
+    match event.payload {
+        HistoryEventPayload::CommandRun {
+            command_name,
+            execution_id,
+            exit_code,
+            duration_ms,
+            status,
+            timed_out,
+            output,
+            result,
+            ..
+        } => Ok(RunStatusResponse {
+            execution_id,
+            kind: "command",
+            name: command_name,
+            status: status.as_str().to_string(),
+            exit_code,
+            duration_ms,
+            timed_out,
+            output,
+            result,
+        }),
+        HistoryEventPayload::WorkflowRun {
+            workflow_name,
+            execution_id,
+            exit_code,
+            duration_ms,
+            status,
+            timed_out,
+            output,
+            result,
+            ..
+        } => Ok(RunStatusResponse {
+            execution_id,
+            kind: "workflow",
+            name: workflow_name,
+            status: status.as_str().to_string(),
+            exit_code,
+            duration_ms,
+            timed_out,
+            output,
+            result,
+        }),
+        // `find_run_by_execution_id` only returns the two run kinds, so any
+        // other variant here is impossible; treat defensively as not found.
+        _ => Err(ApiError::NotFound),
+    }
+}
+
+/// Resolved sets of currently-API-enabled command and workflow ids, used to
+/// filter history / run-status responses so only published entities are
+/// visible. Loaded once per request (lists are small relative to a per-row
+/// query).
+struct ApiEnabledIds {
+    command_ids: std::collections::HashSet<String>,
+    workflow_ids: std::collections::HashSet<String>,
+}
+
+impl ApiEnabledIds {
+    async fn load(pool: &DbPool) -> Result<Self, ApiError> {
+        let commands = storage_commands::list_all(pool)
+            .await
+            .map_err(ApiError::RunFailed)?;
+        let workflows = storage_workflows::list_all(pool)
+            .await
+            .map_err(ApiError::RunFailed)?;
+        Ok(Self {
+            command_ids: commands
+                .into_iter()
+                .filter(|c| c.api_enabled)
+                .map(|c| c.id)
+                .collect(),
+            workflow_ids: workflows
+                .into_iter()
+                .filter(|w| w.api_enabled)
+                .map(|w| w.id)
+                .collect(),
+        })
+    }
+
+    /// Whether a run event references a currently-API-enabled entity. Non-run
+    /// payloads are never allowed (the web History view is run-only).
+    fn allows(&self, payload: &HistoryEventPayload) -> bool {
+        match payload {
+            HistoryEventPayload::CommandRun { command_id, .. } => {
+                self.command_ids.contains(command_id)
+            }
+            HistoryEventPayload::WorkflowRun { workflow_id, .. } => {
+                self.workflow_ids.contains(workflow_id)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Whether the command marks the variable `name` as `sensitive`. Unknown
@@ -838,5 +1091,77 @@ mod tests {
         );
         assert!(!summary.contains("s3cr3t"));
         assert!(!summary.contains("secret"), "unknown node value masked");
+    }
+
+    /// Build a minimal `CommandRun` payload referencing `command_id`.
+    fn command_run_payload(command_id: &str) -> HistoryEventPayload {
+        HistoryEventPayload::CommandRun {
+            command_id: command_id.to_string(),
+            command_name: "n".into(),
+            execution_id: "e1".into(),
+            exit_code: None,
+            duration_ms: None,
+            status: RunStatus::Running,
+            target: None,
+            timed_out: None,
+            output: None,
+            result: None,
+            source: Some(RUN_SOURCE_API.to_string()),
+        }
+    }
+
+    /// Build a minimal `WorkflowRun` payload referencing `workflow_id`.
+    fn workflow_run_payload(workflow_id: &str) -> HistoryEventPayload {
+        HistoryEventPayload::WorkflowRun {
+            workflow_id: workflow_id.to_string(),
+            workflow_name: "w".into(),
+            execution_id: "r1".into(),
+            exit_code: None,
+            duration_ms: None,
+            status: RunStatus::Running,
+            timed_out: None,
+            output: None,
+            result: None,
+        }
+    }
+
+    fn enabled_ids(commands: &[&str], workflows: &[&str]) -> ApiEnabledIds {
+        ApiEnabledIds {
+            command_ids: commands.iter().map(|s| s.to_string()).collect(),
+            workflow_ids: workflows.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// A run referencing an API-enabled command/workflow is allowed; one
+    /// referencing a non-enabled (or unknown) id is hidden.
+    #[test]
+    fn api_enabled_filter_gates_run_events() {
+        let ids = enabled_ids(&["c1"], &["w1"]);
+        assert!(ids.allows(&command_run_payload("c1")), "enabled command run");
+        assert!(
+            !ids.allows(&command_run_payload("c2")),
+            "non-enabled command run is hidden"
+        );
+        assert!(ids.allows(&workflow_run_payload("w1")), "enabled workflow run");
+        assert!(
+            !ids.allows(&workflow_run_payload("w2")),
+            "non-enabled workflow run is hidden"
+        );
+    }
+
+    /// Non-run payloads are never API-visible (the web History view is run-only),
+    /// even when the referenced entity id happens to be API-enabled.
+    #[test]
+    fn api_enabled_filter_excludes_non_run_events() {
+        let ids = enabled_ids(&["c1"], &["w1"]);
+        let restored = HistoryEventPayload::CommandRestored {
+            command_id: "c1".into(),
+            command_name: "n".into(),
+            original_event_id: "old".into(),
+        };
+        assert!(
+            !ids.allows(&restored),
+            "a non-run event is never exposed via the API history"
+        );
     }
 }

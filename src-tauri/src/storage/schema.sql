@@ -249,8 +249,40 @@ CREATE TABLE IF NOT EXISTS http_server_config (
   -- 1 (default) = an API-triggered run streams to the live console / OutputPanel
   -- (silent = false); 0 = runs are silent (history-only).
   log_to_console  INTEGER NOT NULL DEFAULT 1,
+  -- 0 (default) = REST API only; 1 = also serve the browser-served read-only web
+  -- UI ("reduced ProcMix") over the same port. Off by default so the API-only
+  -- posture is unchanged for existing installs. See docs/http-server.md.
+  serve_web_ui    INTEGER NOT NULL DEFAULT 0,
   created_at      TEXT NOT NULL DEFAULT '',
   updated_at      TEXT NOT NULL DEFAULT ''
+);
+
+-- Autostart behaviour config. A SINGLE-ROW table (same `CHECK(id = 1)` +
+-- `INSERT OR IGNORE` discipline as http_server_config). It records ONLY the
+-- app-side `start_minimized` flag; whether autostart is enabled lives in the OS
+-- registration (Windows Run key / macOS LaunchAgent / Linux .desktop) managed
+-- by tauri-plugin-autostart and read live via is_enabled(). See
+-- storage/autostart.rs and commands/autostart.rs.
+CREATE TABLE IF NOT EXISTS autostart_config (
+  id              INTEGER PRIMARY KEY CHECK (id = 1),
+  -- 0 (default) = a system-launched ProcMix shows its window; 1 = it starts
+  -- hidden in the tray. Only applies when launched by the OS (--autostart).
+  start_minimized INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL DEFAULT '',
+  updated_at      TEXT NOT NULL DEFAULT ''
+);
+
+-- Window-behaviour config. A SINGLE-ROW table (same `CHECK(id = 1)` +
+-- `INSERT OR IGNORE` discipline as autostart_config / http_server_config). It
+-- records the `close_to_tray` flag: 1 (default) = closing the main window hides
+-- it to the system tray; 0 = closing quits ProcMix. Read at launch into a
+-- synchronous runtime cache consumed by the CloseRequested handler. See
+-- storage/window_behavior.rs and commands/window_behavior.rs.
+CREATE TABLE IF NOT EXISTS window_behavior_config (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  close_to_tray INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL DEFAULT '',
+  updated_at    TEXT NOT NULL DEFAULT ''
 );
 
 -- Per-plugin user state (plugin system, Phase 1). ProcMix-owned state keyed by

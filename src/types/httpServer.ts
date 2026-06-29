@@ -26,6 +26,12 @@ export interface HttpServerConfig {
    * `false` = runs are silent (recorded in History only).
    */
   logToConsole: boolean;
+  /**
+   * `false` (default) = REST API only; `true` = also serve the browser-served
+   * read-only web UI ("reduced ProcMix") over the same port. Off by default so
+   * the API-only posture is unchanged for existing installs.
+   */
+  serveWebUi: boolean;
 }
 
 /**

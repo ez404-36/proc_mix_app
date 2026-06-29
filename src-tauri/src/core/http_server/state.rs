@@ -48,6 +48,14 @@ struct Inner {
     /// status so the UI can show `http://<ip>:<port>` as a reliable fallback.
     /// `None` when the machine has no routable LAN address.
     lan_ip: Option<Ipv4Addr>,
+    /// The app UI language (e.g. `"ru"` / `"en"`) captured at the moment the
+    /// server was started. Served to the browser UI via `GET /api/bootstrap` so
+    /// the web UI's language MIRRORS the desktop app's language at start time.
+    /// It is a SNAPSHOT — changing the app language later does not affect an
+    /// already-running server until it is restarted. Not persisted (the language
+    /// lives only in the frontend `uiStore`); `None` when the starter supplied
+    /// no language (the web UI then falls back to its built-in default).
+    ui_language: Option<String>,
 }
 
 /// Per-IP failed-attempt counter for the 401 rate limiter. Tracks the count and
@@ -91,6 +99,17 @@ pub struct HttpServerState {
     /// handlers via an `Arc`.
     pub request_log: Arc<RequestLog>,
     rate_limiter: Mutex<RateLimiter>,
+    /// Coarse-grained lock serialising a WHOLE config mutation (persist + the
+    /// `is_running`-gated reconcile) so two concurrent writers — e.g. the
+    /// launch-time `autostart_if_enabled` and a user toggling a setting the
+    /// instant the window paints — cannot interleave their save and reconcile
+    /// steps. Without it the persisted `enabled` flag and the live running state
+    /// could diverge (a last-writer-wins race on the SQLite row vs. a stale
+    /// `is_running` check-then-act). This is DISTINCT from `inner`, which the
+    /// `start`/`stop` lifecycle locks internally; holding `inner` across the DB
+    /// write + reconcile would deadlock those calls. See
+    /// [`HttpServerState::config_lock`] and `commands::set_http_server_config`.
+    config_op: Mutex<()>,
 }
 
 impl HttpServerState {
@@ -99,7 +118,18 @@ impl HttpServerState {
             inner: Mutex::new(Inner::default()),
             request_log: Arc::new(RequestLog::new()),
             rate_limiter: Mutex::new(RateLimiter::default()),
+            config_op: Mutex::new(()),
         }
+    }
+
+    /// Acquire the config-operation lock. Hold the returned guard for the entire
+    /// "persist config + reconcile running server" critical section so that two
+    /// concurrent config writers are fully serialised (the second waits for the
+    /// first's save AND reconcile to finish). The guard is a plain `()` — it
+    /// carries no data; its sole purpose is mutual exclusion. See the
+    /// `config_op` field doc for why this is separate from `inner`.
+    pub async fn config_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.config_op.lock().await
     }
 
     /// Whether the server is currently running.
@@ -117,9 +147,15 @@ impl HttpServerState {
         self.inner.lock().await.lan_ip
     }
 
-    /// Install the running task's handle, shutdown signal, config, and the
-    /// (optional) live mDNS announcement + LAN IP. Called by the lifecycle layer
-    /// after a successful bind.
+    /// The app UI language captured at server start (snapshot), if any. Served
+    /// to the browser UI via `GET /api/bootstrap`.
+    pub async fn ui_language(&self) -> Option<String> {
+        self.inner.lock().await.ui_language.clone()
+    }
+
+    /// Install the running task's handle, shutdown signal, config, the
+    /// (optional) live mDNS announcement + LAN IP, and the UI-language snapshot.
+    /// Called by the lifecycle layer after a successful bind.
     pub async fn set_running(
         &self,
         handle: JoinHandle<()>,
@@ -127,6 +163,7 @@ impl HttpServerState {
         config: HttpServerConfig,
         mdns: Option<MdnsAnnouncement>,
         lan_ip: Option<Ipv4Addr>,
+        ui_language: Option<String>,
     ) {
         let mut inner = self.inner.lock().await;
         inner.handle = Some(handle);
@@ -134,6 +171,7 @@ impl HttpServerState {
         inner.running_config = Some(config);
         inner.mdns = mdns;
         inner.lan_ip = lan_ip;
+        inner.ui_language = ui_language;
     }
 
     /// Signal the running task to stop and clear the running state. Returns the
@@ -151,6 +189,7 @@ impl HttpServerState {
             mdns.stop();
         }
         inner.lan_ip = None;
+        inner.ui_language = None;
         inner.running_config = None;
         inner.handle.take()
     }
@@ -222,5 +261,31 @@ mod tests {
         assert!(state.running_config().await.is_none());
         // take_for_stop on a stopped server is a harmless no-op.
         assert!(state.take_for_stop().await.is_none());
+    }
+
+    /// The config-operation lock must be mutually exclusive: while one holder
+    /// owns the guard, a second `config_lock()` cannot acquire it until the
+    /// first is dropped. This is the invariant that serialises the save +
+    /// reconcile critical section across concurrent config writers.
+    #[tokio::test]
+    async fn config_lock_is_mutually_exclusive() {
+        let state = Arc::new(HttpServerState::new());
+        let guard = state.config_lock().await;
+
+        // A second acquisition must NOT complete while `guard` is held.
+        let state2 = state.clone();
+        let pending = tokio::spawn(async move {
+            let _g = state2.config_lock().await;
+        });
+        // Give the task a chance to run; it must still be blocked on the lock.
+        tokio::task::yield_now().await;
+        assert!(
+            !pending.is_finished(),
+            "second config_lock acquired while the first guard was still held"
+        );
+
+        // Releasing the guard lets the waiter proceed and finish.
+        drop(guard);
+        pending.await.expect("waiter task panicked");
     }
 }

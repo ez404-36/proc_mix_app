@@ -28,10 +28,10 @@ export function AppearanceSection(): ReactElement {
 
   return (
     <section className="view-section">
-      <h2 className="view-section__title">
-        {t("settings.appearance.title")}
-      </h2>
-      <div className="settings-group">
+      <div className="settings-group settings-group--center">
+        <span className="settings-inline-label">
+          {t("settings.appearance.themeLabel")}:
+        </span>
         {THEME_OPTIONS.map((opt) => (
           <button
             key={opt.value}
