@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
   ReactElement,
 } from "react";
 import { createPortal } from "react-dom";
@@ -107,9 +106,7 @@ export function HttpServerPanel(): ReactElement {
     setPortEditing(false);
   }, []);
 
-  const handleBackdropClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
-    if (e.target === e.currentTarget) closePanel();
-  };
+
 
   /** Persist a config change, surfacing a localized error toast on failure. */
   const persist = useCallback(
@@ -243,34 +240,36 @@ export function HttpServerPanel(): ReactElement {
   };
 
   const indicatorState = status.running ? "is-running" : "is-stopped";
+  // Settings (port + toggles) are locked while the server runs, so changes can't
+  // trigger on-the-fly restarts. Applied as a per-control `disabled` (NOT a
+  // `<fieldset disabled>`) so the read-only help tooltips stay usable.
+  const settingsLocked = status.running;
   const statusLabel = status.running
     ? t("httpServer.status.running", { port: status.port })
     : t("httpServer.status.stopped");
 
-  // Reachable URLs to surface while running: the friendly `procmix.local` name
-  // (mDNS) and the raw LAN IP fallback. Both come from the live status; either
-  // may be absent (no mDNS responder / no LAN address).
-  const mdnsUrl =
-    status.running && status.mdnsHost !== undefined
-      ? `http://${status.mdnsHost}:${status.port}`
-      : null;
-  const lanUrl =
-    status.running && status.lanAddress !== undefined
-      ? `http://${status.lanAddress}:${status.port}`
-      : null;
-
-  // Browsable web-UI URLs (only when the web UI is enabled AND running). The web
-  // UI is served at `/`, so these are the addresses LAN users open in a browser.
-  // When LAN is enabled we prefer the friendly mDNS host + the raw LAN IP; when
-  // bound to loopback only, the local URL is the sole reachable address.
-  const webUiUrls: string[] =
-    status.running && config.serveWebUi
-      ? status.bindLan
-        ? [mdnsUrl, lanUrl]
-            .filter((u): u is string => u !== null)
-            .map((u) => `${u}/`)
-        : [`http://127.0.0.1:${status.port}/`]
-      : [];
+  // Reachable addresses, as a single ordered list — shown whether the server is
+  // running or stopped (so you can see/copy the addresses before starting). The
+  // local loopback is always present; the friendly `procmix.local` mDNS name and
+  // the raw LAN IP come from the status whenever a LAN IPv4 is detected (the
+  // backend reports them even while stopped). When the web UI is enabled the
+  // rows point at `/` (the SPA entry); otherwise they are the bare REST base.
+  const webPath = config.serveWebUi ? "/" : "";
+  const addressRows: ReadonlyArray<{ url: string; hintKey?: string }> = [
+    // Local address — always available (the port is known from config).
+    { url: `http://127.0.0.1:${status.port}${webPath}` },
+    ...(status.mdnsHost !== undefined
+      ? [
+          {
+            url: `http://${status.mdnsHost}:${status.port}${webPath}`,
+            hintKey: "httpServer.address.mdnsHint",
+          },
+        ]
+      : []),
+    ...(status.lanAddress !== undefined
+      ? [{ url: `http://${status.lanAddress}:${status.port}${webPath}` }]
+      : []),
+  ];
 
   // The request log rendered as plain text for a read-only textarea, so the
   // user can select and copy lines. Newest first; one request per line:
@@ -292,11 +291,11 @@ export function HttpServerPanel(): ReactElement {
     })
     .join("\n");
 
+  // The modal closes ONLY via the explicit × button (closePanel) — not on a
+  // backdrop click, so drag-selecting text inside the modal (e.g. the port
+  // input) can't accidentally dismiss it.
   const panel = (
-    <div
-      className="http-server-panel__backdrop"
-      onClick={handleBackdropClick}
-    >
+    <div className="http-server-panel__backdrop">
       <div
         className="http-server-panel"
         role="dialog"
@@ -342,7 +341,7 @@ export function HttpServerPanel(): ReactElement {
             />
             <button
               type="button"
-              className="btn btn--icon"
+              className="btn btn--icon http-server-panel__close"
               onClick={closePanel}
               aria-label={t("common.close")}
               title={t("common.close")}
@@ -356,58 +355,34 @@ export function HttpServerPanel(): ReactElement {
           {/* Left column: addresses, settings, token (status + run toggle
               live in the header). */}
           <div className="http-server-panel__col">
-          {/* Reachable addresses (LAN). Only while running. */}
-          {status.running && (mdnsUrl !== null || lanUrl !== null) ? (
+          {/* Reachable addresses. Only while running. The LAN names (mDNS +
+              raw IP) and — when the web UI is enabled — the loopback browser URL
+              all live in one section. The `procmix.local` caveat is a per-row
+              tooltip rather than a section-wide hint. */}
+          {addressRows.length > 0 ? (
             <section className="http-server-panel__section http-server-panel__addresses">
               <h3 className="http-server-panel__section-title">
                 {t("httpServer.address.title")}
               </h3>
-              {mdnsUrl !== null ? (
-                <div className="http-server-panel__address-row">
-                  <code className="http-server-panel__address-value">{mdnsUrl}</code>
+              {addressRows.map((row) => (
+                <div key={row.url} className="http-server-panel__address-row">
+                  <code className="http-server-panel__address-value">{row.url}</code>
+                  {/* Fixed-width hint slot rendered on EVERY row (empty when the
+                      row has no tooltip) so the value fields stay equal width and
+                      the Copy buttons line up vertically across all rows. */}
+                  <span className="http-server-panel__address-hint">
+                    {row.hintKey ? (
+                      <HelpTooltip
+                        id={`http-server-addr-${row.url}`}
+                        buttonLabel={t("httpServer.address.hintLabel")}
+                        body={t(row.hintKey)}
+                      />
+                    ) : null}
+                  </span>
                   <button
                     type="button"
                     className="btn btn--ghost btn--icon"
-                    onClick={() => void handleCopyUrl(mdnsUrl)}
-                    aria-label={t("httpServer.address.copy")}
-                    title={t("httpServer.address.copy")}
-                  >
-                    {t("httpServer.address.copy")}
-                  </button>
-                </div>
-              ) : null}
-              {lanUrl !== null ? (
-                <div className="http-server-panel__address-row">
-                  <code className="http-server-panel__address-value">{lanUrl}</code>
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--icon"
-                    onClick={() => void handleCopyUrl(lanUrl)}
-                    aria-label={t("httpServer.address.copy")}
-                    title={t("httpServer.address.copy")}
-                  >
-                    {t("httpServer.address.copy")}
-                  </button>
-                </div>
-              ) : null}
-              <p className="form-hint">{t("httpServer.address.hint")}</p>
-            </section>
-          ) : null}
-
-          {/* Browsable web UI URLs — only while the web UI is enabled + running.
-              These open the reduced read-only ProcMix in a browser. */}
-          {webUiUrls.length > 0 ? (
-            <section className="http-server-panel__section http-server-panel__addresses">
-              <h3 className="http-server-panel__section-title">
-                {t("httpServer.webUi.title")}
-              </h3>
-              {webUiUrls.map((url) => (
-                <div key={url} className="http-server-panel__address-row">
-                  <code className="http-server-panel__address-value">{url}</code>
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--icon"
-                    onClick={() => void handleCopyUrl(url)}
+                    onClick={() => void handleCopyUrl(row.url)}
                     aria-label={t("httpServer.address.copy")}
                     title={t("httpServer.address.copy")}
                   >
@@ -415,7 +390,6 @@ export function HttpServerPanel(): ReactElement {
                   </button>
                 </div>
               ))}
-              <p className="form-hint">{t("httpServer.webUi.hint")}</p>
             </section>
           ) : null}
 
@@ -425,19 +399,36 @@ export function HttpServerPanel(): ReactElement {
             </p>
           ) : null}
 
-          {/* Settings */}
-          <section className="http-server-panel__section">
-            <h3 className="http-server-panel__section-title">
+          {/* Settings — a bordered fieldset with a cut-out legend, matching the
+              schedule form's section blocks. The whole block is DISABLED while
+              the server runs: `<fieldset disabled>` natively disables every
+              control inside (port input + buttons + all ToggleSwitches, which
+              render native <button>s), so settings can only change while the
+              server is stopped. This avoids on-the-fly restarts (and the
+              port-conflict-drops-the-server edge case). */}
+          <fieldset
+            className={`http-server-panel__section http-server-panel__fieldset${
+              settingsLocked ? " is-locked" : ""
+            }`}
+          >
+            <legend className="http-server-panel__legend">
               {t("httpServer.settings.title")}
-            </h3>
+              {settingsLocked ? (
+                <span className="http-server-panel__legend-note">
+                  {" "}
+                  {t("httpServer.settings.lockedSuffix")}
+                </span>
+              ) : null}
+            </legend>
 
             <div className="form-field http-server-panel__field">
-              <span className="http-server-panel__field-label">
+              <label className="form-field__label" htmlFor="http-server-port">
                 {t("httpServer.settings.port")}
-              </span>
+              </label>
               {portEditing ? (
                 <div className="http-server-panel__port-edit">
                   <input
+                    id="http-server-port"
                     type="number"
                     inputMode="numeric"
                     className={`input http-server-panel__port-input${
@@ -480,14 +471,21 @@ export function HttpServerPanel(): ReactElement {
                 </div>
               ) : (
                 <div className="http-server-panel__port-edit">
-                  <span className="http-server-panel__port-value">
-                    {config.port}
-                  </span>
+                  {/* Read mode: a non-editable input so the value reads as a
+                      field (matching the edit input), with the pencil to edit. */}
+                  <input
+                    id="http-server-port"
+                    type="text"
+                    className="input http-server-panel__port-input"
+                    value={config.port}
+                    readOnly
+                    aria-label={t("httpServer.settings.port")}
+                  />
                   <button
                     type="button"
                     className="btn btn--ghost btn--icon"
                     onClick={startEditingPort}
-                    disabled={busy}
+                    disabled={busy || settingsLocked}
                     aria-label={t("common.edit")}
                     title={t("common.edit")}
                   >
@@ -509,7 +507,7 @@ export function HttpServerPanel(): ReactElement {
               <ToggleSwitch
                 checked={config.enabled}
                 onChange={handleToggleAutostart}
-                disabled={busy}
+                disabled={busy || settingsLocked}
                 ariaLabel={t("httpServer.settings.autostart")}
               />
               <span className="http-server-panel__toggle-label">
@@ -521,7 +519,7 @@ export function HttpServerPanel(): ReactElement {
               <ToggleSwitch
                 checked={config.bindLan}
                 onChange={handleToggleLan}
-                disabled={busy}
+                disabled={busy || settingsLocked}
                 ariaLabel={t("httpServer.settings.bindLan")}
               />
               <span className="http-server-panel__toggle-label">
@@ -540,7 +538,7 @@ export function HttpServerPanel(): ReactElement {
               <ToggleSwitch
                 checked={config.logToConsole}
                 onChange={handleToggleLogToConsole}
-                disabled={busy}
+                disabled={busy || settingsLocked}
                 ariaLabel={t("httpServer.settings.logToConsole")}
               />
               <span className="http-server-panel__toggle-label">
@@ -552,17 +550,19 @@ export function HttpServerPanel(): ReactElement {
               <ToggleSwitch
                 checked={config.serveWebUi}
                 onChange={handleToggleServeWebUi}
-                disabled={busy}
+                disabled={busy || settingsLocked}
                 ariaLabel={t("httpServer.settings.serveWebUi")}
               />
               <span className="http-server-panel__toggle-label">
                 {t("httpServer.settings.serveWebUi")}
               </span>
+              <HelpTooltip
+                id="http-server-serve-web-ui"
+                buttonLabel={t("httpServer.settings.serveWebUiHintLabel")}
+                body={t("httpServer.settings.serveWebUiHint")}
+              />
             </div>
-            <p className="form-hint">
-              {t("httpServer.settings.serveWebUiHint")}
-            </p>
-          </section>
+          </fieldset>
 
           {/* Token */}
           <section className="http-server-panel__section">

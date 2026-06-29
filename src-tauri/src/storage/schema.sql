@@ -249,10 +249,12 @@ CREATE TABLE IF NOT EXISTS http_server_config (
   -- 1 (default) = an API-triggered run streams to the live console / OutputPanel
   -- (silent = false); 0 = runs are silent (history-only).
   log_to_console  INTEGER NOT NULL DEFAULT 1,
-  -- 0 (default) = REST API only; 1 = also serve the browser-served read-only web
-  -- UI ("reduced ProcMix") over the same port. Off by default so the API-only
-  -- posture is unchanged for existing installs. See docs/http-server.md.
-  serve_web_ui    INTEGER NOT NULL DEFAULT 0,
+  -- 1 (default for fresh installs) = also serve the browser-served read-only web
+  -- UI ("reduced ProcMix") over the same port; 0 = REST API only. NOTE: the
+  -- ADD COLUMN migration (db.rs) back-fills EXISTING databases with 0, so an
+  -- upgrade never silently exposes the web UI — only new installs default on.
+  -- See docs/http-server.md.
+  serve_web_ui    INTEGER NOT NULL DEFAULT 1,
   created_at      TEXT NOT NULL DEFAULT '',
   updated_at      TEXT NOT NULL DEFAULT ''
 );

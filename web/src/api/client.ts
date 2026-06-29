@@ -54,6 +54,13 @@ interface RequestOptions {
   body?: unknown;
   /** Query params appended to the path. */
   query?: Record<string, string | number | undefined>;
+  /**
+   * Explicit Bearer token to attach instead of the one in the auth store. Used
+   * by login validation so a candidate token can be checked WITHOUT first
+   * committing it to the store (which would otherwise mount the shell and fire
+   * data requests in parallel). When set, a 401 does NOT clear the store.
+   */
+  authToken?: string;
 }
 
 function buildUrl(path: string, query?: RequestOptions["query"]): string {
@@ -97,7 +104,9 @@ function mapErrorCode(status: number, body: unknown): ApiErrorCode {
  * A 401 also clears the session token so the UI returns to login.
  */
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const token = currentToken();
+  // An explicit `authToken` (login validation) takes precedence over the stored
+  // session token, so a candidate can be checked before it is committed.
+  const token = opts.authToken ?? currentToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
@@ -125,8 +134,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
   if (!resp.ok) {
     const code = mapErrorCode(resp.status, parsed);
-    if (resp.status === 401) {
-      // Token rejected — drop it so the app shows the login screen.
+    if (resp.status === 401 && opts.authToken === undefined) {
+      // A stored-token request was rejected — drop it so the app shows login.
+      // For an explicit-token check (login validation) the store holds no token
+      // yet, so there is nothing to clear and the caller handles the rejection.
       useAuthStore.getState().clear();
     }
     const variable =
@@ -147,12 +158,16 @@ export function fetchBootstrap(): Promise<Bootstrap> {
 }
 
 /**
- * Validate a token by hitting an authenticated endpoint. Resolves when the
- * token is accepted; rejects with an {@link ApiError} (`unauthorized` /
- * `rateLimited`) otherwise. The token must already be in the auth store.
+ * Validate a candidate token via the lightweight `GET /api/whoami` — it runs
+ * only the auth guard and returns `{ ok: true }`, so login validates the token
+ * WITHOUT fetching the whole command list. The token is sent explicitly and is
+ * NOT committed to the auth store; the caller commits it only on success, so a
+ * failed check never lets the shell mount and fire data requests. Resolves when
+ * accepted; rejects with an {@link ApiError} (`unauthorized` / `rateLimited` /
+ * `forbiddenHost` / `network`) otherwise.
  */
-export async function validateSession(): Promise<void> {
-  await request<ApiEntitySummary[]>("/api/commands");
+export async function validateSession(candidateToken: string): Promise<void> {
+  await request<{ ok: boolean }>("/api/whoami", { authToken: candidateToken });
 }
 
 export function listCommands(): Promise<ApiEntitySummary[]> {

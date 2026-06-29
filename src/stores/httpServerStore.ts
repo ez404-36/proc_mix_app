@@ -48,7 +48,7 @@ const DEFAULT_CONFIG: HttpServerConfig = {
   port: 48610,
   bindLan: false,
   logToConsole: true,
-  serveWebUi: false,
+  serveWebUi: true,
 };
 
 export interface HttpServerStoreState {

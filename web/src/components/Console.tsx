@@ -17,6 +17,8 @@ import { useShallow } from "zustand/react/shallow";
 import { CancelIcon } from "@app/components/icons/CancelIcon";
 import { ClearIcon } from "@app/components/icons/ClearIcon";
 import { RerunIcon } from "@app/components/icons/RerunIcon";
+import { Dropdown } from "@app/components/Dropdown";
+import type { DropdownOption } from "@app/components/Dropdown";
 import { useRunStore } from "../stores/runStore";
 import type { TrackedRun, TrackedStatus } from "../stores/runStore";
 import { useRunActions } from "../hooks/useRunActions";
@@ -148,10 +150,10 @@ export function Console(): React.JSX.Element | null {
   const panelStyle =
     position === "bottom" ? { height: panelHeight } : { width: panelWidth };
 
-  const positions: ReadonlyArray<{ value: typeof position; label: string }> = [
-    { value: "bottom", label: t("outputPanel.position.bottom", "Bottom") },
-    { value: "right", label: t("outputPanel.position.right", "Right") },
-    { value: "left", label: t("outputPanel.position.left", "Left") },
+  const positions: ReadonlyArray<DropdownOption> = [
+    { value: "bottom", label: t("outputPanel.position.bottom", "Снизу") },
+    { value: "right", label: t("outputPanel.position.right", "Справа") },
+    { value: "left", label: t("outputPanel.position.left", "Слева") },
   ];
 
   return (
@@ -210,20 +212,13 @@ export function Console(): React.JSX.Element | null {
           ) : null}
         </div>
         <div className="output-panel__actions">
-          <select
-            className="output-panel__position-select"
+          <Dropdown
             value={position}
-            aria-label={t("outputPanel.positionTitle", "Console position")}
-            onChange={(e) =>
-              setPosition(e.target.value as typeof position)
-            }
-          >
-            {positions.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+            options={positions}
+            onChange={(value) => setPosition(value as typeof position)}
+            ariaLabel={t("outputPanel.positionTitle", "Console position")}
+            className="output-panel__position-select"
+          />
           <button
             type="button"
             className="btn command-form__action command-form__action--cancel"

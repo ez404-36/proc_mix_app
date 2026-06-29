@@ -1,0 +1,405 @@
+/* Web-only style layer — loaded AFTER the desktop theme.css.
+ *
+ * The web UI reuses theme.css for tokens and base classes, but a handful of
+ * class families it needs are either desktop-coupled (a modal lives inside a
+ * centering backdrop; the sidebar nav uses Unicode-glyph buttons) or were
+ * introduced for the web shell and have no desktop rule (`app-sidebar__nav`,
+ * `app-sidebar__btn`, `theme-toggle`, the login card). This sheet supplies just
+ * those, using theme.css tokens so light/dark and the shared look still apply.
+ */
+
+/* --- Login screen ---------------------------------------------------------
+ * The login screen is NOT inside the app shell. Center a single card. */
+.web-login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--color-bg);
+}
+
+.web-login__card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm, 0 4px 16px rgb(0 0 0 / 12%));
+}
+
+/* Brand row: logo + title as ONE centered group, sitting close together.
+ * Centering the whole row (not stretching the title) keeps the logo right next
+ * to "ProcMix" instead of pinned to the card edge with a gap. */
+.web-login__brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.web-login__logo {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+}
+
+.web-login__title {
+  margin: 0;
+}
+
+.web-login__card .view-title {
+  margin: 0;
+}
+
+.web-login__card .view-subtitle {
+  margin: 0 0 4px;
+}
+
+.web-login__card .btn {
+  margin-top: 4px;
+  justify-content: center;
+}
+
+/* Error hint under a field (e.g. "Invalid token"). theme.css styles `.form-hint`
+ * muted-gray and has no `--error` variant, so the message would be easy to miss.
+ * Make it the danger color so a bad token reads as an error directly under the
+ * input. Used by the login form and any web form-field error. */
+.form-hint--error {
+  color: var(--color-danger);
+  font-weight: 500;
+}
+
+/* --- App shell: sidebar nav (web-only families) ---------------------------
+ * theme.css styles `.app-shell`/`.app-sidebar`/`.app-main`, but the web nav
+ * uses its own button family that has no desktop rule. */
+.app-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.app-sidebar__footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Horizontal divider separating the theme toggle from the logout action. */
+.app-sidebar__divider {
+  width: 100%;
+  height: 0;
+  margin: 4px 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Logout button: icon + label centered, danger-styled. */
+.app-sidebar__logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.app-sidebar__btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-sidebar__btn:hover {
+  background: var(--color-surface-hover);
+}
+
+.app-sidebar__btn.is-active {
+  background: var(--color-surface-hover);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* --- Theme toggle ---------------------------------------------------------
+ * Same as the desktop sidebar switcher: a single `btn--ghost` button reading
+ * "Theme: <label>" that cycles on click. Left-aligned, full sidebar width. */
+.app-sidebar__theme {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+/* --- Page width: keep the views readable inside the wide content area ------ */
+.app-main {
+  overflow-y: auto;
+}
+
+/* --- History row title (web) ---------------------------------------------
+ * The web History shows just the entity name + a kind badge (the "Ran
+ * command/workflow" prefix is dropped — every row is a run). Lay the badge and
+ * name out inline with a small gap; allow the name to use available width. */
+.history-row__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* --- Mobile chrome (top bar + bottom tab-bar) -----------------------------
+ * Both are rendered always but HIDDEN on desktop; the ≤640px breakpoint shows
+ * them and hides the sidebar. Keeping display rules here (not inline) means one
+ * source of truth for which navigation is visible. */
+.app-topbar,
+.app-tabbar {
+  display: none;
+}
+
+/* ======================================================================== *
+ * Phone layout (variant A): full-width content, top bar + bottom tab-bar.   *
+ * ======================================================================== */
+@media (max-width: 640px) {
+  /* Stack the shell vertically: [topbar] [content] [tabbar]. */
+  .app-shell {
+    flex-direction: column;
+  }
+
+  /* The desktop sidebar is replaced by the top bar + tab-bar. */
+  .app-sidebar {
+    display: none;
+  }
+
+  /* Top bar: brand left, actions right. */
+  .app-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .app-topbar__brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .app-topbar__logo {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    flex: 0 0 auto;
+  }
+
+  .app-topbar__title {
+    font-weight: 700;
+    color: var(--color-primary);
+    font-size: 16px;
+  }
+
+  .app-topbar__actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+
+  /* Icon-square buttons in the top bar (console toggle, theme, logout). */
+  .app-topbar__btn,
+  .app-topbar__logout {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+  }
+
+  .app-topbar__btn {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: 16px;
+    cursor: pointer;
+  }
+
+  .app-topbar__btn.is-active {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  /* The run-count badge floats on the console toggle. */
+  .app-topbar__btn .list-group__count {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+  }
+
+  /* Content takes the full width; leave room for the fixed-height tab-bar. */
+  .app-main {
+    flex: 1 1 auto;
+    padding: 16px 14px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .view-title {
+    font-size: 22px;
+  }
+
+  /* Single-column cards so titles/actions never clip in the narrow viewport. */
+  .command-list {
+    grid-template-columns: 1fr;
+  }
+
+  .list-tile__title {
+    overflow-wrap: anywhere;
+  }
+
+  /* Run/View actions fill the card width and wrap if needed. */
+  .list-tile__actions {
+    flex-wrap: wrap;
+  }
+
+  .list-tile__actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  /* Bottom tab-bar: the three sections, equal segments. */
+  .app-tabbar {
+    display: flex;
+    flex: 0 0 auto;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .app-tabbar__btn {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 4px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .app-tabbar__btn.is-active {
+    color: var(--color-primary);
+    font-weight: 600;
+  }
+
+  .app-tabbar__glyph {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  /* When docked at the bottom on a phone the console sits above the tab-bar and
+   * spans the full width; the position selector is irrelevant (only bottom
+   * makes sense on a narrow screen) so hide it. */
+  .output-panel--bottom,
+  .output-panel--left,
+  .output-panel--right {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+
+  .output-panel__position-select {
+    display: none;
+  }
+
+  /* History rows on a phone. The summary becomes two lines:
+   *   line 1: [icon · type · name · status]                 → `.history-row__main`
+   *   line 2: [timestamp]                                    → `.history-row__meta`
+   * plus the disclosure caret pinned to the right of line 1.
+   *
+   * To guarantee the caret never lands on its own line, the summary is
+   * `position: relative` with right padding reserved for the caret, the caret
+   * `::after` is taken out of flow (absolute, top-right), and the meta line is
+   * forced full-width. */
+  .history-row__summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 10px;
+    row-gap: 4px;
+    position: relative;
+    padding-right: 30px;
+  }
+
+  /* The main cluster is the full first line and stays on ONE line: icon · type ·
+   * name · status. The name shrinks (and ellipsises if very long) so the status
+   * badge stays inline at its end instead of wrapping to a new line. */
+  .history-row__main {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .history-row__title {
+    flex: 0 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  /* Within the title: the type badge keeps its size, the name truncates. */
+  .history-row__title .type-badge {
+    flex: 0 0 auto;
+  }
+
+  /* Status badge ("exit 0") stays inline at the end of line 1; never shrinks. */
+  .history-row__main .history-row__status {
+    flex: 0 0 auto;
+  }
+
+  /* Timestamp on its own full-width second line, aligned under the title. */
+  .history-row__meta {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    padding-left: 30px;
+  }
+
+  /* Caret out of flow, pinned top-right of the summary — never wraps. */
+  .history-row__summary::after {
+    position: absolute;
+    top: 14px;
+    right: 12px;
+    margin: 0;
+  }
+
+  /* Plain (non-expandable) rows: same two-line stacking. They have no caret, so
+   * no right padding is needed. */
+  .history-row:not(.history-row--scheduled) {
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 10px;
+    row-gap: 4px;
+  }
+}

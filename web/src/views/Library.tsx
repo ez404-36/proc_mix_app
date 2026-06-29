@@ -9,12 +9,29 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { TilesViewIcon } from "@app/components/icons/TilesViewIcon";
+import { CompactTilesIcon } from "@app/components/icons/CompactTilesIcon";
 import { useEntitiesStore } from "../stores/entitiesStore";
 import type { ApiEntitySummary, EntityKind } from "../api/types";
 import { EntityCard } from "../components/EntityCard";
 import { useEntityActions } from "../hooks/useEntityActions";
 
 type Tab = EntityKind;
+
+/** Library display mode. `table`/`grouped` are desktop-only and not ported. */
+type ViewMode = "tiles" | "compact";
+
+const VIEW_MODE_KEY = "procmix-web-library-mode";
+
+function readStoredMode(): ViewMode {
+  try {
+    return localStorage.getItem(VIEW_MODE_KEY) === "compact"
+      ? "compact"
+      : "tiles";
+  } catch {
+    return "tiles";
+  }
+}
 
 /** Case-insensitive match against name + description. */
 function matchesQuery(entity: ApiEntitySummary, query: string): boolean {
@@ -38,6 +55,16 @@ export function Library(): React.JSX.Element {
 
   const [tab, setTab] = useState<Tab>("command");
   const [query, setQuery] = useState("");
+  const [mode, setModeState] = useState<ViewMode>(readStoredMode);
+
+  const setMode = (next: ViewMode): void => {
+    setModeState(next);
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, next);
+    } catch {
+      /* localStorage unavailable — keep the choice in memory only */
+    }
+  };
 
   useEffect(() => {
     if (!loaded) void load();
@@ -105,6 +132,37 @@ export function Library(): React.JSX.Element {
           value={query}
           onChange={handleSearch}
         />
+        {/* Wrap in `.list-controls` so the desktop active-toggle rule
+            (`.list-controls .btn--icon.is-active`) applies its accent (blue)
+            highlight to the selected mode, matching the desktop Library. */}
+        <div className="list-controls">
+          <div
+            className="list-controls__modes"
+            role="group"
+            aria-label={t("listView.viewMode", "View mode")}
+          >
+            <button
+              type="button"
+              className={`btn btn--ghost btn--icon${mode === "tiles" ? " is-active" : ""}`}
+              onClick={() => setMode("tiles")}
+              aria-pressed={mode === "tiles"}
+              aria-label={t("listView.tilesView", "Tiles")}
+              title={t("listView.tilesView", "Tiles")}
+            >
+              <TilesViewIcon />
+            </button>
+            <button
+              type="button"
+              className={`btn btn--ghost btn--icon${mode === "compact" ? " is-active" : ""}`}
+              onClick={() => setMode("compact")}
+              aria-pressed={mode === "compact"}
+              aria-label={t("listView.compactView", "Compact")}
+              title={t("listView.compactView", "Compact")}
+            >
+              <CompactTilesIcon />
+            </button>
+          </div>
+        </div>
       </div>
 
       {isLoading && !loaded ? (
@@ -126,13 +184,16 @@ export function Library(): React.JSX.Element {
               : t("workflow.noResults")}
         </div>
       ) : (
-        <div className="command-list">
+        <div
+          className={`command-list${mode === "compact" ? " command-list--compact" : ""}`}
+        >
           {filtered.map((e) => (
             <EntityCard
               key={`${e.kind}-${e.id}`}
               entity={e}
               onView={openDetail}
               onRun={requestRun}
+              compact={mode === "compact"}
             />
           ))}
         </div>

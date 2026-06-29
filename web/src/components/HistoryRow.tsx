@@ -53,8 +53,21 @@ export function HistoryRow({
   event: HistoryEventWire;
 }): React.JSX.Element {
   const { t } = useTranslation();
+  // In the web History every row is a run, so the verbose "Ran command/workflow
+  // …" prefix is redundant — show just the entity name, with a small kind badge
+  // (command/workflow) carrying that distinction, like the cards do.
   const name = event.commandName ?? event.workflowName ?? "";
-  const title = t(`history.kinds.${event.kind}`, { name });
+  const isCommand = event.kind === "commandRun";
+  const kindKey = isCommand ? "command" : "workflow";
+
+  const titleNode = (
+    <span className="history-row__title">
+      <span className={`type-badge type-badge--${kindKey}`}>
+        {isCommand ? t("home.typeCommand") : t("home.typeWorkflow")}
+      </span>
+      {name}
+    </span>
+  );
 
   const badge = (
     <span
@@ -95,7 +108,7 @@ export function HistoryRow({
           <summary className="history-row__summary">
             <div className="history-row__main">
               {icon}
-              <span className="history-row__title">{title}</span>
+              {titleNode}
               {badge}
             </div>
             {meta}
@@ -110,7 +123,7 @@ export function HistoryRow({
     <li className="history-row">
       <div className="history-row__main">
         {icon}
-        <span className="history-row__title">{title}</span>
+        {titleNode}
         {badge}
       </div>
       {meta}

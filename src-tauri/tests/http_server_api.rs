@@ -1010,6 +1010,27 @@ async fn bootstrap_is_unauthenticated_and_returns_language() {
     assert!(body["language"].is_null(), "language null when unset: {body}");
 }
 
+/// `GET /api/whoami` validates the token without any entity data: 200 `{ok:true}`
+/// with a valid token, 401 without — the web UI's lightweight login check.
+#[tokio::test]
+async fn whoami_validates_token() {
+    let pool = fresh_pool().await;
+    let router = router_with_token(pool, Some(TEST_TOKEN));
+
+    let (status, body) = send(router.clone(), get_auth("/api/whoami")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+
+    // Unauthenticated → 401 (no body data leaked).
+    let unauth = Request::builder()
+        .method("GET")
+        .uri("/api/whoami")
+        .body(Body::empty())
+        .unwrap();
+    let (status_unauth, _) = send(router, unauth).await;
+    assert_eq!(status_unauth, StatusCode::UNAUTHORIZED);
+}
+
 // ---------------------------------------------------------------------------
 // Static serving of the web UI (B5). Gated by `serve_web_ui`; outside the
 // Bearer guard but behind the Host check.

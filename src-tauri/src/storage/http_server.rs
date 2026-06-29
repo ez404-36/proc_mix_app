@@ -37,9 +37,10 @@ pub struct HttpServerConfig {
     /// `true` (default) → an API-triggered run streams to the live console
     /// (`silent = false`); `false` → runs are silent (history-only).
     pub log_to_console: bool,
-    /// `false` (default) → REST API only; `true` → also serve the browser-served
-    /// read-only web UI over the same port. Off by default so an existing
-    /// install's API-only posture is unchanged on upgrade.
+    /// `true` (default for fresh installs) → also serve the browser-served
+    /// read-only web UI over the same port; `false` → REST API only. Existing
+    /// databases are migrated with `false`, so an upgrade never silently
+    /// exposes the web UI — only new installs default on.
     pub serve_web_ui: bool,
 }
 
@@ -50,7 +51,7 @@ impl Default for HttpServerConfig {
             port: DEFAULT_PORT,
             bind_lan: false,
             log_to_console: true,
-            serve_web_ui: false,
+            serve_web_ui: true,
         }
     }
 }
@@ -154,7 +155,7 @@ mod tests {
         sqlx::query(
             "INSERT OR IGNORE INTO http_server_config \
              (id, enabled, port, bind_lan, log_to_console, serve_web_ui, created_at, updated_at) \
-             VALUES (1, 0, 48610, 0, 1, 0, '', '')",
+             VALUES (1, 0, 48610, 0, 1, 1, '', '')",
         )
         .execute(&pool)
         .await

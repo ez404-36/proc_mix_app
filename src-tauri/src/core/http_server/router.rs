@@ -109,6 +109,7 @@ pub fn build_router<R: Runtime>(state: ApiState<R>) -> Router {
     let router = Router::new()
         .route("/api/health", get(health))
         .route("/api/bootstrap", get(bootstrap::<R>))
+        .route("/api/whoami", get(whoami::<R>))
         .route("/api/commands", get(list_commands::<R>))
         .route("/api/workflows", get(list_workflows::<R>))
         .route("/api/command/:reference", get(get_command::<R>))
@@ -178,6 +179,32 @@ async fn health() -> impl IntoResponse {
 async fn bootstrap<R: Runtime>(State(state): State<ApiState<R>>) -> impl IntoResponse {
     let language = state.server_state.ui_language().await;
     (StatusCode::OK, Json(json!({ "language": language })))
+}
+
+/// Lightweight token check for the web UI's login. Runs ONLY the auth guard
+/// (Bearer + Host + rate limit) and returns `{ "ok": true }` on success — it
+/// does no DB work and exposes no entity data, so the SPA can validate the
+/// entered token without fetching the whole command list. A bad / missing token
+/// or forbidden host is rejected by the guard exactly like any other
+/// authenticated route.
+async fn whoami<R: Runtime>(
+    State(state): State<ApiState<R>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if let Some(resp) = guard(&state, &headers, addr, "/api/whoami", "GET").await {
+        return resp;
+    }
+    let resp = (StatusCode::OK, Json(json!({ "ok": true }))).into_response();
+    log_request(
+        &state,
+        addr,
+        "GET",
+        "/api/whoami",
+        resp.status(),
+        LogDetail::default(),
+    );
+    resp
 }
 
 async fn list_commands<R: Runtime>(

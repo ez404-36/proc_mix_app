@@ -1085,6 +1085,12 @@
     "variablesTitle": "Variables",
     "clearTitle": "Clear all executions",
     "closeTitle": "Hide panel",
+    "positionTitle": "Console position",
+    "position": {
+      "bottom": "Bottom",
+      "right": "Right",
+      "left": "Left"
+    },
     "exitCode": "exit {{code}}",
     "scriptShell": "({{shell}})",
     "timedOutLine": "⏱ Process cancelled: the timeout elapsed before the command finished.",
@@ -1462,10 +1468,11 @@
       "stop": "Stop"
     },
     "address": {
-      "title": "Reachable at",
+      "title": "Access addresses",
       "copy": "Copy",
       "copied": "Address copied",
-      "hint": "Other machines on your network can use these addresses. `procmix.local` works on macOS/Windows out of the box (Linux needs avahi); the IP always works."
+      "hintLabel": "About this address",
+      "mdnsHint": "`procmix.local` works on macOS/Windows out of the box (Linux needs avahi). If it doesn't resolve, use the IP address — that always works."
     },
     "settings": {
       "title": "Settings",
@@ -1475,12 +1482,10 @@
       "bindLocalHint": "The server is reachable only from this machine (127.0.0.1).",
       "logToConsole": "Show API runs in the console",
       "autostart": "Start when the app opens",
-      "serveWebUi": "Serve the web interface",
-      "serveWebUiHint": "Also serve a read-only ProcMix in the browser. LAN users open it, sign in with the token, and can view and run (but not edit) commands, workflows, and history."
-    },
-    "webUi": {
-      "title": "Open in a browser",
-      "hint": "Share these addresses with people on your network. They sign in with the access token to view and run your published commands and workflows."
+      "lockedSuffix": "(stop the server to change)",
+      "serveWebUi": "Enable the web interface",
+      "serveWebUiHintLabel": "About the web interface",
+      "serveWebUiHint": "Also serve a read-only ProcMix in the browser. LAN users open one of the addresses above, sign in with the token, and can view and run (but not edit) commands, workflows, and history."
     },
     "token": {
       "title": "Access token",

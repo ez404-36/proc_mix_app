@@ -54,10 +54,17 @@ pub async fn http_server_status(
         Some(cfg) => cfg,
         None => storage_http_server::load(pool.inner()).await?,
     };
-    // The LAN address + mDNS hostname are only meaningful while running and only
-    // when a LAN IP was detected (mDNS is announced on that IP). The hostname is
+    // LAN address + mDNS hostname are shown whenever a LAN IPv4 is detected, so
+    // the UI can preview the network addresses BEFORE the server is started
+    // (not only while running). While running we use the IP the live instance
+    // actually announced mDNS on; while stopped we detect the current LAN IP
+    // directly (the interface exists regardless of the server). The hostname is
     // reported without its trailing dot for display.
-    let lan_ip = if running { state.lan_ip().await } else { None };
+    let lan_ip = if running {
+        state.lan_ip().await
+    } else {
+        http_server::mdns::detect_lan_ipv4()
+    };
     let lan_address = lan_ip.map(|ip| ip.to_string());
     let mdns_host = lan_ip.map(|_| {
         http_server::mdns::MDNS_HOSTNAME

@@ -7,13 +7,13 @@
 
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
+import logoUrl from "@app/assets/logo.svg";
 import { ApiError, validateSession } from "../api/client";
 import { useAuthStore } from "../stores/authStore";
 
 export function Login(): React.JSX.Element {
   const { t } = useTranslation();
   const setToken = useAuthStore((s) => s.setToken);
-  const clear = useAuthStore((s) => s.clear);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -24,13 +24,14 @@ export function Login(): React.JSX.Element {
     if (!token) return;
     setBusy(true);
     setError(null);
-    // Stage the token so the client attaches it, then validate.
-    setToken(token);
     try {
-      await validateSession();
-      // Success — the auth store already holds the token; the App re-renders.
+      // Validate the candidate token FIRST (without committing it to the store).
+      // Only on success do we set it — so a failed check never mounts the shell
+      // or fires the entities/history requests.
+      await validateSession(token);
+      setToken(token);
+      // The auth store now holds the token; the App re-renders into the shell.
     } catch (err) {
-      clear();
       if (err instanceof ApiError && err.code === "rateLimited") {
         setError(t("web.login.rateLimited", "Too many attempts. Wait a minute and try again."));
       } else if (err instanceof ApiError && err.code === "forbiddenHost") {
@@ -46,9 +47,12 @@ export function Login(): React.JSX.Element {
   }
 
   return (
-    <div className="app-shell app-shell--login">
-      <form className="command-form command-form--login" onSubmit={onSubmit}>
-        <h1 className="view-title">ProcMix</h1>
+    <div className="web-login">
+      <form className="web-login__card" onSubmit={onSubmit}>
+        <div className="web-login__brand">
+          <img className="web-login__logo" src={logoUrl} alt="" aria-hidden="true" />
+          <h1 className="view-title web-login__title">ProcMix</h1>
+        </div>
         <p className="view-subtitle">
           {t("web.login.subtitle", "Enter your API token to continue")}
         </p>

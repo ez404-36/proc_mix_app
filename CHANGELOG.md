@@ -46,6 +46,54 @@ the language switcher.
   `ShortcutRow` components). The global toggle shortcut continues to work; only
   the in-Settings editor UI is gone.
 
+---
+
+**The HTTP API server can now serve a read-only web UI.** Beyond the REST API,
+the built-in server can optionally serve a browser-based, reduced ProcMix over
+the same port. LAN users open it, sign in with the access token, and get
+**Home** and **Library** (view + run) plus a view-only **History**, a manual
+console, and a theme switch — responsive down to phone screens. The desktop HTTP
+API panel is polished alongside it.
+
+### Added
+
+- **Web UI for the HTTP API server.** A separate Vite/React SPA (`app/web/`),
+  embedded into the binary via `rust-embed` and served by the same axum server
+  on routes outside the Bearer guard (but still behind the DNS-rebinding Host
+  check). Gated by a new **"Enable the web interface"** (`serveWebUi`) toggle —
+  on by default for fresh installs, off for upgrades. The UI is **view + run
+  only** (Home / Library) and **view only** (History); only `api_enabled`
+  entities are ever shown. The browser language mirrors the desktop app's
+  language at server-start time.
+- **New read endpoints** backing the web UI, all `api_enabled`-gated:
+  `GET /api/command|workflow/{ref}` (full detail), `GET /api/history`
+  (paginated, run-only, filtered to API-enabled entities),
+  `GET /api/run/{executionId}` (run status + captured output, re-checks
+  `api_enabled`), plus the unauthenticated `GET /api/bootstrap` (language
+  snapshot) and `GET /api/whoami` (lightweight login token check). The
+  command/workflow list summaries are enriched (kind, favorite, lastRunAt,
+  description) so Home/Library render without an N+1 fetch.
+- **Browsable address list + web-UI toggle in the desktop panel.** The HTTP API
+  panel shows the `http://…/` addresses to open in a browser — loopback always,
+  plus `procmix.local` and the LAN IP when detected (now shown even while the
+  server is stopped) — and the `serveWebUi` toggle with an inline help tooltip.
+
+### Changed
+
+- **HTTP API panel polish.** The Settings block is a bordered fieldset (matching
+  the schedule form), **locked while the server is running** (with a
+  "(stop the server to change)" note in the legend) so settings can't trigger
+  on-the-fly restarts; the port is a labelled read-only input with a pencil to
+  edit; the addresses share one "Access addresses" section with aligned Copy
+  buttons; and the close button is a red-filled ×.
+
+### Fixed
+
+- **HTTP API panel no longer closes unexpectedly.** It now closes only via the
+  explicit × button — previously a drag-select of text that ended on the
+  backdrop (e.g. selecting the port value) was mistaken for a backdrop click and
+  dismissed the modal.
+
 ## [0.10.5] - 2026-06-29
 
 **Three quality-of-life fixes around running things and seeing where they ran:**

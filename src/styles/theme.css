@@ -5655,6 +5655,13 @@ body.is-editor-fullscreen .output-panel {
   margin-top: 16px;
 }
 
+/* The ID badge sits directly inside the modal (a sibling of the fields), so it
+   needs the same horizontal edge padding to line up with the title and fields
+   above/below it instead of hugging the left edge. */
+.command-form--meta > .id-badge {
+  margin: 12px 20px 0;
+}
+
 /* The SSH host form (and any `--meta` modal that lays out plain `.form-field`
    rows directly inside `.command-form`) needs the same edge padding and
    inter-row spacing the `--meta` variant gives `.command-form__field`, since
@@ -8454,6 +8461,69 @@ body.is-editor-fullscreen .output-panel {
   gap: 10px;
 }
 
+/* A section set apart as its own visual block (e.g. Settings): a bordered
+   fieldset with a cut-out legend, mirroring the schedule form's section blocks.
+   The fieldset is TRANSPARENT — the grouping reads from the border + legend
+   alone, with the same background inside as outside (matching ScheduleForm). */
+.http-server-panel__fieldset {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.http-server-panel__legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+/* Close (×) button — red fill so it's clearly the way out of the modal; the
+   glyph stays white for contrast. Darkens slightly on hover. */
+.http-server-panel__close {
+  background: var(--color-danger);
+  color: #ffffff;
+  border-color: var(--color-danger);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.http-server-panel__close:hover {
+  background: var(--color-danger-strong, var(--color-danger));
+  color: #ffffff;
+  filter: brightness(0.92);
+}
+
+/* While the server runs the Settings block is locked (each control is
+   individually `disabled`, leaving the help tooltips usable). Dim the controls
+   to signal the locked state — the legend, locked hint, and the `?` tooltips
+   stay full-strength. */
+.http-server-panel__fieldset.is-locked .http-server-panel__field,
+.http-server-panel__fieldset.is-locked .http-server-panel__toggle,
+.http-server-panel__fieldset.is-locked .http-server-panel__warning {
+  opacity: 0.55;
+}
+
+/* Keep the help tooltip trigger fully legible/usable even inside a locked
+   (dimmed) toggle row. */
+.http-server-panel__fieldset.is-locked .http-server-panel__toggle .help-tooltip__trigger {
+  opacity: 1;
+}
+
+/* The "(stop the server to change)" note appended to the Settings legend while
+   running. The legend itself is uppercase/bold; the note reads as a normal-case,
+   lighter parenthetical so it's clearly secondary. */
+.http-server-panel__legend-note {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
 .http-server-panel__section-title {
   margin: 0;
   font-size: 12px;
@@ -8487,6 +8557,17 @@ body.is-editor-fullscreen .output-panel {
      `.number-stepper__input`); typing/validation still work. */
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+/* Read mode renders the port as a non-editable input so it reads as a field
+   (matching the edit state) — muted so it doesn't look interactive; the pencil
+   button is the edit affordance. */
+.http-server-panel__port-input[readonly] {
+  /* Muted, non-interactive read-mode field. The Settings block is a transparent
+     fieldset, so the subtle background reads fine against the panel surface. */
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
+  cursor: default;
 }
 
 .http-server-panel__port-input::-webkit-outer-spin-button,
@@ -8551,6 +8632,17 @@ body.is-editor-fullscreen .output-panel {
   font-size: 12px;
   color: var(--color-text);
   overflow-wrap: anywhere;
+}
+
+/* Fixed-width slot for the optional per-row help tooltip. Reserved on every row
+   (even empty) so all `__address-value` fields are the same width and the Copy
+   buttons align vertically regardless of which row has a tooltip. */
+.http-server-panel__address-hint {
+  flex: 0 0 auto;
+  width: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .http-server-panel__token-reveal {

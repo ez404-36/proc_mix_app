@@ -11,6 +11,7 @@ import { normalizeTags } from "../../utils/commandFilters";
 import { isValidApiSlug, sanitizeApiSlugInput } from "../../utils/apiSlug";
 import { CancelIcon, CheckIcon } from "../icons";
 import { IdBadge } from "../IdBadge";
+import { ToggleSwitch } from "../ToggleSwitch";
 
 /**
  * Editable workflow metadata, distinct from the persisted `Workflow` (no id,
@@ -321,14 +322,12 @@ export function WorkflowMetaModal({
         </div>
 
         <div className="command-form__field command-form__field--inline">
-          <label className="command-form__field--inline">
-            <input
-              type="checkbox"
-              checked={apiEnabled}
-              onChange={(e) => setApiEnabled(e.target.checked)}
-            />
-            <span>{t("editor.meta.httpApi.enabled")}</span>
-          </label>
+          <ToggleSwitch
+            checked={apiEnabled}
+            onChange={setApiEnabled}
+            ariaLabel={t("editor.meta.httpApi.enabled")}
+          />
+          <span>{t("editor.meta.httpApi.enabled")}</span>
         </div>
 
         {/* The slug only matters when API access is on, so hide it until the
