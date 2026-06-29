@@ -58,6 +58,16 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      # Build the browser web UI (app/web) BEFORE the Tauri build so its bundle
+      # exists in web/dist when rust-embed compiles it into the binary. Without
+      # this the embedded asset set is empty and the web UI 404s at runtime
+      # (the REST API is unaffected). See docs/http-server.md.
+      - name: Build web UI bundle
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
       # Authenticode signing is OPTIONAL. It activates only when the cert
       # secret is present AND the `sign` input is true. This step imports the
       # .pfx into the runner's CurrentUser cert store and patches
