@@ -189,6 +189,7 @@ function handleEvent(event: ExecutionEvent): void {
         undefined,
         undefined,
         info.target,
+        event.workingDir,
       );
       return;
     }

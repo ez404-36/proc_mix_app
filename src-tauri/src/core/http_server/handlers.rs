@@ -267,6 +267,8 @@ pub async fn run_workflow<R: Runtime>(
             wf,
             commands,
             node_variable_values,
+            // The HTTP API is headless — never stream to the live console.
+            true,
         )
         .await;
         finalize_workflow_run(pool, &execution_id, &run).await;
@@ -293,6 +295,8 @@ pub async fn run_workflow<R: Runtime>(
                 wf,
                 commands,
                 node_variable_values,
+                // The HTTP API is headless — never stream to the live console.
+                true,
             )
             .await;
             finalize_workflow_run(&pool_bg, &exec_id_bg, &run).await;

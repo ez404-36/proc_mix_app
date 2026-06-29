@@ -227,6 +227,13 @@ export interface ScheduledRunEvent extends HistoryEventBase {
   targetKind: ScheduleTargetKind;
   /** Logical id of the fired command / workflow. */
   targetId: string;
+  /**
+   * `true` when the fire was triggered manually via "Run now", `false` for an
+   * automatic cron / catch-up fire. Drives the History row label ("Manual
+   * run …" vs "Scheduled run …"). Always concrete — the repository collapses a
+   * missing wire value (legacy / automatic) to `false`.
+   */
+  manual: boolean;
   /** Final outcome of the fire. */
   status: ScheduledRunStatus;
   /**

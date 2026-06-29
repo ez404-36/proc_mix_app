@@ -5,6 +5,58 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.5] - 2026-06-29
+
+**Three quality-of-life fixes around running things and seeing where they ran:**
+the console now shows the **working directory** a command runs in, a manual
+"Run now" of a **workflow** schedule finally opens the console and saves its
+output to History (and is labelled "Manual run"), and the Environment **"By
+file"** view lists every variable a scanned file assigns — even ones the GUI
+process never inherited. All changes are backward-compatible and require no
+migration; legacy History rows and event payloads stay byte-identical.
+
+### Added
+
+- **Console shows the working directory.** The `Started` execution event now
+  carries the effective working directory the child was launched in — the
+  command's resolved `workingDir`, or the user's home directory when none is set
+  — and the OutputPanel renders it next to the shell in the script header
+  (`(bash) /path/to/dir`). Workflow step headers show the same per-node shell +
+  directory line. The field is `None` for a remote (SSH) run, where the local
+  cwd does not apply, and is omitted from the wire in that case so legacy
+  payloads stay byte-identical.
+- **"Manual run" label in History.** A schedule fired via "Run now" now records
+  as **"Manual run of …"** instead of **"Scheduled run of …"**, distinguishing it
+  from automatic cron / catch-up fires. Backed by a new `manual` flag on the
+  `scheduledRun` history payload (stored only in `payload_json`, no migration);
+  it is omitted from the wire when `false`, so automatic fires and pre-upgrade
+  rows decode identically.
+
+### Fixed
+
+- **Manual "Run now" of a workflow schedule produced no console and no saved
+  output.** Three related bugs in one path: the console panel never opened, no
+  pinnable run marker was created, and the History row had empty output
+  ("Вывод не сохранён"). The manual workflow path used the fire-and-return
+  streaming runner (which streams but never captures) while only the blocking
+  path captured; and the frontend workflow bridge assumed every run was
+  pre-registered by the UI before invoking, so a backend-initiated (scheduler)
+  run no-opped every event. The manual fire now drives the workflow to
+  completion via `execute_workflow_blocking` with `silent = false`, so it BOTH
+  streams to the live console AND captures the aggregate log for History; and the
+  bridge lazily bootstraps the in-memory run/execution for an unknown (backend)
+  run id, opening the panel and creating the marker without inserting a duplicate
+  history row (the Rust `scheduledRun` event remains the single source of truth).
+- **Environment "By file" view under-counted variables.** The per-file grouping
+  was driven by `live env × sources`, so a variable assigned in e.g. `~/.bashrc`
+  but absent from the GUI process's environment never appeared under its file,
+  and the per-file count disagreed with "Scanned source files". The view now
+  groups by each file's full assignment scan (`EnvFileStatus.keys`): every key a
+  readable file assigns is listed under it, with the runtime value shown when
+  present and a muted "not set in the current environment" placeholder otherwise.
+  A final "source unknown" bucket holds live env vars no scanned file mentions;
+  the filter applies within each file group.
+
 ## [0.10.4] - 2026-06-26
 
 **A new Plugins section with a full plugin delivery framework (manifest →

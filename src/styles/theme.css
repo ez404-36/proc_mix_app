@@ -1494,18 +1494,37 @@ body.is-editor-fullscreen .output-panel {
   flex-shrink: 0;
 }
 
-.output-panel__script-shell {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--console-text-muted);
+/* First line of the console script header: the shell in parens followed by
+ * the working directory, e.g. `(bash) /path/to/dir`. Italic + accent blue to
+ * set it apart from the script body below. A wrapping flex row so a long path
+ * drops to the next line instead of overflowing. */
+.output-panel__script-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-style: italic;
+  color: var(--color-accent);
 }
 
-/* Remote-target badge in the console script header: keep it inline-sized
- * (the script container is a column flex, so without this the pill would
- * stretch the full width). */
+.output-panel__script-shell {
+  flex-shrink: 0;
+}
+
+/* Remote-target badge in the console script header: keep it inline-sized so
+ * the pill does not stretch to fill the meta row. The badge has its own
+ * styling, so opt it out of the meta row's italic/accent treatment. */
 .output-panel__script-target {
-  align-self: flex-start;
+  flex-shrink: 0;
+  font-style: normal;
+}
+
+/* Working directory shown next to the shell. Inherits the meta row's accent
+ * colour + italics; allowed to wrap on a long path. */
+.output-panel__script-dir {
+  min-width: 0;
+  word-break: break-all;
 }
 
 .output-panel__script-body {
@@ -6966,6 +6985,13 @@ body.is-editor-fullscreen .output-panel {
 
 .env-snapshot-table__value {
   font-family: var(--font-mono);
+}
+
+.env-snapshot-table__value--absent {
+  color: var(--color-text-muted);
+  opacity: 0.55;
+  font-style: italic;
+  font-family: inherit;
 }
 
 .env-snapshot-table__reveal {

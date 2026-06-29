@@ -184,6 +184,10 @@ type WireScheduledRun = WireBase & {
   scheduleName: string;
   targetKind: string;
   targetId: string;
+  // `true` for a manual "Run now" fire, absent (Rust skips `false`) for an
+  // automatic cron / catch-up fire. Collapsed to a concrete boolean in
+  // wireToEvent.
+  manual?: boolean | null;
   // Free-form scheduler status string (success / error / missingVariable /
   // skipped / cancelled). Narrowed to `ScheduledRunStatus` in wireToEvent.
   status: string;
@@ -348,6 +352,9 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         scheduleName: w.scheduleName,
         targetKind: toScheduleTargetKind(w.targetKind),
         targetId: w.targetId,
+        // Rust omits `manual` when `false`; a missing/`null` value is an
+        // automatic fire.
+        manual: w.manual === true,
         status: toScheduledRunStatus(w.status),
         // Collapse `null` (defensive) / `undefined` (Rust skip) to `undefined`.
         exitCode: nullToUndef(w.exitCode),
@@ -504,6 +511,9 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         scheduleName: e.scheduleName,
         targetKind: e.targetKind,
         targetId: e.targetId,
+        // Mirror Rust's `skip_serializing_if = is_false`: omit `manual` from
+        // the wire when `false` so an automatic fire stays byte-identical.
+        ...(e.manual ? { manual: true } : {}),
         status: e.status,
         ...omitWhenUndefined("exitCode", e.exitCode),
         ...omitWhenUndefined("durationMs", e.durationMs),

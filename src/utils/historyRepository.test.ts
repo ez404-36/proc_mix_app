@@ -413,6 +413,58 @@ describe("eventToWire", () => {
     expect("exitCode" in wire).toBe(false);
     expect("durationMs" in wire).toBe(false);
   });
+
+  it("scheduledRun: manual=true round-trips and serialises `manual: true`", () => {
+    const e: HistoryEvent = {
+      id: "s-manual",
+      createdAt: "2026-06-29T00:00:00Z",
+      kind: "scheduledRun",
+      scheduleId: "sch-1",
+      scheduleName: "Disk cleanup",
+      targetKind: "workflow",
+      targetId: "wf-1",
+      manual: true,
+      status: "success",
+    };
+    const wire = eventToWire(e);
+    if (wire.kind !== "scheduledRun") throw new Error("kind narrowing");
+    expect(wire.manual).toBe(true);
+    expect(wireToEvent(wire)).toEqual(e);
+  });
+
+  it("scheduledRun: manual=false omits `manual` from the wire and decodes back to false", () => {
+    const e: HistoryEvent = {
+      id: "s-auto",
+      createdAt: "2026-06-29T00:00:00Z",
+      kind: "scheduledRun",
+      scheduleId: "sch-1",
+      scheduleName: "Disk cleanup",
+      targetKind: "command",
+      targetId: "cmd-1",
+      manual: false,
+      status: "success",
+    };
+    const wire = eventToWire(e);
+    if (wire.kind !== "scheduledRun") throw new Error("kind narrowing");
+    // Byte-compatible with a pre-`manual` row: key absent, not `false`.
+    expect("manual" in wire).toBe(false);
+    expect(wireToEvent(wire)).toEqual(e);
+  });
+
+  it("scheduledRun: a legacy wire row with no `manual` decodes as manual=false", () => {
+    const back = wireToEvent({
+      id: "s-legacy",
+      createdAt: "2026-06-29T00:00:00Z",
+      kind: "scheduledRun",
+      scheduleId: "sch-1",
+      scheduleName: "Disk cleanup",
+      targetKind: "command",
+      targetId: "cmd-1",
+      status: "success",
+    });
+    if (back.kind !== "scheduledRun") throw new Error("kind narrowing");
+    expect(back.manual).toBe(false);
+  });
 });
 
 describe("IPC wrappers", () => {

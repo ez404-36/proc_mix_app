@@ -172,6 +172,10 @@ function kindKey(event: HistoryEvent): string {
   if (isSshEvent(event) && sshEventIsPattern(event)) {
     return `history.kinds.${event.kind}_pattern`;
   }
+  // A manual "Run now" fire reads "Manual run …" rather than "Scheduled run …".
+  if (event.kind === "scheduledRun" && event.manual) {
+    return "history.kinds.scheduledRun_manual";
+  }
   return `history.kinds.${event.kind}`;
 }
 

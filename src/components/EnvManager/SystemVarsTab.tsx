@@ -148,6 +148,7 @@ function SnapshotView({
     <>
       <EnvSnapshotTable
         vars={snapshot.vars}
+        files={snapshot.files}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
       />

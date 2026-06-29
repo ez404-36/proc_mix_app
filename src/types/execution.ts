@@ -33,6 +33,13 @@ export interface StartedEvent extends ExecutionEventBase {
    * the wire for commands without variables.
    */
   variables?: ExecutionVariable[];
+  /**
+   * Effective working directory the child process was launched in — the
+   * command's resolved `workingDir`, or the user's home directory when none
+   * is set. Carried on the event so the console can show WHERE the command
+   * runs. Absent for a remote (SSH) run, where the local cwd does not apply.
+   */
+  workingDir?: string;
 }
 
 export interface StdoutEvent extends ExecutionEventBase {
@@ -171,6 +178,13 @@ export interface Execution {
    * starting the run.
    */
   target?: import("./command").ExecutionTarget;
+  /**
+   * Effective working directory the command ran in, captured from the
+   * `started` event so the OutputPanel can show WHERE the command executes.
+   * The command's resolved `workingDir`, or the user's home directory when
+   * none is set. Absent for a remote (SSH) run.
+   */
+  workingDir?: string;
   status: ExecutionStatus;
   startedAt: number;
   finishedAt?: number;

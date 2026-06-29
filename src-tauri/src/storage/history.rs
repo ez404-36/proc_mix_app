@@ -40,6 +40,13 @@ pub const HISTORY_LIMIT: u32 = 1000;
 /// here so the storage layer owns the cap alongside the variant it bounds.
 pub const MAX_HISTORY_OUTPUT_BYTES: usize = 64 * 1024;
 
+/// `skip_serializing_if` predicate for a `bool` field that should be OMITTED
+/// from the wire (and `payload_json`) when `false`, so adding the field leaves
+/// the default-`false` payload byte-identical to legacy rows.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// One captured log line for a persisted scheduled run. `stream` is one of
 /// `"stdout"`, `"stderr"`, or `"meta"` (an app-injected separator) — mirroring
 /// the TS `ExecutionLogStream` / `ExecutionLogLine` shapes in
@@ -274,6 +281,14 @@ pub enum HistoryEventPayload {
         target_kind: String,
         /// Logical id of the fired command / workflow.
         target_id: String,
+        /// `true` when the fire was triggered MANUALLY ("Run now"), `false`
+        /// for an automatic cron / catch-up fire. Lets the History row read
+        /// "Manual run …" vs "Scheduled run …". `#[serde(default)]` so legacy
+        /// rows (recorded before this field existed) decode as `false`
+        /// (automatic), keeping old `payload_json` byte-compatible. Omitted
+        /// from the wire when `false` so automatic fires stay byte-identical.
+        #[serde(default, skip_serializing_if = "is_false")]
+        manual: bool,
         status: String,
         /// Exit code of the fired target, when captured. Omitted from the wire
         /// (not `null`) — and `None` for fires whose schedule had output
@@ -1610,6 +1625,7 @@ mod wire_format_tests {
             schedule_name: "Nightly".into(),
             target_kind: "command".into(),
             target_id: "cmd-1".into(),
+            manual: false,
             status: "success".into(),
             exit_code: None,
             duration_ms: None,
@@ -1634,6 +1650,57 @@ mod wire_format_tests {
         assert!(json.get("durationMs").is_none());
         assert!(json.get("output").is_none());
         assert!(json.get("result").is_none());
+        // `manual: false` is OMITTED from the wire so an automatic fire's
+        // payload stays byte-identical to a pre-`manual` row.
+        assert!(json.get("manual").is_none());
+    }
+
+    /// A MANUAL fire (`manual: true`) emits `"manual": true` so the History
+    /// row can render "Manual run …" instead of "Scheduled run …".
+    #[test]
+    fn scheduled_run_manual_flag_wire_format() {
+        let e = evt(HistoryEventPayload::ScheduledRun {
+            schedule_id: "sch-1".into(),
+            schedule_name: "Nightly".into(),
+            target_kind: "workflow".into(),
+            target_id: "wf-1".into(),
+            manual: true,
+            status: "success".into(),
+            exit_code: None,
+            duration_ms: None,
+            output: None,
+            result: None,
+        });
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["manual"], true);
+        // round-trips back to the same payload
+        let back: HistoryEvent = serde_json::from_value(json).unwrap();
+        match back.payload {
+            HistoryEventPayload::ScheduledRun { manual, .. } => assert!(manual),
+            _ => panic!("expected ScheduledRun"),
+        }
+    }
+
+    /// A legacy `scheduledRun` payload WITHOUT a `manual` key must decode with
+    /// `manual = false` (the `#[serde(default)]`), so pre-upgrade rows read as
+    /// automatic fires.
+    #[test]
+    fn scheduled_run_missing_manual_defaults_false() {
+        let legacy = serde_json::json!({
+            "id": "e-1",
+            "createdAt": "2026-06-29T00:00:00Z",
+            "kind": "scheduledRun",
+            "scheduleId": "sch-1",
+            "scheduleName": "Nightly",
+            "targetKind": "command",
+            "targetId": "cmd-1",
+            "status": "success"
+        });
+        let back: HistoryEvent = serde_json::from_value(legacy).unwrap();
+        match back.payload {
+            HistoryEventPayload::ScheduledRun { manual, .. } => assert!(!manual),
+            _ => panic!("expected ScheduledRun"),
+        }
     }
 
     /// A scheduled run WITH captured output emits the camelCase keys
@@ -1648,6 +1715,7 @@ mod wire_format_tests {
             schedule_name: "Nightly".into(),
             target_kind: "command".into(),
             target_id: "cmd-1".into(),
+            manual: false,
             status: "success".into(),
             exit_code: Some(0),
             duration_ms: Some(1234),
@@ -1689,6 +1757,7 @@ mod wire_format_tests {
             schedule_name: "Nightly".into(),
             target_kind: "workflow".into(),
             target_id: "wf-1".into(),
+            manual: false,
             status: "error".into(),
             exit_code: None,
             duration_ms: None,
@@ -1719,6 +1788,7 @@ mod wire_format_tests {
             schedule_name: "Nightly".into(),
             target_kind: "command".into(),
             target_id: "cmd-1".into(),
+            manual: false,
             status: "success".into(),
             exit_code: Some(0),
             duration_ms: Some(42),
@@ -2349,6 +2419,7 @@ mod sqlite_integration_tests {
                 schedule_name: "Nightly".into(),
                 target_kind: "command".into(),
                 target_id: "cmd-1".into(),
+                manual: false,
                 status: "success".into(),
                 exit_code: None,
                 duration_ms: None,

@@ -501,6 +501,15 @@ pub enum ExecutionEvent {
         /// legacy payloads stay byte-identical.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         variables: Vec<ExecutionVariableDto>,
+        /// Effective working directory the child process was launched in, so
+        /// the console can show WHERE the command runs. Mirrors the cwd the
+        /// executor applies (`command_build`): the command's resolved
+        /// `working_dir`, or the user's home directory when none is set.
+        /// `None` for a remote (SSH) run — the local cwd does not apply there
+        /// — and omitted from the wire in that case so legacy payloads stay
+        /// byte-identical.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        working_dir: Option<String>,
         /// Set when this execution is a node within a workflow run; the
         /// frontend routes such events into the aggregated workflow
         /// process. Omitted from the wire (not sent as `null`) for direct
@@ -857,6 +866,7 @@ mod wire_format_tests {
             pid: Some(42),
             command_id: Some("cmd-1".into()),
             variables: Vec::new(),
+            working_dir: None,
             workflow_run_id: None,
         };
         let json = serde_json::to_value(&e).unwrap();
@@ -872,6 +882,24 @@ mod wire_format_tests {
         assert!(json.get("workflow_run_id").is_none());
         // Empty variables list is omitted entirely (legacy payloads unchanged).
         assert!(json.get("variables").is_none());
+        // Absent working_dir is omitted entirely (no `null` on the wire).
+        assert!(json.get("workingDir").is_none());
+        assert!(json.get("working_dir").is_none());
+    }
+
+    #[test]
+    fn wire_format_started_includes_working_dir() {
+        let e = ExecutionEvent::Started {
+            execution_id: "abc".into(),
+            pid: None,
+            command_id: None,
+            variables: Vec::new(),
+            working_dir: Some("/home/user/project".into()),
+            workflow_run_id: None,
+        };
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["workingDir"], "/home/user/project");
+        assert!(json.get("working_dir").is_none());
     }
 
     #[test]
@@ -892,6 +920,7 @@ mod wire_format_tests {
                     sensitive: true,
                 },
             ],
+            working_dir: None,
             workflow_run_id: None,
         };
         let json = serde_json::to_value(&e).unwrap();
@@ -1043,6 +1072,7 @@ mod wire_format_tests {
             pid: None,
             command_id: None,
             variables: Vec::new(),
+            working_dir: None,
             workflow_run_id: Some("run-1".into()),
         };
         let sj = serde_json::to_value(&started).unwrap();

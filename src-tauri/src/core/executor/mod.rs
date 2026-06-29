@@ -84,6 +84,26 @@ fn build_execution_variables(
     out
 }
 
+/// Compute the effective working directory shown in the `Started` event,
+/// mirroring the cwd the executor actually applies in
+/// [`command_build::build_command`]: the command's resolved `working_dir`,
+/// or the user's home directory when none is set. Returns `None` for a
+/// remote (SSH) target — the local cwd does not apply to a run on another
+/// host — and when neither a `working_dir` nor a home directory can be
+/// resolved (the rare case where the child inherits this process's cwd).
+fn effective_working_dir(
+    resolved: &ResolvedScript,
+    target: &ExecutionTarget,
+) -> Option<String> {
+    if matches!(target, ExecutionTarget::Remote { .. } | ExecutionTarget::RemotePrompt) {
+        return None;
+    }
+    match resolved.working_dir.as_ref() {
+        Some(dir) => Some(dir.clone()),
+        None => dirs::home_dir().map(|h| h.to_string_lossy().into_owned()),
+    }
+}
+
 /// Spawn a command execution, streaming output via `execution-event`.
 ///
 /// This is the historical public entry point. It delegates to
@@ -348,6 +368,11 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
     // the field is omitted from the wire (legacy payloads unchanged).
     let started_variables = build_execution_variables(&req.variables, &req.variable_values);
 
+    // Effective cwd the child was launched in, so the console can show WHERE
+    // the command runs. Mirrors the executor's own resolution in
+    // `command_build` (resolved dir → home fallback); `None` for remote runs.
+    let started_working_dir = effective_working_dir(&resolved, &req.target);
+
     // Suppress the live console emit for a silent (planned) fire; the run
     // still proceeds and is recorded in history.
     if !silent {
@@ -358,6 +383,7 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
                 pid,
                 command_id: command_id.clone(),
                 variables: started_variables,
+                working_dir: started_working_dir,
                 workflow_run_id: workflow_run_id.clone(),
             },
         );

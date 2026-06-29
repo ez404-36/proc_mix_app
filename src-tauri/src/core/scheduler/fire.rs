@@ -311,8 +311,8 @@ pub(super) async fn fire_workflow<R: Runtime>(
     let node_variable_values = workflow_variable_values(&rec.variable_values);
 
     // Drive the workflow to completion in-process so we can record its
-    // aggregate output. A scheduled fire is always headless (no live stream);
-    // `execute_workflow_blocking` runs silent and capturing.
+    // aggregate output. An AUTOMATIC fire is headless (no live stream), so it
+    // runs silent + capturing.
     let run = workflow::execute_workflow_blocking(
         app.clone(),
         executor_state.clone(),
@@ -320,6 +320,8 @@ pub(super) async fn fire_workflow<R: Runtime>(
         wf,
         commands,
         node_variable_values,
+        // Automatic cron / catch-up fire — never stream to the live console.
+        true,
     )
     .await;
 
@@ -350,18 +352,21 @@ fn map_workflow_capture(lines: &[CapturedLine]) -> Vec<HistoryLogLine> {
     storage_history::from_captured_lines(lines)
 }
 
-/// Launch a workflow target for a MANUAL "Run now": fire-and-return through
-/// the streaming `execute_workflow` so the live console shows progress. No
-/// output is captured for history (the manual path is interactive). Returns
-/// only the launch status — a spawn failure is an error, a successful launch
-/// is recorded as success (the streamed run reports its own per-node result).
+/// Run a workflow target for a MANUAL "Run now": drive it to completion via
+/// `execute_workflow_blocking` with `silent = false`, so it BOTH streams to the
+/// live console (panel opens, marker, scrolling output) AND captures the
+/// aggregate log. Returns the fire status plus the captured detail, so the
+/// manual `scheduledRun` history row gets the same viewable output an automatic
+/// fire records (subject to the schedule's `capture_output`). Awaiting the run
+/// keeps `run_now`'s history write after completion — mirroring the command
+/// path, which also awaits its terminal outcome.
 async fn fire_workflow_streaming<R: Runtime>(
     app: &AppHandle<R>,
     pool: &DbPool,
     executor_state: &Arc<ExecutorState>,
     workflow_state: &Arc<WorkflowExecutorState>,
     rec: &ScheduleRecord,
-) -> FireStatus {
+) -> CommandFire {
     let wf = match storage_workflows::list_all(pool).await {
         Ok(list) => match list.into_iter().find(|w| w.id == rec.target_id) {
             Some(wf) => wf,
@@ -371,7 +376,10 @@ async fn fire_workflow_streaming<R: Runtime>(
                     target_id = %rec.target_id,
                     "scheduler: schedule references missing workflow"
                 );
-                return FireStatus::Error;
+                return CommandFire {
+                    status: FireStatus::Error,
+                    capture: CommandFireResult::default(),
+                };
             }
         },
         Err(e) => {
@@ -379,7 +387,10 @@ async fn fire_workflow_streaming<R: Runtime>(
                 schedule_id = %rec.id,
                 "scheduler: failed to load workflows for schedule: {e}"
             );
-            return FireStatus::Error;
+            return CommandFire {
+                status: FireStatus::Error,
+                capture: CommandFireResult::default(),
+            };
         }
     };
 
@@ -390,7 +401,10 @@ async fn fire_workflow_streaming<R: Runtime>(
                 schedule_id = %rec.id,
                 "scheduler: failed to load commands for schedule: {e}"
             );
-            return FireStatus::Error;
+            return CommandFire {
+                status: FireStatus::Error,
+                capture: CommandFireResult::default(),
+            };
         }
     };
     let commands: HashMap<String, CommandRecord> = all_commands
@@ -400,27 +414,38 @@ async fn fire_workflow_streaming<R: Runtime>(
 
     let node_variable_values = workflow_variable_values(&rec.variable_values);
 
-    match workflow::execute_workflow(
+    // Stream live AND capture: `silent = false` opens the console; the returned
+    // capture feeds the history record.
+    let run = workflow::execute_workflow_blocking(
         app.clone(),
         executor_state.clone(),
         workflow_state.clone(),
         wf,
         commands,
         node_variable_values,
-        // Manual run streams live.
         false,
     )
-    .await
-    {
-        Ok(_run_id) => FireStatus::Success,
-        Err(e) => {
-            tracing::error!(
-                schedule_id = %rec.id,
-                "scheduler: workflow launch failed for schedule: {e}"
-            );
-            FireStatus::Error
+    .await;
+
+    let status = if run.succeeded {
+        FireStatus::Success
+    } else {
+        FireStatus::Error
+    };
+
+    // Persist the captured aggregate log only when the schedule enabled
+    // capture; otherwise the history row stays minimal (status only) — same
+    // rule the automatic `fire_workflow` path applies.
+    let capture = if rec.capture_output {
+        CommandFireResult {
+            output: run.output.as_deref().map(map_workflow_capture),
+            ..CommandFireResult::default()
         }
-    }
+    } else {
+        CommandFireResult::default()
+    };
+
+    CommandFire { status, capture }
 }
 
 /// Map a command's terminal outcome to a recorded fire status. A clean exit 0
@@ -510,6 +535,8 @@ pub(super) async fn record_outcome(
             schedule_name: rec.name.clone(),
             target_kind: rec.target_kind.clone(),
             target_id: rec.target_id.clone(),
+            // An automatic cron / catch-up fire — not a manual "Run now".
+            manual: false,
             status: status.as_str().to_string(),
             // Captured detail: `None` for fires whose schedule had capture
             // disabled (and always for workflow targets in v1).
@@ -554,6 +581,8 @@ async fn record_history_only(
             schedule_name: rec.name.clone(),
             target_kind: rec.target_kind.clone(),
             target_id: rec.target_id.clone(),
+            // A manual "Run now" fire — surfaces as "Manual run …" in History.
+            manual: true,
             status: status.as_str().to_string(),
             // Captured detail: `None` for fires whose schedule had capture
             // disabled (and always for workflow targets in v1).
@@ -596,13 +625,13 @@ pub async fn run_now<R: Runtime>(
             (fire.status, fire.capture)
         }
         "workflow" => {
-            // Manual "Run now" streams live to the console (it has a UI), so it
-            // uses the fire-and-return `execute_workflow` rather than the
-            // blocking+silent scheduled path — the live aggregate is built from
-            // events on the frontend. No history output is captured here.
-            let status =
+            // Manual "Run now" streams live to the console AND captures the
+            // aggregate output (via `execute_workflow_blocking` with
+            // `silent = false`), so the `scheduledRun` history row stores the
+            // same viewable output an automatic fire records.
+            let fire =
                 fire_workflow_streaming(app, pool, executor_state, workflow_state, &rec).await;
-            (status, CommandFireResult::default())
+            (fire.status, fire.capture)
         }
         other => {
             tracing::error!(

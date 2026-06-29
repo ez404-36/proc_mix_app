@@ -1024,11 +1024,23 @@ pub struct WorkflowRunCapture {
 /// Drive a workflow to completion IN-PROCESS (awaiting the traversal) and
 /// return its aggregate captured output. Unlike [`execute_workflow`] — which
 /// spawns the traversal and returns immediately for the live UI — this awaits
-/// the run so a headless caller (the scheduler) can record the output in
-/// history. Always silent (no live stream) and always capturing.
+/// the run so a caller can record the output in history. Always capturing.
+///
+/// `silent` controls whether the run ALSO streams to the live console:
+///   - `true` (automatic cron / catch-up fire, HTTP API): headless, no
+///     `workflow-event` / `execution-event` — the history record is the only
+///     observable result.
+///   - `false` (manual "Run now"): streams to the live console (the panel
+///     opens, the marker appears, output scrolls in) AND captures the same
+///     aggregate log for the `scheduledRun` history record. Streaming and
+///     capturing are orthogonal in `traverse`, so a manual fire gets both.
+///
+/// A terminal `workflow-event` (finished / cancelled / error) is emitted on the
+/// non-silent path so the frontend bridge finalises the run marker; the silent
+/// path emits nothing.
 ///
 /// Cancellation is registered exactly like the spawned path, so an in-flight
-/// scheduled workflow can still be cancelled via [`cancel_workflow`].
+/// fire can still be cancelled via [`cancel_workflow`].
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_workflow_blocking<R: Runtime>(
     app: AppHandle<R>,
@@ -1037,6 +1049,7 @@ pub async fn execute_workflow_blocking<R: Runtime>(
     workflow: WorkflowRecord,
     commands: HashMap<String, CommandRecord>,
     node_variable_values: HashMap<String, BTreeMap<String, String>>,
+    silent: bool,
 ) -> WorkflowRunCapture {
     let run_id = uuid::Uuid::new_v4().to_string();
     let cancel = CancellationToken::new();
@@ -1051,6 +1064,7 @@ pub async fn execute_workflow_blocking<R: Runtime>(
         );
     }
 
+    let started = Instant::now();
     // Capturing accumulator: its `Some`-ness turns on per-node buffering.
     let mut capture: Option<Vec<CapturedLine>> = Some(Vec::new());
     let result = traverse(
@@ -1060,8 +1074,7 @@ pub async fn execute_workflow_blocking<R: Runtime>(
         &commands,
         &node_variable_values,
         &run_id,
-        // Always silent: a scheduled fire never streams to the live console.
-        true,
+        silent,
         TraverseStart::Start,
         cancel,
         &mut capture,
@@ -1071,6 +1084,38 @@ pub async fn execute_workflow_blocking<R: Runtime>(
     {
         let mut map = state.running.lock().await;
         map.remove(&run_id);
+    }
+
+    // Emit the terminal event so the live console (non-silent path) finalises
+    // the run marker — mirroring `spawn_traversal`'s terminal emit. Silent
+    // fires emit nothing.
+    match &result {
+        Ok(()) => emit_unless_silent(
+            &app,
+            silent,
+            &WorkflowEvent::WorkflowFinished {
+                run_id: run_id.clone(),
+                workflow_id: workflow.id.clone(),
+                duration_ms: started.elapsed().as_millis() as u64,
+            },
+        ),
+        Err(WorkflowError::Cancelled) => emit_unless_silent(
+            &app,
+            silent,
+            &WorkflowEvent::WorkflowCancelled {
+                run_id: run_id.clone(),
+                workflow_id: workflow.id.clone(),
+            },
+        ),
+        Err(err) => emit_unless_silent(
+            &app,
+            silent,
+            &WorkflowEvent::WorkflowError {
+                run_id: run_id.clone(),
+                workflow_id: workflow.id.clone(),
+                message: err.to_string(),
+            },
+        ),
     }
 
     let output = capture.filter(|lines| !lines.is_empty());

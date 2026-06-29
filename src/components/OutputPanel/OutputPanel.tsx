@@ -712,14 +712,23 @@ export function OutputPanel(): ReactElement | null {
 
       {active && active.script ? (
         <div className="output-panel__script">
-          <span className="output-panel__script-shell">
-            {active.shell ?? t("outputPanel.defaultShell")}
-          </span>
-          {isRemoteTarget(active.target) ? (
-            <span className="target-badge output-panel__script-target">
-              {formatTargetBadge(active.target, t)}
+          <div className="output-panel__script-meta">
+            <span className="output-panel__script-shell">
+              {t("outputPanel.scriptShell", {
+                shell: active.shell ?? t("outputPanel.defaultShell"),
+              })}
             </span>
-          ) : null}
+            {active.workingDir ? (
+              <span className="output-panel__script-dir">
+                {active.workingDir}
+              </span>
+            ) : null}
+            {isRemoteTarget(active.target) ? (
+              <span className="target-badge output-panel__script-target">
+                {formatTargetBadge(active.target, t)}
+              </span>
+            ) : null}
+          </div>
           <pre className="output-panel__script-body">{active.script}</pre>
         </div>
       ) : null}

@@ -11,14 +11,18 @@ vi.mock("../utils/workflowRunner", () => ({
 
 // The bridge finalizes the history row on terminal events; capture the call.
 const updateRunMock = vi.fn();
+// A backend-initiated run (scheduler) inserts a `workflowRun(running)` row via
+// the bridge's lazy bootstrap; capture that too so the IPC isn't hit for real.
+const recordEventMock = vi.fn();
 vi.mock("../utils/historyRepository", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../utils/historyRepository")>();
   return {
     // Keep the real `executionLogToHistoryOutput` (a pure mapper) so the bridge
-    // can build the captured-output payload; only the IPC writer is stubbed.
+    // can build the captured-output payload; only the IPC writers are stubbed.
     executionLogToHistoryOutput: actual.executionLogToHistoryOutput,
     updateRunHistoryEventInDb: (...args: unknown[]) => updateRunMock(...args),
+    recordHistoryEventInDb: (...args: unknown[]) => recordEventMock(...args),
   };
 });
 
@@ -64,6 +68,8 @@ beforeEach(() => {
   subscribeMock.mockReset();
   updateRunMock.mockReset();
   updateRunMock.mockResolvedValue(undefined);
+  recordEventMock.mockReset();
+  recordEventMock.mockResolvedValue(undefined);
   resetRuns();
 });
 
@@ -403,5 +409,82 @@ describe("useWorkflowBridge - per-node grouped console output", () => {
       ["meta", "▸ quiet"],
       ["meta", "  exit 0"],
     ]);
+  });
+});
+
+describe("useWorkflowBridge - backend-initiated run (scheduler Run now)", () => {
+  it("bootstraps the aggregate execution, opens the panel, and streams output for a run that was never pre-registered", () => {
+    const { handler } = mountBridge();
+    // The saved workflow exists in the store (a schedule can only target a
+    // saved workflow), so the name + node→command map resolve.
+    const wf = {
+      id: "wf-9",
+      name: "Nightly job",
+      nodes: [],
+      edges: [],
+    } as unknown as Workflow;
+    useWorkflowStore.setState({ workflows: [wf] });
+
+    // NO startRun / startWorkflowExecution here — this mimics a run fired by the
+    // Rust scheduler, where the frontend never pre-registered anything.
+    handler({
+      kind: "nodeStarted",
+      runId: "run-sched",
+      workflowId: "wf-9",
+      nodeId: "n1",
+      executionId: "exec-1",
+    });
+
+    // The aggregate execution now exists, the panel is open, and it is the
+    // active marker carrying the workflow's name.
+    const exec = useExecutionStore.getState();
+    expect(exec.executions["run-sched"]).toBeDefined();
+    expect(exec.executions["run-sched"]?.commandName).toBe("Nightly job");
+    expect(exec.executions["run-sched"]?.isWorkflow).toBe(true);
+    expect(exec.panelOpen).toBe(true);
+    expect(exec.activeExecutionId).toBe("run-sched");
+    // The run-store entry was created so node progress is recorded.
+    expect(
+      useWorkflowRunStore.getState().runs["run-sched"]?.nodes["n1"]?.status,
+    ).toBe("running");
+    // NO `workflowRun` history row is inserted — the Rust `scheduledRun` event
+    // is the canonical record for a schedule fire; a frontend row here would
+    // duplicate it.
+    expect(recordEventMock).not.toHaveBeenCalled();
+
+    // Subsequent output now lands on the real aggregate execution.
+    handler({
+      kind: "nodeFinished",
+      runId: "run-sched",
+      workflowId: "wf-9",
+      nodeId: "n1",
+      exitCode: 0,
+    });
+    expect(aggregateLog("run-sched")).toEqual([
+      ["meta", "▸ n1"],
+      ["meta", "  exit 0"],
+    ]);
+  });
+
+  it("is idempotent: a pre-registered frontend run is not re-bootstrapped", () => {
+    const { handler } = mountBridge();
+    useExecutionStore
+      .getState()
+      .startWorkflowExecution("run-fe", "Original title", "wf-1");
+    useWorkflowRunStore.getState().startRun("run-fe", "wf-1");
+
+    handler({
+      kind: "nodeStarted",
+      runId: "run-fe",
+      workflowId: "wf-1",
+      nodeId: "n1",
+      executionId: "exec-1",
+    });
+
+    // The pre-registered title is kept; no extra history row is inserted.
+    expect(useExecutionStore.getState().executions["run-fe"]?.commandName).toBe(
+      "Original title",
+    );
+    expect(recordEventMock).not.toHaveBeenCalled();
   });
 });
