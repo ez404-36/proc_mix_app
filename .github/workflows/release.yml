@@ -43,6 +43,12 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+          # Cache both the root and the web UI (app/web) npm installs so the
+          # extra `npm ci` in web/ (for the embedded web bundle) is restored
+          # from cache rather than refetched each run.
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -196,6 +202,12 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+          # Cache both the root and the web UI (app/web) npm installs so the
+          # extra `npm ci` in web/ (for the embedded web bundle) is restored
+          # from cache rather than refetched each run.
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -292,6 +304,12 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+          # Cache both the root and the web UI (app/web) npm installs so the
+          # extra `npm ci` in web/ (for the embedded web bundle) is restored
+          # from cache rather than refetched each run.
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
