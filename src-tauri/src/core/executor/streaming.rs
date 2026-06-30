@@ -255,7 +255,10 @@ mod tests {
             line.contains('\u{fffd}'),
             "invalid byte should become the replacement char, got {line:?}"
         );
-        assert!(line.ends_with('i'), "trailing valid byte preserved: {line:?}");
+        assert!(
+            line.ends_with('i'),
+            "trailing valid byte preserved: {line:?}"
+        );
         assert_eq!(got[1], None);
     }
 
@@ -281,10 +284,7 @@ mod tests {
     #[tokio::test]
     async fn final_line_without_newline_is_returned() {
         let got = collect(b"last line, no newline").await;
-        assert_eq!(
-            got,
-            vec![Some("last line, no newline".to_string()), None]
-        );
+        assert_eq!(got, vec![Some("last line, no newline".to_string()), None]);
     }
 
     /// An empty stream yields exactly one `None` (clean EOF, no spurious line).

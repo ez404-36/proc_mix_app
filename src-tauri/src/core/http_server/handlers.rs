@@ -1137,12 +1137,18 @@ mod tests {
     #[test]
     fn api_enabled_filter_gates_run_events() {
         let ids = enabled_ids(&["c1"], &["w1"]);
-        assert!(ids.allows(&command_run_payload("c1")), "enabled command run");
+        assert!(
+            ids.allows(&command_run_payload("c1")),
+            "enabled command run"
+        );
         assert!(
             !ids.allows(&command_run_payload("c2")),
             "non-enabled command run is hidden"
         );
-        assert!(ids.allows(&workflow_run_payload("w1")), "enabled workflow run");
+        assert!(
+            ids.allows(&workflow_run_payload("w1")),
+            "enabled workflow run"
+        );
         assert!(
             !ids.allows(&workflow_run_payload("w2")),
             "non-enabled workflow run is hidden"

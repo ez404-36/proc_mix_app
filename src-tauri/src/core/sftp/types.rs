@@ -182,10 +182,32 @@ pub fn is_safe_local_path(path: &str) -> bool {
 /// trimmed path (Unix paths are case-sensitive; the Windows drive-root and
 /// `\Windows`/`\Users` cases are handled separately below).
 const PROTECTED_SYSTEM_DIRS: &[&str] = &[
-    "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib32", "/lib64",
-    "/libx32", "/media", "/mnt", "/opt", "/proc", "/root", "/run", "/sbin",
-    "/srv", "/sys", "/usr", "/var", "/Applications", "/Library", "/System",
-    "/Users", "/private", "/Volumes",
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/home",
+    "/lib",
+    "/lib32",
+    "/lib64",
+    "/libx32",
+    "/media",
+    "/mnt",
+    "/opt",
+    "/proc",
+    "/root",
+    "/run",
+    "/sbin",
+    "/srv",
+    "/sys",
+    "/usr",
+    "/var",
+    "/Applications",
+    "/Library",
+    "/System",
+    "/Users",
+    "/private",
+    "/Volumes",
 ];
 
 /// `true` when `path` points at a filesystem, user, or critical system root
@@ -424,9 +446,8 @@ mod tests {
     #[test]
     fn root_delete_target_flags_system_dirs() {
         for p in [
-            "/etc", "/usr", "/var", "/bin", "/boot", "/lib", "/lib64", "/opt",
-            "/sbin", "/sys", "/proc", "/dev", "/root", "/run", "/srv", "/mnt",
-            "/media", "/usr/", "//usr", "/var//",
+            "/etc", "/usr", "/var", "/bin", "/boot", "/lib", "/lib64", "/opt", "/sbin", "/sys",
+            "/proc", "/dev", "/root", "/run", "/srv", "/mnt", "/media", "/usr/", "//usr", "/var//",
         ] {
             assert!(is_root_delete_target(p), "should flag system dir {p:?}");
         }

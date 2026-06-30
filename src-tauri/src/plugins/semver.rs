@@ -83,11 +83,19 @@ mod tests {
     fn parses_bare_and_folder() {
         assert_eq!(
             Version::parse("1.2.0"),
-            Some(Version { major: 1, minor: 2, patch: 0 })
+            Some(Version {
+                major: 1,
+                minor: 2,
+                patch: 0
+            })
         );
         assert_eq!(
             Version::parse_folder("v0.10.3"),
-            Some(Version { major: 0, minor: 10, patch: 3 })
+            Some(Version {
+                major: 0,
+                minor: 10,
+                patch: 3
+            })
         );
     }
 
@@ -126,7 +134,14 @@ mod tests {
             Version::parse("1.2.0").unwrap(),
             Version::parse("1.1.0").unwrap(),
         ];
-        assert_eq!(latest(&vs), Some(Version { major: 1, minor: 2, patch: 0 }));
+        assert_eq!(
+            latest(&vs),
+            Some(Version {
+                major: 1,
+                minor: 2,
+                patch: 0
+            })
+        );
         assert_eq!(latest(&[]), None);
     }
 

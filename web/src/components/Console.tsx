@@ -23,6 +23,7 @@ import { useRunStore } from "../stores/runStore";
 import type { TrackedRun, TrackedStatus } from "../stores/runStore";
 import { useRunActions } from "../hooks/useRunActions";
 import { useEntitiesStore } from "../stores/entitiesStore";
+import { usePortraitPhone } from "../hooks/usePortraitPhone";
 
 /** Map our status to the desktop console's CSS dot/status modifier names. */
 function cssStatus(status: TrackedStatus): string {
@@ -92,6 +93,13 @@ export function Console(): React.JSX.Element | null {
     })),
   );
 
+  // In portrait the console docks to the TOP (not bottom): the resize handle is
+  // on the panel's bottom edge, so a downward drag must GROW the panel — the
+  // opposite of the desktop bottom dock. This flag flips the drag delta and
+  // tags the panel for the top-dock CSS override.
+  const isPortraitPhone = usePortraitPhone();
+  const topDocked = isPortraitPhone && position === "bottom";
+
   const { run } = useRunActions();
   const entities = useEntitiesStore((s) => s.entities);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -118,7 +126,10 @@ export function Console(): React.JSX.Element | null {
     const startSize = bottom ? panelHeight : panelWidth;
     const onMove = (e: PointerEvent): void => {
       if (bottom) {
-        setPanelHeight(startSize + (start - e.clientY));
+        // Bottom dock: handle on top edge, drag UP grows (start - y).
+        // Top dock (portrait): handle on bottom edge, drag DOWN grows (y - start).
+        const heightDelta = topDocked ? e.clientY - start : start - e.clientY;
+        setPanelHeight(startSize + heightDelta);
       } else {
         const delta = position === "right" ? start - e.clientX : e.clientX - start;
         setPanelWidth(startSize + delta);
@@ -158,7 +169,9 @@ export function Console(): React.JSX.Element | null {
 
   return (
     <div
-      className={`output-panel output-panel--${position}`}
+      className={`output-panel output-panel--${position}${
+        topDocked ? " output-panel--portrait-top" : ""
+      }`}
       role="region"
       aria-label={t("outputPanel.ariaLabel", "Console")}
       style={panelStyle}

@@ -57,14 +57,12 @@ pub async fn load(pool: &DbPool) -> Result<AutostartConfig, String> {
 /// exists (seeded by the migration), so this is a plain `UPDATE`.
 pub async fn save(pool: &DbPool, cfg: &AutostartConfig) -> Result<(), String> {
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
-        "UPDATE autostart_config SET start_minimized = ?, updated_at = ? WHERE id = 1",
-    )
-    .bind(if cfg.start_minimized { 1_i64 } else { 0_i64 })
-    .bind(&now)
-    .execute(pool.as_ref())
-    .await
-    .map_err(|e| format!("save autostart_config: {e}"))?;
+    sqlx::query("UPDATE autostart_config SET start_minimized = ?, updated_at = ? WHERE id = 1")
+        .bind(if cfg.start_minimized { 1_i64 } else { 0_i64 })
+        .bind(&now)
+        .execute(pool.as_ref())
+        .await
+        .map_err(|e| format!("save autostart_config: {e}"))?;
     Ok(())
 }
 

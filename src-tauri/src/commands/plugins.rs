@@ -13,10 +13,10 @@ use std::sync::Arc;
 
 use tauri::State;
 
+use crate::plugins::catalog::CatalogSource;
 use crate::plugins::{
     self, Contributes, PluginPermissions, PluginRoots, PluginSource, PluginView, Version,
 };
-use crate::plugins::catalog::CatalogSource;
 use crate::storage::{plugin_state, DbPool};
 
 /// Resolved plugin roots, managed in app state and shared by every plugin
@@ -191,8 +191,8 @@ pub async fn install_plugin_version(
     name: String,
     version: String,
 ) -> Result<PluginView, String> {
-    let parsed = Version::parse(&version)
-        .ok_or_else(|| format!("invalid version string: {version}"))?;
+    let parsed =
+        Version::parse(&version).ok_or_else(|| format!("invalid version string: {version}"))?;
 
     let source = state.roots.catalog_source()?;
     let files = source.fetch_version(&name, parsed)?;

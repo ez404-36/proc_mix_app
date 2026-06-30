@@ -153,6 +153,24 @@ impl HttpServerState {
         self.inner.lock().await.ui_language.clone()
     }
 
+    /// Update the UI-language snapshot of an ALREADY-RUNNING server, in place and
+    /// without a restart. Used to back-fill the language on the autostart path,
+    /// where the server starts during `setup` (before any window/frontend) with
+    /// no snapshot, and the frontend pushes the live language once it mounts.
+    ///
+    /// Returns `true` when the snapshot was applied (server running), `false`
+    /// when the server is stopped (nothing to update — a fresh start will carry
+    /// the language passed to it). Guarded on the running state so this never
+    /// resurrects a stale snapshot on a stopped server.
+    pub async fn set_running_language(&self, ui_language: Option<String>) -> bool {
+        let mut inner = self.inner.lock().await;
+        if inner.handle.is_none() {
+            return false;
+        }
+        inner.ui_language = ui_language;
+        true
+    }
+
     /// Install the running task's handle, shutdown signal, config, the
     /// (optional) live mDNS announcement + LAN IP, and the UI-language snapshot.
     /// Called by the lifecycle layer after a successful bind.
@@ -261,6 +279,40 @@ mod tests {
         assert!(state.running_config().await.is_none());
         // take_for_stop on a stopped server is a harmless no-op.
         assert!(state.take_for_stop().await.is_none());
+    }
+
+    /// `set_running_language` must only mutate a RUNNING server's snapshot.
+    /// On a stopped server it is a no-op returning `false`, leaving the snapshot
+    /// untouched (a fresh start carries the language passed to `set_running`).
+    #[tokio::test]
+    async fn set_running_language_only_applies_while_running() {
+        let state = HttpServerState::new();
+
+        // Stopped: no-op, returns false, snapshot stays absent.
+        assert!(!state.set_running_language(Some("ru".into())).await);
+        assert!(state.ui_language().await.is_none());
+
+        // Simulate a running server with NO language snapshot (the autostart
+        // case) by installing a dummy handle + the running state directly.
+        let shutdown = Arc::new(Notify::new());
+        let handle = tauri::async_runtime::spawn(async {});
+        let config = HttpServerConfig::default();
+        state
+            .set_running(handle, shutdown, config, None, None, None)
+            .await;
+        assert!(state.is_running().await);
+        assert!(
+            state.ui_language().await.is_none(),
+            "autostart: no snapshot"
+        );
+
+        // Running: the back-fill applies and is observable via `ui_language`.
+        assert!(state.set_running_language(Some("ru".into())).await);
+        assert_eq!(state.ui_language().await.as_deref(), Some("ru"));
+
+        // Stopping clears the snapshot again.
+        let _ = state.take_for_stop().await;
+        assert!(state.ui_language().await.is_none());
     }
 
     /// The config-operation lock must be mutually exclusive: while one holder

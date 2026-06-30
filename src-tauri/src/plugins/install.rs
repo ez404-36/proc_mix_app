@@ -18,11 +18,7 @@ use super::semver::Version;
 
 /// Reject a plugin name that could escape the install root (path traversal).
 fn is_safe_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains('/')
-        && !name.contains('\\')
-        && name != "."
-        && name != ".."
+    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
 }
 
 /// Reject a fetched file's relative path that could escape the plugin directory
@@ -201,13 +197,23 @@ mod tests {
     fn install_replaces_existing_version() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        install_version(root, "docker", v("1.0.0"), &[manifest_json("docker", "1.0.0", "1.0")])
-            .unwrap();
+        install_version(
+            root,
+            "docker",
+            v("1.0.0"),
+            &[manifest_json("docker", "1.0.0", "1.0")],
+        )
+        .unwrap();
         // Old version had an extra file that must be gone after replacement.
         std::fs::write(root.join("docker").join("old.txt"), "x").unwrap();
 
-        install_version(root, "docker", v("1.2.0"), &[manifest_json("docker", "1.2.0", "1.0")])
-            .unwrap();
+        install_version(
+            root,
+            "docker",
+            v("1.2.0"),
+            &[manifest_json("docker", "1.2.0", "1.0")],
+        )
+        .unwrap();
 
         let raw = std::fs::read_to_string(root.join("docker").join("plugin.json")).unwrap();
         assert!(raw.contains("1.2.0"));

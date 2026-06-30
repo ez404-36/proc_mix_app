@@ -171,10 +171,12 @@ pub async fn autostart_if_enabled<R: Runtime>(app: &AppHandle<R>, state: &Arc<Ht
         return;
     }
     // Autostart happens during `setup`, before any window/frontend can report
-    // its language, so the snapshot is `None` here; the web UI uses its built-in
-    // default until the server is restarted from the running app (which passes
-    // the live language). Restarting on an app language change is the documented
-    // way to update the served locale.
+    // its language, so the snapshot is `None` here. Rather than wait for a manual
+    // restart, the frontend back-fills it once it mounts: `http_server_status`
+    // reports `language_snapshot_missing` while running without a snapshot, and
+    // `useHttpServerBridge` then pushes the live language via
+    // `set_http_server_language` (→ `HttpServerState::set_running_language`),
+    // updating the snapshot in place with no restart.
     if let Err(e) = start(app, state, config, None).await {
         tracing::error!("http_server: autostart failed: {e}");
     }

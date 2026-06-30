@@ -71,11 +71,7 @@ pub trait CatalogSource {
 /// Reject catalog identifiers that could escape the catalog root. A plugin
 /// `name` is a single path segment: no separators, no `..`, non-empty.
 fn is_safe_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains('/')
-        && !name.contains('\\')
-        && name != "."
-        && name != ".."
+    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
 }
 
 /// A catalog backed by a local directory (the bundled mock catalog in dev, or
@@ -181,8 +177,7 @@ impl CatalogSource for LocalCatalogSource {
 /// relative to `base`. Used to fetch all assets of a version, not just the
 /// manifest.
 fn collect_files(base: &Path, dir: &Path, out: &mut Vec<CatalogFile>) -> Result<(), String> {
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| format!("read {}: {e}", dir.display()))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("read {}: {e}", dir.display()))?;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -209,7 +204,13 @@ fn collect_files(base: &Path, dir: &Path, out: &mut Vec<CatalogFile>) -> Result<
 /// default install action.
 pub fn latest_version(plugins: &[CatalogPlugin], name: &str) -> Option<Version> {
     let plugin = plugins.iter().find(|p| p.name == name)?;
-    semver::latest(&plugin.versions.iter().map(|v| v.version).collect::<Vec<_>>())
+    semver::latest(
+        &plugin
+            .versions
+            .iter()
+            .map(|v| v.version)
+            .collect::<Vec<_>>(),
+    )
 }
 
 #[cfg(test)]
@@ -240,7 +241,11 @@ mod tests {
         assert_eq!(plugins.len(), 1);
         let docker = &plugins[0];
         // Ascending by semver: 1.0.0, 1.2.0, 1.10.0.
-        let order: Vec<String> = docker.versions.iter().map(|v| v.version.to_bare()).collect();
+        let order: Vec<String> = docker
+            .versions
+            .iter()
+            .map(|v| v.version.to_bare())
+            .collect();
         assert_eq!(order, vec!["1.0.0", "1.2.0", "1.10.0"]);
         assert_eq!(docker.latest().unwrap().version.to_bare(), "1.10.0");
     }
@@ -311,7 +316,10 @@ mod tests {
         write_version(tmp.path(), "docker", "2.0.0", None);
         let src = LocalCatalogSource::new(tmp.path());
         let plugins = src.list().unwrap();
-        assert_eq!(latest_version(&plugins, "docker").unwrap().to_bare(), "2.0.0");
+        assert_eq!(
+            latest_version(&plugins, "docker").unwrap().to_bare(),
+            "2.0.0"
+        );
         assert!(latest_version(&plugins, "nonexistent").is_none());
     }
 }

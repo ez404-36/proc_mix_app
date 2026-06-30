@@ -19,12 +19,12 @@ use crate::core::parser::ResolvedScript;
 use crate::core::proc_ext::NoConsoleWindow;
 use crate::core::ssh::is_safe_alias;
 
+#[cfg(unix)]
+use super::types::ERR_SSH_PASSWORD_BACKEND_PREFIX;
 use super::types::{
     ExecuteRequest, ExecutionTarget, ERR_INVALID_REMOTE_TARGET, ERR_INVALID_WORKING_DIR,
     ERR_REMOTE_ELEVATION_UNSUPPORTED, ERR_REMOTE_TARGET_UNRESOLVED,
 };
-#[cfg(unix)]
-use super::types::ERR_SSH_PASSWORD_BACKEND_PREFIX;
 
 /// How a remote run authenticates, which changes the `ssh` argv + environment.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -120,9 +120,7 @@ pub(super) fn default_shell() -> &'static str {
 /// (and the remote SSH path) is returned `""` and is byte-for-byte unchanged.
 fn shell_output_encoding_prologue(shell: &str) -> &'static str {
     match shell {
-        "pwsh" | "powershell" => {
-            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8 2>$null;"
-        }
+        "pwsh" | "powershell" => "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8 2>$null;",
         _ => "",
     }
 }
@@ -725,7 +723,13 @@ pub(super) fn build_command(
         {
             // No supported elevation path on this target — reject
             // explicitly rather than silently downgrading.
-            let _ = (program, prefix_args, &extra_args, preserve_env, &local_script);
+            let _ = (
+                program,
+                prefix_args,
+                &extra_args,
+                preserve_env,
+                &local_script,
+            );
             return Err("elevated execution is not supported on this platform".to_string());
         }
     } else {

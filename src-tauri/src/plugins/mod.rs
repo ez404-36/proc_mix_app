@@ -127,9 +127,9 @@ impl PluginRoots {
     pub fn catalog_source(&self) -> Result<LocalCatalogSource, String> {
         match &self.catalog {
             CatalogLocation::Local(dir) => Ok(LocalCatalogSource::new(dir.clone())),
-            CatalogLocation::Remote(url) => Err(format!(
-                "remote plugin catalog is not supported yet: {url}"
-            )),
+            CatalogLocation::Remote(url) => {
+                Err(format!("remote plugin catalog is not supported yet: {url}"))
+            }
         }
     }
 }
@@ -162,7 +162,10 @@ mod tests {
     }
 
     fn roots_with_installed(installed: PathBuf) -> PluginRoots {
-        PluginRoots::from_parts(CatalogLocation::Local(PathBuf::from("/nonexistent")), installed)
+        PluginRoots::from_parts(
+            CatalogLocation::Local(PathBuf::from("/nonexistent")),
+            installed,
+        )
     }
 
     #[test]
@@ -292,11 +295,14 @@ mod bundled_catalog {
         let latest = catalog::latest_version(&plugins, "docker-toolkit").unwrap();
         let files = src.fetch_version("docker-toolkit", latest).unwrap();
 
-        let manifest = install::install_version(&installed_root, "docker-toolkit", latest, &files)
-            .unwrap();
+        let manifest =
+            install::install_version(&installed_root, "docker-toolkit", latest, &files).unwrap();
         assert_eq!(manifest.version, "1.2.0");
         // The extra asset of v1.2.0 was installed alongside the manifest.
-        assert!(installed_root.join("docker-toolkit").join("parse.js").is_file());
+        assert!(installed_root
+            .join("docker-toolkit")
+            .join("parse.js")
+            .is_file());
 
         // Now discovery sees it as an installed, enabled plugin.
         let roots = PluginRoots::from_parts(CatalogLocation::Local(root), installed_root);
@@ -327,6 +333,9 @@ mod bundled_catalog {
 
         assert_eq!(m.version, "1.0.0");
         // v1.0.0 has no parse.js, so the replacement is clean (no stale asset).
-        assert!(!installed_root.join("docker-toolkit").join("parse.js").exists());
+        assert!(!installed_root
+            .join("docker-toolkit")
+            .join("parse.js")
+            .exists());
     }
 }

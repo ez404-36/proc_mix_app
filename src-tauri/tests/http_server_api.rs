@@ -944,10 +944,16 @@ async fn get_run_status_reports_terminal_run() {
     let router = router_with_token(pool, Some(TEST_TOKEN));
 
     // Run to completion so the history row is finalised.
-    let (run_status, run_body) =
-        send(router.clone(), post_command_run("ok", Some(TEST_TOKEN), true)).await;
+    let (run_status, run_body) = send(
+        router.clone(),
+        post_command_run("ok", Some(TEST_TOKEN), true),
+    )
+    .await;
     assert_eq!(run_status, StatusCode::OK);
-    let exec_id = run_body["executionId"].as_str().expect("exec id").to_string();
+    let exec_id = run_body["executionId"]
+        .as_str()
+        .expect("exec id")
+        .to_string();
 
     let (status, body) = send(router.clone(), get_auth(&format!("/api/run/{exec_id}"))).await;
     assert_eq!(status, StatusCode::OK);
@@ -971,9 +977,15 @@ async fn history_lists_only_api_enabled_runs() {
     let router = router_with_token(pool, Some(TEST_TOKEN));
 
     // Produce one finalised run.
-    let (_, run_body) =
-        send(router.clone(), post_command_run("ok", Some(TEST_TOKEN), true)).await;
-    let exec_id = run_body["executionId"].as_str().expect("exec id").to_string();
+    let (_, run_body) = send(
+        router.clone(),
+        post_command_run("ok", Some(TEST_TOKEN), true),
+    )
+    .await;
+    let exec_id = run_body["executionId"]
+        .as_str()
+        .expect("exec id")
+        .to_string();
 
     let (status, body) = send(router.clone(), get_auth("/api/history")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1007,7 +1019,10 @@ async fn bootstrap_is_unauthenticated_and_returns_language() {
     let (status, body) = send(router, req).await;
     assert_eq!(status, StatusCode::OK);
     // No language snapshot was installed by the test harness.
-    assert!(body["language"].is_null(), "language null when unset: {body}");
+    assert!(
+        body["language"].is_null(),
+        "language null when unset: {body}"
+    );
 }
 
 /// `GET /api/whoami` validates the token without any entity data: 200 `{ok:true}`

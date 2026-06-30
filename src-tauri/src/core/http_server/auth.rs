@@ -32,6 +32,12 @@ use subtle::ConstantTimeEq;
 /// (fail closed) — every well-behaved HTTP/1.1 client sends `Host`.
 ///
 /// Returns `true` when the request may proceed, `false` when it must be refused.
+///
+/// When the server is exposed on the LAN (`bind_lan`), the mDNS-advertised
+/// single-label hostname `procmix.local` is also accepted — otherwise the name
+/// the server announces over mDNS would be unreachable (the request would resolve
+/// and connect, then be refused here as a foreign `Host`). It is gated by
+/// `bind_lan` so a localhost-only server never answers to the external name.
 pub fn is_host_allowed(
     host_header: Option<&str>,
     port: u16,
@@ -68,12 +74,19 @@ pub fn is_host_allowed(
         return true;
     }
 
-    // When exposed on the LAN, the detected LAN IPv4 is also a valid Host.
+    // When exposed on the LAN, the detected LAN IPv4 and the mDNS-advertised
+    // `procmix.local` hostname are also valid Hosts.
     if bind_lan {
         if let Some(ip) = lan_ip {
             if host == ip.to_string() {
                 return true;
             }
+        }
+        // The advertised name is the single-label `.local` form, compared
+        // against the mDNS constant (sans its trailing root `.`) so the two
+        // never drift apart.
+        if host_lc == super::mdns::MDNS_HOSTNAME.trim_end_matches('.') {
+            return true;
         }
     }
 
@@ -285,5 +298,51 @@ mod tests {
         assert!(!is_host_allowed(Some("10.0.0.1"), 8765, true, Some(lan)));
         // Loopback still works under LAN bind.
         assert!(is_host_allowed(Some("localhost"), 8765, true, Some(lan)));
+    }
+
+    /// The mDNS-advertised `procmix.local` name must be a valid `Host` when —
+    /// and only when — the server is exposed on the LAN. Otherwise the name the
+    /// server announces over mDNS would be unreachable (resolve + connect, then
+    /// refused here). The port suffix, if present, must still match.
+    #[test]
+    fn host_allows_mdns_name_only_when_bound_lan() {
+        let lan: Ipv4Addr = "192.168.1.50".parse().unwrap();
+        // Bound to LAN → the advertised name is accepted, with or without port.
+        assert!(is_host_allowed(
+            Some("procmix.local"),
+            8765,
+            true,
+            Some(lan)
+        ));
+        assert!(is_host_allowed(
+            Some("procmix.local:8765"),
+            8765,
+            true,
+            Some(lan)
+        ));
+        // Case-insensitive on the host portion.
+        assert!(is_host_allowed(
+            Some("PROCMIX.LOCAL"),
+            8765,
+            true,
+            Some(lan)
+        ));
+        // Even with no LAN IP detected, the name still resolves the bind intent.
+        assert!(is_host_allowed(Some("procmix.local"), 8765, true, None));
+        // Wrong port is still rejected.
+        assert!(!is_host_allowed(
+            Some("procmix.local:9999"),
+            8765,
+            true,
+            Some(lan)
+        ));
+        // localhost-only server must NOT answer to the external name.
+        assert!(!is_host_allowed(Some("procmix.local"), 8765, false, None));
+        assert!(!is_host_allowed(
+            Some("procmix.local"),
+            8765,
+            false,
+            Some(lan)
+        ));
     }
 }

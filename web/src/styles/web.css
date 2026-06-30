@@ -8,6 +8,102 @@
  * those, using theme.css tokens so light/dark and the shared look still apply.
  */
 
+/* --- Touch tap artifacts --------------------------------------------------
+ * On mobile WebKit/Blink, tapping any clickable element paints a translucent
+ * grey/blue box over it (`-webkit-tap-highlight-color`) and shows the OS
+ * long-press callout menu. The web UI already gives proper press feedback via
+ * `:active` / `.is-active` / `:focus-visible`, so the default highlight is just
+ * a flashing artifact. Suppress it globally (web layer only — the desktop
+ * webview never shows it). `:focus-visible` outlines are untouched, so keyboard
+ * focus stays visible. */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+.app-tabbar__btn,
+.app-sidebar__btn,
+.list-tile,
+.history-row {
+  -webkit-touch-callout: none;
+}
+
+/* --- Sticky hover on touch ------------------------------------------------
+ * The shared theme.css gives buttons a `:hover` background (a `color-mix`
+ * wash) with a `transition: background 0.15s`. On a touch device there is no
+ * real pointer, so a tap fires a SYNTHETIC hover that STAYS applied until the
+ * next interaction — leaving a dark patch behind the element that fades out
+ * slowly (the transition). This is the artifact seen behind a card's "View"
+ * button after it opens a modal.
+ *
+ * On devices that cannot hover, neutralise the hover background/border so it
+ * matches the resting state. Press feedback still comes from `:active`, which
+ * is momentary and clears on release. Scoped to the web layer (the desktop
+ * webview always has a real pointer). */
+@media (hover: none) {
+  /* Outlined `.btn` family: resting background is `--color-bg`, text is
+   * `--color-text`, border is `--color-border`. Reset all three so the synthetic
+   * touch-hover leaves no residue. */
+  .btn:hover:not(:disabled),
+  .btn--view:hover:not(:disabled),
+  .command-form__action--run:hover:not(:disabled),
+  .command-form__action--cancel:hover:not(:disabled),
+  .command-form__action--delete:hover:not(:disabled) {
+    background: var(--color-bg);
+    border-color: var(--color-border);
+    color: var(--color-text);
+  }
+
+  /* The outlined modal actions keep their colored border at rest; restore it
+   * after the generic reset above. */
+  .command-form__action--run:hover:not(:disabled) {
+    border-color: var(--color-success);
+  }
+
+  .command-form__action--cancel:hover:not(:disabled),
+  .command-form__action--delete:hover:not(:disabled) {
+    border-color: var(--color-danger, #dc2626);
+  }
+
+  /* `.btn--run` is a FILLED green button (not outlined): keep its resting green
+   * fill/border/white text instead of the outlined reset above. */
+  .btn--run:hover:not(:disabled) {
+    background: var(--app-color-run);
+    border-color: var(--app-color-run);
+    color: #ffffff;
+  }
+
+  /* `.btn--primary` is FILLED blue (modal Save, login Sign-in): the generic
+   * `.btn:hover` reset above (same specificity, loaded later) would otherwise
+   * win and blank it. Keep its resting blue fill. */
+  .btn--primary:hover:not(:disabled) {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #ffffff;
+  }
+
+  /* `.btn--danger` is FILLED red (logout): its own `:hover` is a lower-specificity
+   * `filter`, so the generic `.btn:hover` reset would blank it. Keep the red fill. */
+  .btn--danger:hover:not(:disabled) {
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+    color: #ffffff;
+  }
+
+  /* Transparent-background ghost controls: their resting background is
+   * transparent, so just drop the hover wash. */
+  .app-sidebar__btn:hover,
+  .web-login__reveal:hover {
+    background: transparent;
+  }
+
+  /* The landscape burger rests on the surface color. */
+  .app-shell__burger:hover {
+    background: var(--color-surface);
+  }
+}
+
 /* --- Login screen ---------------------------------------------------------
  * The login screen is NOT inside the app shell. Center a single card. */
 .web-login {
@@ -64,6 +160,59 @@
 .web-login__card .btn {
   margin-top: 4px;
   justify-content: center;
+}
+
+/* Token field: input + reveal (eye) toggle in a positioned wrapper, mirroring
+ * the desktop `admin-password-prompt` pattern. The button overlays the input's
+ * right edge so it doesn't shrink the input. */
+.web-login__input-wrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+/* `.input` already supplies background + `color: var(--color-text)`, but mobile
+ * WebKit paints input glyphs (especially `type=password` bullets) with
+ * `-webkit-text-fill-color`, which is NOT set by `color` — leaving the dots the
+ * UA default (white) on the white field. Pin the fill colour to the text token
+ * so the bullets are dark on light (and light on dark). `width: 100%` keeps the
+ * input filling the wrapper; `padding-right` leaves room for the eye button. */
+.web-login__input {
+  width: 100%;
+  padding-right: 40px;
+  -webkit-text-fill-color: var(--color-text);
+}
+
+/* Reveal toggle: ghost icon button overlaid on the input's right side. */
+.web-login__reveal {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.web-login__reveal:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+.web-login__reveal:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 
 /* Error hint under a field (e.g. "Invalid token"). theme.css styles `.form-hint`
@@ -144,6 +293,37 @@
   justify-content: flex-start;
 }
 
+/* --- Viewport height: track the DYNAMIC viewport on mobile ----------------
+ * theme.css sizes the height chain `html, body → #root → .app-shell` at
+ * `height: 100%`, which resolves to the LAYOUT viewport (`100vh`). On a phone
+ * (especially in landscape, where the chrome is proportionally taller) the
+ * browser's dynamic toolbar shrinks the VISUAL viewport below `100vh`, so the
+ * shell overflows and the bottom of the sidebar and `.app-main` get clipped.
+ * Re-anchor the chain to the dynamic viewport (`100dvh`) so the shell always
+ * fits the currently-visible area; the inner `overflow: auto` then scrolls
+ * instead of the page clipping. `100vh` stays as a fallback for browsers
+ * without `dvh` support. This is a browser-only concern — the desktop Tauri
+ * webview has no dynamic chrome — so it lives in the web layer, not theme.css.
+ *
+ * `--app-vh` (set by Shell from `window.visualViewport.height`) takes priority
+ * when present: it tracks the ACTUAL visible height, so an iOS keyboard /
+ * password-save accessory bar that shrinks the visual viewport doesn't leave
+ * the shell extending past the visible area as a blank strip. It falls back to
+ * `100dvh` / `100vh` before Shell mounts or where `visualViewport` is absent. */
+html,
+body,
+#root {
+  height: 100vh;
+  height: 100dvh;
+  height: var(--app-vh, 100dvh);
+}
+
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+  height: var(--app-vh, 100dvh);
+}
+
 /* --- Page width: keep the views readable inside the wide content area ------ */
 .app-main {
   overflow-y: auto;
@@ -166,6 +346,13 @@
  * source of truth for which navigation is visible. */
 .app-topbar,
 .app-tabbar {
+  display: none;
+}
+
+/* The burger only has a role in the landscape-phone breakpoint (it toggles the
+ * sidebar). Hidden everywhere else — including portrait, where the sidebar is
+ * gone and the tab-bar is the navigation. */
+.app-shell__burger {
   display: none;
 }
 
@@ -222,6 +409,19 @@
     flex: 0 0 auto;
   }
 
+  /* Vertical divider between the console/theme toggles and the destructive
+   * logout, with extra horizontal margin around it so a fat-finger tap can't
+   * hit logout by accident. Shown only on mobile (the element is hidden by
+   * default outside this breakpoint). */
+  .app-topbar__divider {
+    display: block;
+    align-self: stretch;
+    width: 0;
+    margin: 4px 4px;
+    border: none;
+    border-left: 1px solid var(--color-border);
+  }
+
   /* Icon-square buttons in the top bar (console toggle, theme, logout). */
   .app-topbar__btn,
   .app-topbar__logout {
@@ -255,9 +455,13 @@
     right: -4px;
   }
 
-  /* Content takes the full width; leave room for the fixed-height tab-bar. */
+  /* Content takes the full width; leave room for the fixed-height tab-bar.
+   * `min-height: 0` lets this flex child shrink below its content size so its
+   * own `overflow-y: auto` scrolls instead of stretching the column past the
+   * dynamic-viewport-sized shell (which would clip the bottom). */
   .app-main {
     flex: 1 1 auto;
+    min-height: 0;
     padding: 16px 14px calc(16px + env(safe-area-inset-bottom));
   }
 
@@ -318,15 +522,39 @@
     line-height: 1;
   }
 
-  /* When docked at the bottom on a phone the console sits above the tab-bar and
-   * spans the full width; the position selector is irrelevant (only bottom
-   * makes sense on a narrow screen) so hide it. */
+  /* On a phone the console spans the full width regardless of the stored dock
+   * position; the position selector is irrelevant on a narrow screen so it is
+   * hidden. */
   .output-panel--bottom,
   .output-panel--left,
   .output-panel--right {
     left: 0;
     right: 0;
     width: auto;
+  }
+
+  /* Portrait: dock the console to the TOP — it opens from the top edge, below
+   * the status bar, sliding DOWN over the content (rather than up from the
+   * bottom). `top: 0; bottom: auto` flips the fixed anchor; the inline
+   * `height` still controls how far it extends. A max-height keeps part of the
+   * page visible underneath. */
+  .output-panel--portrait-top {
+    top: 0;
+    bottom: auto;
+    border-top: none;
+    border-bottom: 1px solid var(--console-border);
+    max-height: 85dvh;
+  }
+
+  /* Move the drag handle to the panel's BOTTOM edge (the panel grows downward
+   * from the top). The resize logic inverts the drag delta to match. */
+  .output-panel--portrait-top .output-panel__resize {
+    top: auto;
+    bottom: -3px;
+    left: 0;
+    right: 0;
+    height: 7px;
+    cursor: ns-resize;
   }
 
   .output-panel__position-select {
@@ -401,5 +629,67 @@
     align-items: center;
     column-gap: 10px;
     row-gap: 4px;
+  }
+}
+
+/* ======================================================================== *
+ * Landscape-phone layout: a short, wide viewport (a phone held sideways).   *
+ * The screen is wider than the portrait breakpoint, so the desktop sidebar  *
+ * fits and stays the primary navigation — but we make it COLLAPSIBLE via a  *
+ * floating burger so the user can reclaim width for content. The shell      *
+ * keeps its default [sidebar | content] ROW layout (no top bar / tab-bar    *
+ * here). `max-height` targets the short landscape viewport; `min-width:     *
+ * 641px` keeps this disjoint from the portrait block.                       *
+ * ======================================================================== */
+@media (orientation: landscape) and (max-height: 600px) and (min-width: 641px) {
+  /* The sidebar is shown by default; collapsing animates it to zero width so
+   * the content goes full-width. */
+  .app-sidebar {
+    overflow: hidden;
+    transition:
+      width 0.2s ease,
+      padding 0.2s ease;
+  }
+
+  .app-sidebar.is-collapsed {
+    width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-right: none;
+  }
+
+  /* Floating burger that toggles the sidebar. It sits just to the RIGHT of the
+   * sidebar (over the content), not inside it — `left` equals the sidebar width
+   * (220px, from theme.css) plus an 8px gap. A `left` transition keeps it glued
+   * to the sidebar edge as the sidebar animates. */
+  .app-shell__burger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    left: calc(220px + 8px + env(safe-area-inset-left));
+    z-index: 30;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 12%));
+    transition: left 0.2s ease;
+  }
+
+  /* When the sidebar is collapsed (width 0) the burger moves to the left edge
+   * so it stays reachable and is the only way back to the nav. */
+  .app-shell.is-sidebar-collapsed .app-shell__burger {
+    left: calc(8px + env(safe-area-inset-left));
+  }
+
+  .app-shell__burger:hover {
+    background: var(--color-surface-hover);
   }
 }

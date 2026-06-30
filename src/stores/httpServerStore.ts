@@ -16,6 +16,7 @@ import {
   listRequestLog,
   regenerateApiToken,
   setHttpServerConfig,
+  setHttpServerLanguage,
   startHttpServer,
   stopHttpServer,
 } from "../services/httpServerService";
@@ -77,14 +78,27 @@ export interface HttpServerStoreState {
   regenerateToken: () => Promise<string>;
   /** Clear the stored token; refreshes the presence flag. */
   clearToken: () => Promise<void>;
+  /**
+   * Back-fill the running server's UI-language snapshot from the current app
+   * language when the status reports it missing (the autostart path captured
+   * none). A no-op when the server is stopped or the snapshot is already
+   * present, so it is safe to call unconditionally after a `load()`. Refreshes
+   * the status afterward so `languageSnapshotMissing` clears.
+   */
+  syncLanguage: () => Promise<void>;
   /** Append one live log entry (from the bridge), capped to the limit. */
   appendLog: (entry: RequestLogEntry) => void;
   /** Clear the request log (backend ring + the in-store tail). */
   clearLog: () => Promise<void>;
 }
 
-export const useHttpServerStore = create<HttpServerStoreState>((set) => ({
-  status: { running: false, port: DEFAULT_CONFIG.port, bindLan: false },
+export const useHttpServerStore = create<HttpServerStoreState>((set, get) => ({
+  status: {
+    running: false,
+    port: DEFAULT_CONFIG.port,
+    bindLan: false,
+    languageSnapshotMissing: false,
+  },
   config: DEFAULT_CONFIG,
   hasToken: false,
   log: [],
@@ -154,6 +168,23 @@ export const useHttpServerStore = create<HttpServerStoreState>((set) => ({
   clearToken: async () => {
     await clearApiToken();
     set({ hasToken: false });
+  },
+
+  syncLanguage: async () => {
+    // Only act when the running server lacks a language snapshot; otherwise the
+    // backend no-ops anyway, but skipping the round-trip keeps this cheap to
+    // call on every load.
+    if (!get().status.languageSnapshotMissing) {
+      return;
+    }
+    try {
+      await setHttpServerLanguage(currentUiLanguage());
+      // Re-read so `languageSnapshotMissing` clears in the panel.
+      const status = await getHttpServerStatus();
+      set({ status });
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+    }
   },
 
   appendLog: (entry) => {

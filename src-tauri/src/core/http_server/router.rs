@@ -363,9 +363,15 @@ async fn get_command<R: Runtime>(
         return resp;
     }
     let result = handlers::get_api_command(&state.pool, &reference).await;
-    let (resp, _) =
-        finish(result.map(|rec| (StatusCode::OK, Json(json!(rec)).into_response())));
-    log_request(&state, addr, "GET", &path, resp.status(), LogDetail::default());
+    let (resp, _) = finish(result.map(|rec| (StatusCode::OK, Json(json!(rec)).into_response())));
+    log_request(
+        &state,
+        addr,
+        "GET",
+        &path,
+        resp.status(),
+        LogDetail::default(),
+    );
     resp
 }
 
@@ -380,9 +386,15 @@ async fn get_workflow<R: Runtime>(
         return resp;
     }
     let result = handlers::get_api_workflow(&state.pool, &reference).await;
-    let (resp, _) =
-        finish(result.map(|rec| (StatusCode::OK, Json(json!(rec)).into_response())));
-    log_request(&state, addr, "GET", &path, resp.status(), LogDetail::default());
+    let (resp, _) = finish(result.map(|rec| (StatusCode::OK, Json(json!(rec)).into_response())));
+    log_request(
+        &state,
+        addr,
+        "GET",
+        &path,
+        resp.status(),
+        LogDetail::default(),
+    );
     resp
 }
 
@@ -396,8 +408,7 @@ async fn get_history<R: Runtime>(
         return resp;
     }
     let result = handlers::list_api_history(&state.pool, q.page, q.page_size).await;
-    let (resp, _) =
-        finish(result.map(|page| (StatusCode::OK, Json(json!(page)).into_response())));
+    let (resp, _) = finish(result.map(|page| (StatusCode::OK, Json(json!(page)).into_response())));
     log_request(
         &state,
         addr,
@@ -420,9 +431,15 @@ async fn get_run<R: Runtime>(
         return resp;
     }
     let result = handlers::get_run_status(&state.pool, &execution_id).await;
-    let (resp, _) =
-        finish(result.map(|run| (StatusCode::OK, Json(json!(run)).into_response())));
-    log_request(&state, addr, "GET", &path, resp.status(), LogDetail::default());
+    let (resp, _) = finish(result.map(|run| (StatusCode::OK, Json(json!(run)).into_response())));
+    log_request(
+        &state,
+        addr,
+        "GET",
+        &path,
+        resp.status(),
+        LogDetail::default(),
+    );
     resp
 }
 

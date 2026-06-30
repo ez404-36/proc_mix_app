@@ -17,6 +17,7 @@ import {
   listRequestLog,
   regenerateApiToken,
   setHttpServerConfig,
+  setHttpServerLanguage,
   startHttpServer,
   stopHttpServer,
   subscribeRequestLog,
@@ -72,6 +73,14 @@ describe("httpServerService command wrappers", () => {
     expect(invokeMock).toHaveBeenCalledWith("set_http_server_config", {
       config: cfg,
       uiLanguage: "en",
+    });
+  });
+
+  it("setHttpServerLanguage passes the language to its command", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await setHttpServerLanguage("ru");
+    expect(invokeMock).toHaveBeenCalledWith("set_http_server_language", {
+      uiLanguage: "ru",
     });
   });
 

@@ -4,7 +4,7 @@
 // mobile chrome are both rendered; CSS (web.css) shows the right one per
 // breakpoint, so there is a single source of truth for state/handlers.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import logoUrl from "@app/assets/logo.svg";
@@ -24,6 +24,11 @@ export function Shell(): React.JSX.Element {
   const { t } = useTranslation();
   const clearAuth = useAuthStore((s) => s.clear);
   const [section, setSection] = useState<Section>("home");
+  // Landscape-phone only: collapse/expand the left sidebar via the top-bar
+  // burger. Has no effect in portrait (the sidebar is hidden there) or on
+  // desktop (the burger is hidden); it just toggles a class the CSS reacts to
+  // inside the landscape breakpoint.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const { panelOpen, runCount, activeRunCount, togglePanel } = useRunStore(
     useShallow((s) => ({
@@ -35,6 +40,38 @@ export function Shell(): React.JSX.Element {
       togglePanel: s.setPanelOpen,
     })),
   );
+
+  // iOS Safari leaves a blank strip after login when "Save password" + Face ID
+  // is used: the password-save accessory bar shrinks the VISUAL viewport, but
+  // the shell is sized to the LAYOUT viewport (`100dvh`), so it extends past the
+  // visible area and the bottom shows as empty space.
+  //
+  // Bind the shell height to the actual visual-viewport height via a CSS var
+  // (`--app-vh`, consumed in web.css) and keep it in sync with the
+  // `visualViewport` `resize`/`scroll` events. The shell then never extends past
+  // what is visible, so there is no leftover strip — whether the chrome is the
+  // keyboard, its accessory bar, or none. Also blur any element still focused
+  // after the auth flip so iOS has no reason to keep the bar up.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const sync = (): void => {
+      document.documentElement.style.setProperty("--app-vh", `${vv.height}px`);
+    };
+    sync();
+
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    return () => {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+      document.documentElement.style.removeProperty("--app-vh");
+    };
+  }, []);
 
   // Logout: stop every active run poll first so no orphaned timer keeps hitting
   // the API after the token is gone, then clear the session.
@@ -59,7 +96,32 @@ export function Shell(): React.JSX.Element {
   ];
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell${sidebarCollapsed ? " is-sidebar-collapsed" : ""}`}
+    >
+      {/* Floating burger that collapses/expands the sidebar. A direct child of
+          the shell (not the top bar) so its own `display` fully controls its
+          visibility — it is shown only in the landscape-phone breakpoint, where
+          the sidebar is the primary navigation. */}
+      <button
+        type="button"
+        className="app-shell__burger"
+        onClick={() => setSidebarCollapsed((v) => !v)}
+        aria-pressed={!sidebarCollapsed}
+        aria-label={
+          sidebarCollapsed
+            ? t("web.nav.expandSidebar", "Expand menu")
+            : t("web.nav.collapseSidebar", "Collapse menu")
+        }
+        title={
+          sidebarCollapsed
+            ? t("web.nav.expandSidebar", "Expand menu")
+            : t("web.nav.collapseSidebar", "Collapse menu")
+        }
+      >
+        <span aria-hidden="true">☰</span>
+      </button>
+
       {/* Mobile top bar — brand + console / theme / logout. Hidden on desktop. */}
       <header className="app-topbar">
         <div className="app-topbar__brand">
@@ -67,6 +129,8 @@ export function Shell(): React.JSX.Element {
           <span className="app-topbar__title">ProcMix</span>
         </div>
         <div className="app-topbar__actions">
+          {/* Top-bar console toggle — the Console lives in the header in both
+              portrait and landscape. */}
           <button
             type="button"
             className={`app-topbar__btn${panelOpen ? " is-active" : ""}`}
@@ -75,7 +139,7 @@ export function Shell(): React.JSX.Element {
             aria-label={t("web.console.title", "Console")}
             title={t("web.console.title", "Console")}
           >
-            <span aria-hidden="true">▤</span>
+            <span aria-hidden="true">▣</span>
             {indicator !== null ? (
               <span className="list-group__count" aria-hidden="true">
                 {indicator}
@@ -83,6 +147,7 @@ export function Shell(): React.JSX.Element {
             ) : null}
           </button>
           <ThemeToggle compact />
+          <span className="app-topbar__divider" aria-hidden="true" />
           <button
             type="button"
             className="btn btn--danger app-topbar__logout"
@@ -95,7 +160,9 @@ export function Shell(): React.JSX.Element {
         </div>
       </header>
 
-      <aside className="app-sidebar">
+      <aside
+        className={`app-sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}
+      >
         <nav className="app-sidebar__nav" aria-label={t("web.nav.label", "Sections")}>
           {sections.map((s) => (
             <button
@@ -116,7 +183,7 @@ export function Shell(): React.JSX.Element {
             aria-pressed={panelOpen}
             title={t("web.console.toggle", "Console")}
           >
-            <span aria-hidden="true">▤ </span>
+            <span aria-hidden="true">▣ </span>
             {t("web.console.title", "Console")}
             {indicator !== null ? (
               <span className="list-group__count" aria-hidden="true">
@@ -147,7 +214,8 @@ export function Shell(): React.JSX.Element {
         )}
       </main>
 
-      {/* Mobile bottom tab-bar — the three sections. Hidden on desktop. */}
+      {/* Mobile bottom tab-bar — the three sections. Hidden on desktop. The
+          Console toggle lives in the top bar (header), not here. */}
       <nav className="app-tabbar" aria-label={t("web.nav.label", "Sections")}>
         {sections.map((s) => (
           <button

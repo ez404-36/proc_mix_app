@@ -56,6 +56,14 @@ export interface HttpServerStatus {
    * on the network. Absent when stopped or the machine has no LAN address.
    */
   lanAddress?: string;
+  /**
+   * `true` when the server is running but its UI-language snapshot (served to
+   * the browser web UI via `/api/bootstrap`) is absent — the autostart path
+   * starts the server before any window exists, so no language is captured. The
+   * bridge back-fills the live language once via `setHttpServerLanguage` when
+   * this is set. Always `false` when the server is stopped.
+   */
+  languageSnapshotMissing: boolean;
 }
 
 /**

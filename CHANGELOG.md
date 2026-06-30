@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.11.0] - 2026-06-29
 
+**The web UI gets a proper phone treatment.** The browser web interface is
+polished for mobile: the login token field gets a show/hide eye and renders
+correctly on iOS, the layout no longer clips in landscape, a burger collapses
+the sidebar when the phone is sideways, the console opens from the top in
+portrait, tap artifacts are gone, and the soft keyboard no longer leaves a blank
+strip after login.
+
+### Added
+
+- **Show/hide toggle on the login token field.** An eye button reveals or masks
+  the API token while typing (reusing the desktop `EyeIcon` / `EyeOffIcon`),
+  mirroring the desktop password-prompt pattern.
+- **Collapsible sidebar in landscape (burger).** On a phone held sideways the
+  left sidebar can be collapsed/expanded via a floating burger that sits just to
+  the right of the sidebar when open and slides to the screen edge when
+  collapsed, freeing width for content.
+
+### Changed
+
+- **Console opens from the top in portrait.** On phones the console now docks to
+  the top of the screen and grows downward (resize handle on its bottom edge),
+  instead of sliding up from the bottom. Its toggle stays in the top bar.
+- **Pinch / double-tap zoom disabled on phones** via the viewport meta, so the
+  web UI behaves like a native app (no accidental zoom on inputs or gestures).
+
+### Fixed
+
+- **Login token dots were white-on-white on mobile.** The field now pins
+  `-webkit-text-fill-color` to the theme text colour so the masked bullets are
+  visible (and the base `.input` chrome is applied).
+- **Content clipped in landscape.** The shell height now tracks the dynamic /
+  visual viewport (`100dvh` → `--app-vh`) instead of the layout viewport, so the
+  sidebar and main content no longer get cut off at the bottom.
+- **Dark patch lingering after a tap.** On touch devices the synthetic `:hover`
+  background no longer sticks behind buttons (gated behind `@media (hover: none)`,
+  with the browser tap-highlight made transparent).
+- **Blank strip left by the keyboard after login.** On iOS Safari (notably with
+  "Save password" + Face ID) the leftover keyboard/accessory strip is reclaimed
+  by binding the shell height to `window.visualViewport.height`.
+- **Touch separation for the logout button** in the mobile top bar — a vertical
+  divider and spacing keep a fat-finger tap from hitting logout by accident.
+
+---
+
 **Settings get a home and ProcMix learns to start with your computer.** The
 Settings view is now split into four tabs (Appearance / System / Security &
 data / About) instead of one long scroll, and gains an **Autostart** option to

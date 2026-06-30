@@ -2,7 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Lock the viewport to 1:1 and disable pinch / double-tap zoom so the
+         phone web UI behaves like a native app (no accidental zoom on inputs
+         or gestures). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>ProcMix</title>
     <!--
       No-FOUC theme bootstrap (F10). Apply the persisted/resolved theme to

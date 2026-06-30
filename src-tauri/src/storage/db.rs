@@ -1093,12 +1093,10 @@ mod tests {
         // Idempotent: a second pass must not error.
         ensure_http_server_config_columns(&pool).await.unwrap();
 
-        let row = sqlx::query(
-            "SELECT enabled, serve_web_ui FROM http_server_config WHERE id = 1",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row = sqlx::query("SELECT enabled, serve_web_ui FROM http_server_config WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         // The pre-existing row is untouched (enabled stays 1) and the new column
         // defaults to 0 (web UI off) on the back-filled row.
         assert_eq!(row.try_get::<i64, _>("enabled").unwrap(), 1);

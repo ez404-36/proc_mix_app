@@ -259,7 +259,12 @@ mod tests {
         assert!(!m.permissions.fs);
         assert_eq!(
             m.changelog.as_deref(),
-            Some(&["Added prune preset".to_string(), "Fixed ps parsing".to_string()][..])
+            Some(
+                &[
+                    "Added prune preset".to_string(),
+                    "Fixed ps parsing".to_string()
+                ][..]
+            )
         );
         assert_eq!(m.os, vec!["linux".to_string(), "macos".to_string()]);
         assert!(!m.is_universal_os());

@@ -37,6 +37,18 @@ export async function startHttpServer(uiLanguage?: string): Promise<void> {
   await invoke("start_http_server", { uiLanguage });
 }
 
+/**
+ * Back-fill the UI-language snapshot of an already-running server WITHOUT a
+ * restart. The autostart path starts the server before any window exists, so it
+ * captures no language and `GET /api/bootstrap` returns `language: null`. The
+ * frontend calls this once it mounts (when the status reports the snapshot is
+ * missing) so the browser web UI mirrors the desktop locale. A no-op when the
+ * server is stopped.
+ */
+export async function setHttpServerLanguage(uiLanguage?: string): Promise<void> {
+  await invoke("set_http_server_language", { uiLanguage });
+}
+
 /** Stop the server. Idempotent — stopping when not running succeeds. */
 export async function stopHttpServer(): Promise<void> {
   await invoke("stop_http_server");

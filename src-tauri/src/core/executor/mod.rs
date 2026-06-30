@@ -91,11 +91,11 @@ fn build_execution_variables(
 /// remote (SSH) target — the local cwd does not apply to a run on another
 /// host — and when neither a `working_dir` nor a home directory can be
 /// resolved (the rare case where the child inherits this process's cwd).
-fn effective_working_dir(
-    resolved: &ResolvedScript,
-    target: &ExecutionTarget,
-) -> Option<String> {
-    if matches!(target, ExecutionTarget::Remote { .. } | ExecutionTarget::RemotePrompt) {
+fn effective_working_dir(resolved: &ResolvedScript, target: &ExecutionTarget) -> Option<String> {
+    if matches!(
+        target,
+        ExecutionTarget::Remote { .. } | ExecutionTarget::RemotePrompt
+    ) {
         return None;
     }
     match resolved.working_dir.as_ref() {

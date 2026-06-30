@@ -8,6 +8,7 @@ const listLogMock = vi.fn();
 const startMock = vi.fn();
 const stopMock = vi.fn();
 const setConfigMock = vi.fn();
+const setLanguageMock = vi.fn();
 const regenMock = vi.fn();
 const clearMock = vi.fn();
 const clearLogMock = vi.fn();
@@ -20,9 +21,16 @@ vi.mock("../services/httpServerService", () => ({
   startHttpServer: () => startMock(),
   stopHttpServer: () => stopMock(),
   setHttpServerConfig: (cfg: unknown) => setConfigMock(cfg),
+  setHttpServerLanguage: (lang: unknown) => setLanguageMock(lang),
   regenerateApiToken: () => regenMock(),
   clearApiToken: () => clearMock(),
   clearRequestLog: () => clearLogMock(),
+}));
+
+// The store reads the current app language from the UI store; force a stable
+// value so `syncLanguage` pushes a known language.
+vi.mock("./uiStore", () => ({
+  useUIStore: { getState: () => ({ language: "ru" }) },
 }));
 
 import {
@@ -43,7 +51,12 @@ function entry(n: number): RequestLogEntry {
 
 function resetStore() {
   useHttpServerStore.setState({
-    status: { running: false, port: 48610, bindLan: false },
+    status: {
+      running: false,
+      port: 48610,
+      bindLan: false,
+      languageSnapshotMissing: false,
+    },
     config: {
       enabled: false,
       port: 48610,
@@ -195,6 +208,66 @@ describe("saveConfig", () => {
         serveWebUi: false,
       }),
     ).rejects.toThrow("INVALID_PORT");
+  });
+});
+
+describe("syncLanguage", () => {
+  it("pushes the current language and refreshes when the snapshot is missing", async () => {
+    useHttpServerStore.setState({
+      status: {
+        running: true,
+        port: 48610,
+        bindLan: false,
+        languageSnapshotMissing: true,
+      },
+    });
+    setLanguageMock.mockResolvedValue(undefined);
+    getStatusMock.mockResolvedValue({
+      running: true,
+      port: 48610,
+      bindLan: false,
+      languageSnapshotMissing: false,
+    });
+
+    await useHttpServerStore.getState().syncLanguage();
+
+    expect(setLanguageMock).toHaveBeenCalledWith("ru");
+    expect(getStatusMock).toHaveBeenCalledTimes(1);
+    expect(useHttpServerStore.getState().status.languageSnapshotMissing).toBe(
+      false,
+    );
+  });
+
+  it("is a no-op when the snapshot is already present", async () => {
+    useHttpServerStore.setState({
+      status: {
+        running: true,
+        port: 48610,
+        bindLan: false,
+        languageSnapshotMissing: false,
+      },
+    });
+
+    await useHttpServerStore.getState().syncLanguage();
+
+    expect(setLanguageMock).not.toHaveBeenCalled();
+    expect(getStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("records an error when the backfill rejects", async () => {
+    useHttpServerStore.setState({
+      status: {
+        running: true,
+        port: 48610,
+        bindLan: false,
+        languageSnapshotMissing: true,
+      },
+    });
+    setLanguageMock.mockRejectedValue(new Error("ipc down"));
+
+    await useHttpServerStore.getState().syncLanguage();
+
+    expect(useHttpServerStore.getState().error).toBe("ipc down");
   });
 });
 

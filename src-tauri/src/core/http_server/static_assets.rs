@@ -100,10 +100,7 @@ fn serve_embedded(key: &str) -> Option<Response> {
     let cache = cache_control_for(key);
     Some(
         (
-            [
-                (header::CONTENT_TYPE, mime),
-                (header::CACHE_CONTROL, cache),
-            ],
+            [(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, cache)],
             asset.data.into_owned(),
         )
             .into_response(),

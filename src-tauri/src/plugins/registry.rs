@@ -288,8 +288,20 @@ mod tests {
         ];
         let views = aggregate(&d, |_| true);
         assert_eq!(views.len(), 2);
-        assert_eq!(views.iter().filter(|v| v.status == PluginStatus::Enabled).count(), 1);
-        assert_eq!(views.iter().filter(|v| v.status == PluginStatus::Error).count(), 1);
+        assert_eq!(
+            views
+                .iter()
+                .filter(|v| v.status == PluginStatus::Enabled)
+                .count(),
+            1
+        );
+        assert_eq!(
+            views
+                .iter()
+                .filter(|v| v.status == PluginStatus::Error)
+                .count(),
+            1
+        );
     }
 
     #[test]

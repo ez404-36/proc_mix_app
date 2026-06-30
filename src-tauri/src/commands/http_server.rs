@@ -40,6 +40,13 @@ pub struct HttpServerStatus {
     /// fallback for networks where mDNS is filtered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lan_address: Option<String>,
+    /// `true` when the server is running but its UI-language snapshot (served to
+    /// the browser web UI via `GET /api/bootstrap`) is absent — the autostart
+    /// path starts the server before any window/frontend exists, so no language
+    /// is captured. The frontend uses this to back-fill the live language once,
+    /// via `set_http_server_language`, without restarting the server. Always
+    /// `false` when the server is stopped (a start carries the language).
+    pub language_snapshot_missing: bool,
 }
 
 #[tauri::command]
@@ -71,12 +78,17 @@ pub async fn http_server_status(
             .trim_end_matches('.')
             .to_string()
     });
+    // The language snapshot is only meaningful while running, and only "missing"
+    // when running with no captured language (the autostart path). A stopped
+    // server is never "missing" — a fresh start carries the language.
+    let language_snapshot_missing = running && state.ui_language().await.is_none();
     Ok(HttpServerStatus {
         running,
         port: cfg.port,
         bind_lan: cfg.bind_lan,
         mdns_host,
         lan_address,
+        language_snapshot_missing,
     })
 }
 
@@ -93,6 +105,25 @@ pub async fn start_http_server(
 ) -> Result<(), String> {
     let cfg = storage_http_server::load(pool.inner()).await?;
     http_server::start(&app, state.inner(), cfg, ui_language).await
+}
+
+/// Back-fill the UI-language snapshot of an already-running server, in place and
+/// WITHOUT a restart. The autostart path starts the server during `setup` before
+/// any window exists, so it captures no language and `GET /api/bootstrap` returns
+/// `language: null`. Once the frontend mounts it pushes the live language here so
+/// the browser web UI mirrors the desktop locale without a manual restart.
+///
+/// A no-op when the server is stopped (a later start carries the language passed
+/// to it). Returns `Ok(())` either way.
+#[tauri::command]
+pub async fn set_http_server_language(
+    state: State<'_, Arc<HttpServerState>>,
+    // The current app UI language (e.g. `"ru"`). `None` clears the snapshot,
+    // letting the web UI fall back to its built-in default.
+    ui_language: Option<String>,
+) -> Result<(), String> {
+    state.set_running_language(ui_language).await;
+    Ok(())
 }
 
 /// Stop the server. Idempotent.

@@ -141,11 +141,8 @@ pub fn run() {
                     .parent()
                     .map(std::path::Path::to_path_buf)
                     .unwrap_or_else(|| std::path::PathBuf::from("."));
-                let roots = crate::plugins::PluginRoots::new(
-                    &dev_root,
-                    &resource_dir,
-                    &app_data_dir,
-                );
+                let roots =
+                    crate::plugins::PluginRoots::new(&dev_root, &resource_dir, &app_data_dir);
                 app.manage(Arc::new(crate::commands::plugins::PluginState { roots }));
             }
 
@@ -305,6 +302,7 @@ pub fn run() {
             commands::set_window_behavior,
             commands::http_server_status,
             commands::start_http_server,
+            commands::set_http_server_language,
             commands::stop_http_server,
             commands::get_http_server_config,
             commands::set_http_server_config,

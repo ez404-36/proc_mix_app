@@ -1513,6 +1513,8 @@
     "login": {
       "subtitle": "Enter your API token to continue",
       "tokenLabel": "API token",
+      "showToken": "Show token",
+      "hideToken": "Hide token",
       "signIn": "Sign in",
       "signingIn": "Signing in…",
       "invalid": "Invalid token.",
@@ -1522,7 +1524,9 @@
     },
     "nav": {
       "label": "Sections",
-      "logout": "Log out"
+      "logout": "Log out",
+      "collapseSidebar": "Collapse menu",
+      "expandSidebar": "Expand menu"
     },
     "error": {
       "load": "Could not load. Check your connection."

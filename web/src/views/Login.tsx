@@ -5,9 +5,10 @@
 // app renders the shell. On 401 we show "invalid token"; the server also rate-
 // limits repeated failures (10/60s per IP) — surfaced as a distinct message.
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import logoUrl from "@app/assets/logo.svg";
+import { EyeIcon, EyeOffIcon } from "@app/components/icons";
 import { ApiError, validateSession } from "../api/client";
 import { useAuthStore } from "../stores/authStore";
 
@@ -17,6 +18,10 @@ export function Login(): React.JSX.Element {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Show/hide toggle for the token input. Defaults to hidden (masked dots);
+  // the user can flip to plaintext to verify what they typed.
+  const [revealed, setRevealed] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault();
@@ -29,6 +34,11 @@ export function Login(): React.JSX.Element {
       // Only on success do we set it — so a failed check never mounts the shell
       // or fires the entities/history requests.
       await validateSession(token);
+      // Dismiss the soft keyboard while the input is still mounted (the simple
+      // case). The Face-ID / "Save password" case shows the accessory bar after
+      // this runs, so Shell's mount effect forces a viewport reflow to reclaim
+      // any leftover strip — see Shell.tsx.
+      inputRef.current?.blur();
       setToken(token);
       // The auth store now holds the token; the App re-renders into the shell.
     } catch (err) {
@@ -60,16 +70,38 @@ export function Login(): React.JSX.Element {
           <label htmlFor="web-login-token">
             {t("web.login.tokenLabel", "API token")}
           </label>
-          <input
-            id="web-login-token"
-            type="password"
-            autoComplete="off"
-            className={error ? "input--error" : undefined}
-            aria-invalid={error ? true : undefined}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            autoFocus
-          />
+          <div className="web-login__input-wrap">
+            <input
+              ref={inputRef}
+              id="web-login-token"
+              type={revealed ? "text" : "password"}
+              autoComplete="off"
+              className={`input web-login__input${error ? " input--error" : ""}`}
+              aria-invalid={error ? true : undefined}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              autoFocus
+            />
+            <button
+              type="button"
+              className="web-login__reveal"
+              onClick={() => setRevealed((v) => !v)}
+              onMouseDown={(e) => e.preventDefault()}
+              aria-pressed={revealed}
+              aria-label={
+                revealed
+                  ? t("web.login.hideToken", "Hide token")
+                  : t("web.login.showToken", "Show token")
+              }
+              title={
+                revealed
+                  ? t("web.login.hideToken", "Hide token")
+                  : t("web.login.showToken", "Show token")
+              }
+            >
+              {revealed ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
           {error ? <p className="form-hint form-hint--error">{error}</p> : null}
         </div>
         <button
