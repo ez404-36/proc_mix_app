@@ -670,6 +670,15 @@
       "loadError": "Failed to read autostart status",
       "saveError": "Failed to change autostart settings"
     },
+    "shellIntegration": {
+      "title": "Explorer integration",
+      "description": "Add a \"ProcMix\" submenu to your file manager's right-click menu, listing your favorite commands and workflows. Right-click a file, a folder, or empty space to run a favorite on it.",
+      "toggleLabel": "Show ProcMix in the file-manager menu",
+      "pathHint": "The selected file or folder is passed to the command as the PROCMIX_SELECTED_PATH variable; for a folder it also becomes the working directory.",
+      "unsupported": "File-manager integration is available on Windows and Linux only.",
+      "loadError": "Failed to read integration status",
+      "saveError": "Failed to change the file-manager integration"
+    },
     "admin": {
       "title": "Administrator privileges",
       "statusSaved": "Sudo password is saved in your OS keychain.",
@@ -741,7 +750,15 @@
     "show": "Show ProcMix",
     "hide": "Hide to Tray",
     "quit": "Quit ProcMix",
-    "tooltip": "ProcMix"
+    "tooltip": "ProcMix",
+    "favorites": "Favorites",
+    "favoritesEmpty": "No favorites yet",
+    "favoritesMore": "More… (open ProcMix)",
+    "notifyTitle": "ProcMix",
+    "notifySuccess": "\"{{name}}\" finished successfully",
+    "notifyError": "\"{{name}}\" failed",
+    "notifyMissingVariable": "\"{{name}}\" needs a variable value",
+    "notifyNotFound": "Favorite is no longer available"
   },
   "commandPalette": {
     "ariaLabel": "Command palette",
@@ -775,7 +792,17 @@
       "script": "Script",
       "output": "Output schema",
       "env": "Environment",
+      "explorer": "Explorer",
       "hasErrors": "has errors"
+    },
+    "explorer": {
+      "enabled": "Show in file manager context menu",
+      "enabledHint": "When launched from a folder's context menu, the selected folder becomes the working directory.",
+      "pathVariable": "Substitute selected path into variable",
+      "pathVariableHint": "The chosen variable receives the file/folder path as its value.",
+      "noVariable": "— don't substitute —",
+      "noVariablesHint": "This command has no variables. Add one on the Script tab to substitute the selected path into it.",
+      "missingVariable": "{{name}} (removed)"
     },
     "env": {
       "title": "Environment variables",
@@ -1219,6 +1246,7 @@
       "workflowDeleted": "Delete",
       "workflowRun": "Run",
       "scheduledRun": "Run",
+      "quickLaunch": "Run",
       "sshHostAdded": "Add connection",
       "sshHostDiscovered": "Discover connection",
       "sshHostEdited": "Edit connection",
@@ -1240,6 +1268,8 @@
       "workflowRun": "Ran workflow \"{{name}}\"",
       "scheduledRun": "Scheduled run of \"{{name}}\"",
       "scheduledRun_manual": "Manual run of \"{{name}}\"",
+      "quickLaunch_tray": "Launched \"{{name}}\" from the tray",
+      "quickLaunch_shell": "Launched \"{{name}}\" from Explorer",
       "sshHostAdded": "Added SSH connection \"{{name}}\"",
       "sshHostDiscovered": "Discovered SSH connection \"{{name}}\" (created outside ProcMix)",
       "sshHostEdited": "Edited SSH connection \"{{name}}\"",
@@ -1258,6 +1288,12 @@
       "fullBlock": "Full block (new)",
       "undoSuccess": "Change reverted",
       "undoReadOnly": "This connection's source is read-only."
+    },
+    "quickLaunchStatus": {
+      "success": "Done",
+      "error": "Error",
+      "missingVariable": "Missing variable",
+      "notFound": "Not found"
     },
     "runStatus": {
       "running": "Running…",

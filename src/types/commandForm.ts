@@ -41,11 +41,12 @@ export interface EnvRow {
 }
 
 /**
- * The command form's four tabs. `main` holds metadata + execution settings,
+ * The command form's tabs. `main` holds metadata + execution settings,
  * `script` the script editor and variables, `output` the output schema,
- * `env` the per-command environment variable overrides.
+ * `env` the per-command environment variable overrides, `explorer` the OS
+ * file-manager context-menu integration settings.
  */
-export type FormTab = 'main' | 'script' | 'output' | 'env';
+export type FormTab = 'main' | 'script' | 'output' | 'env' | 'explorer';
 
 export interface FormErrors {
   name?: string;
@@ -95,4 +96,16 @@ export interface FormState {
    * address the command by id). Persisted as `Command.apiSlug`.
    */
   apiSlug: string;
+  /**
+   * When true, this command appears in the OS file-manager ("Explorer") context
+   * menu (independent of `favorite`). Persisted as `Command.explorerEnabled`.
+   */
+  explorerEnabled: boolean;
+  /**
+   * Name of the command variable that receives the right-clicked path when
+   * launched from the Explorer menu. Empty string means "don't substitute into
+   * a variable" (the path is still exposed via `PROCMIX_SELECTED_PATH`).
+   * Persisted as `Command.explorerPathVariable`.
+   */
+  explorerPathVariable: string;
 }

@@ -20,6 +20,8 @@ import type {
   HistoryFilter,
   HistoryLogLine,
   HistoryPage,
+  QuickLaunchSource,
+  QuickLaunchStatus,
   RunStatus,
   ScheduledRunStatus,
   ScheduleTargetKind,
@@ -66,6 +68,21 @@ function toScheduledRunStatus(value: string): ScheduledRunStatus {
 /** Narrow a target-kind string; unknown values map to "command". */
 function toScheduleTargetKind(value: string): ScheduleTargetKind {
   return value === "workflow" ? "workflow" : "command";
+}
+
+const QUICK_LAUNCH_STATUSES: ReadonlySet<QuickLaunchStatus> =
+  new Set<QuickLaunchStatus>(["success", "error", "missingVariable", "notFound"]);
+
+/** Narrow a free-form quick-launch status string; unknown values map to "error". */
+function toQuickLaunchStatus(value: string): QuickLaunchStatus {
+  return QUICK_LAUNCH_STATUSES.has(value as QuickLaunchStatus)
+    ? (value as QuickLaunchStatus)
+    : "error";
+}
+
+/** Narrow a quick-launch source string; unknown values map to "tray". */
+function toQuickLaunchSource(value: string): QuickLaunchSource {
+  return value === "shell" ? "shell" : "tray";
 }
 
 /**
@@ -199,6 +216,23 @@ type WireScheduledRun = WireBase & {
   result?: ExtractedResult | null;
 };
 
+type WireQuickLaunch = WireBase & {
+  kind: "quickLaunch";
+  targetKind: string;
+  targetId: string;
+  targetName: string;
+  source: string;
+  // Rust omits `selectedPath` when absent (tray launch). `| null` defensive.
+  selectedPath?: string | null;
+  // Free-form launch status string (success / error / missingVariable /
+  // notFound). Narrowed to `QuickLaunchStatus` in wireToEvent.
+  status: string;
+  exitCode?: number | null;
+  durationMs?: number | null;
+  output?: HistoryLogLine[] | null;
+  result?: ExtractedResult | null;
+};
+
 export type WireHistoryEvent =
   | WireCreated
   | WireEdited
@@ -211,6 +245,7 @@ export type WireHistoryEvent =
   | WireWorkflowDeleted
   | WireWorkflowRun
   | WireScheduledRun
+  | WireQuickLaunch
   // SSH events carry plain snapshots whose wire shape matches the UI shape
   // (no Command/Workflow-record conversion), so we reuse the UI event types
   // directly on the wire.
@@ -357,6 +392,24 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         manual: w.manual === true,
         status: toScheduledRunStatus(w.status),
         // Collapse `null` (defensive) / `undefined` (Rust skip) to `undefined`.
+        exitCode: nullToUndef(w.exitCode),
+        durationMs: nullToUndef(w.durationMs),
+        output: nullToUndef(w.output),
+        result: nullToUndef(w.result),
+      };
+    case "quickLaunch":
+      return {
+        id: w.id,
+        createdAt: w.createdAt,
+        kind: w.kind,
+        targetKind: toScheduleTargetKind(w.targetKind),
+        targetId: w.targetId,
+        targetName: w.targetName,
+        source: toQuickLaunchSource(w.source),
+        // Rust omits `selectedPath` for a tray launch; collapse `null` /
+        // `undefined` to a single `undefined`.
+        selectedPath: nullToUndef(w.selectedPath),
+        status: toQuickLaunchStatus(w.status),
         exitCode: nullToUndef(w.exitCode),
         durationMs: nullToUndef(w.durationMs),
         output: nullToUndef(w.output),
@@ -514,6 +567,27 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         // Mirror Rust's `skip_serializing_if = is_false`: omit `manual` from
         // the wire when `false` so an automatic fire stays byte-identical.
         ...(e.manual ? { manual: true } : {}),
+        status: e.status,
+        ...omitWhenUndefined("exitCode", e.exitCode),
+        ...omitWhenUndefined("durationMs", e.durationMs),
+        ...omitWhenUndefined("output", e.output),
+        ...omitWhenUndefined("result", e.result),
+      };
+    case "quickLaunch":
+      // The frontend never writes quickLaunch events (the backend
+      // `core::launch` does), but the converter must be exhaustive so a
+      // round-trip through `eventToWire`/`wireToEvent` is lossless. Optional
+      // fields are omitted (key absent) when undefined, mirroring Rust's
+      // `skip_serializing_if`.
+      return {
+        id: e.id,
+        createdAt: e.createdAt,
+        kind: e.kind,
+        targetKind: e.targetKind,
+        targetId: e.targetId,
+        targetName: e.targetName,
+        source: e.source,
+        ...omitWhenUndefined("selectedPath", e.selectedPath),
         status: e.status,
         ...omitWhenUndefined("exitCode", e.exitCode),
         ...omitWhenUndefined("durationMs", e.durationMs),

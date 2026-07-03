@@ -233,6 +233,8 @@ describe("fingerprintForm", () => {
     promptSshPassword: false,
     apiEnabled: false,
     apiSlug: "",
+    explorerEnabled: false,
+    explorerPathVariable: "",
   };
 
   it("is stable for identical persisted fields", () => {

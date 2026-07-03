@@ -181,6 +181,19 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
             "api_enabled",
             "ALTER TABLE commands ADD COLUMN api_enabled INTEGER NOT NULL DEFAULT 0",
         ),
+        (
+            // Explorer context-menu opt-in flag (v0.12.x). Default 0 → existing
+            // commands stay out of the file-manager menu until the user opts in.
+            // Independent of `favorite`.
+            "explorer_enabled",
+            "ALTER TABLE commands ADD COLUMN explorer_enabled INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            // Optional command variable that receives the right-clicked path when
+            // launched from the Explorer menu (v0.12.x). NULL on existing rows.
+            "explorer_path_variable",
+            "ALTER TABLE commands ADD COLUMN explorer_path_variable TEXT",
+        ),
     ];
 
     apply_column_migrations(pool, "commands", migrations).await?;

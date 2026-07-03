@@ -181,6 +181,7 @@ pub(super) async fn fire_command<R: Runtime>(
                 variable_values: variable_values.clone(),
                 workflow_run_id: None,
                 timeout_override,
+                working_dir_override: None,
                 capture_output,
                 silent,
             },
@@ -718,6 +719,8 @@ mod tests {
             target: None,
             api_slug: None,
             api_enabled: false,
+            explorer_enabled: false,
+            explorer_path_variable: None,
         }
     }
 
@@ -735,6 +738,7 @@ mod tests {
                 variable_values: std::collections::BTreeMap::new(),
                 workflow_run_id: None,
                 timeout_override: None,
+                working_dir_override: None,
                 capture_output: true,
                 silent: true,
             },
@@ -750,6 +754,7 @@ mod tests {
                 variable_values: std::collections::BTreeMap::new(),
                 workflow_run_id: None,
                 timeout_override: None,
+                working_dir_override: None,
                 capture_output: false,
                 silent: false,
             },

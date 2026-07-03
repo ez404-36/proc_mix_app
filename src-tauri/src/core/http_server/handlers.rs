@@ -183,6 +183,7 @@ pub async fn run_command<R: Runtime>(
             variable_values,
             workflow_run_id: None,
             timeout_override: None,
+            working_dir_override: None,
             capture_output: true,
             silent: !log_to_console,
         },
@@ -938,6 +939,8 @@ mod tests {
             target: None,
             api_slug: Some("deploy".into()),
             api_enabled: true,
+            explorer_enabled: false,
+            explorer_path_variable: None,
         }
     }
 
@@ -980,6 +983,7 @@ mod tests {
                 variable_values: BTreeMap::new(),
                 workflow_run_id: None,
                 timeout_override: None,
+                working_dir_override: None,
                 capture_output: true,
                 silent: true,
             },

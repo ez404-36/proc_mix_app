@@ -35,6 +35,7 @@ export type HistoryEventKind =
   | "workflowDeleted"
   | "workflowRun"
   | "scheduledRun"
+  | "quickLaunch"
   | "sshHostAdded"
   | "sshHostDiscovered"
   | "sshHostEdited"
@@ -56,6 +57,21 @@ export type ScheduledRunStatus =
 
 /** The kind of target a schedule fires. */
 export type ScheduleTargetKind = "command" | "workflow";
+
+/**
+ * Outcome of a quick-launch (tray "Favorites" submenu / OS shell integration).
+ * Mirrors the free-form status strings `core::launch` records on a
+ * `quickLaunch` event. `notFound` means the favorite was removed between the
+ * menu being built and the launch firing.
+ */
+export type QuickLaunchStatus =
+  | "success"
+  | "error"
+  | "missingVariable"
+  | "notFound";
+
+/** What triggered a quick-launch run. */
+export type QuickLaunchSource = "tray" | "shell";
 
 /**
  * Lifecycle status of a `commandRun` history record. Mirrors the
@@ -258,6 +274,41 @@ export interface ScheduledRunEvent extends HistoryEventBase {
 }
 
 /**
+ * A favorite command / workflow fired out of band by a quick-launch entry
+ * point — the tray icon's "Favorites" submenu (`source: "tray"`) or the OS
+ * file-manager shell integration (`source: "shell"`). Mirrors the Rust
+ * `HistoryEventPayload::QuickLaunch`. Recorded already-finalised, so all detail
+ * lives on the event.
+ */
+export interface QuickLaunchEvent extends HistoryEventBase {
+  kind: "quickLaunch";
+  /** Whether the fired target was a command or a workflow. */
+  targetKind: ScheduleTargetKind;
+  /** Logical id of the fired command / workflow. */
+  targetId: string;
+  /** Display name of the fired target at the moment of firing. */
+  targetName: string;
+  /** What triggered the launch. Drives the History row label / badge. */
+  source: QuickLaunchSource;
+  /**
+   * The right-clicked filesystem path passed by the shell integration. Absent
+   * for a tray launch (the repository collapses a missing wire value to
+   * `undefined`).
+   */
+  selectedPath?: string;
+  /** Final outcome of the launch. */
+  status: QuickLaunchStatus;
+  /** Process exit code of the fired command. Absent for workflow fires. */
+  exitCode?: number;
+  /** Wall-clock duration in milliseconds. Absent for workflow fires. */
+  durationMs?: number;
+  /** Captured console lines, present only for command targets. */
+  output?: HistoryLogLine[];
+  /** Structured extraction result, present only when the command declared a schema. */
+  result?: ExtractedResult;
+}
+
+/**
  * Compact snapshot of an SSH host/pattern stored with an SSH history event.
  * Mirrors the Rust `SshHostSnapshot`.
  */
@@ -330,6 +381,7 @@ export type HistoryEvent =
   | WorkflowDeletedEvent
   | WorkflowRunEvent
   | ScheduledRunEvent
+  | QuickLaunchEvent
   | SshHostAddedEvent
   | SshHostDiscoveredEvent
   | SshHostEditedEvent
@@ -360,6 +412,8 @@ export function historyEventSubjectName(event: HistoryEvent): string {
       return event.workflowName;
     case "scheduledRun":
       return event.scheduleName;
+    case "quickLaunch":
+      return event.targetName;
     case "sshHostAdded":
     case "sshHostDiscovered":
     case "sshHostEdited":
@@ -394,6 +448,9 @@ export function historyEventSubjectId(event: HistoryEvent): string {
       // `targetId`. Returning the schedule id keeps "does the subject
       // exist?" checks meaningful for scheduled runs.
       return event.scheduleId;
+    case "quickLaunch":
+      // The subject is the fired command / workflow itself.
+      return event.targetId;
     case "sshHostAdded":
     case "sshHostDiscovered":
     case "sshHostEdited":

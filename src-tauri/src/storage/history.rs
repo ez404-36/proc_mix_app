@@ -308,6 +308,51 @@ pub enum HistoryEventPayload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result: Option<HistoryExtractedResult>,
     },
+    /// A favorite command / workflow fired out of band by a v0.12.0 quick-launch
+    /// entry point — the tray icon's "Favorites" submenu (`source = "tray"`) or
+    /// the OS file-manager shell integration (`source = "shell"`). Like
+    /// `ScheduledRun` it is recorded ALREADY-FINALISED (no `update_run_event`
+    /// round-trip) because the run happens with no window observing the live
+    /// event stream, so its entire detail lives in `payload_json` and it carries
+    /// no dedicated `execution_id` column.
+    ///
+    /// `status` is the free-form launch status string (`"success"`, `"error"`,
+    /// `"missingVariable"`, `"notFound"`) produced by `core::launch`.
+    #[serde(rename_all = "camelCase")]
+    QuickLaunch {
+        /// `"command"` or `"workflow"` — the kind of target that was fired.
+        target_kind: String,
+        /// Logical id of the fired command / workflow.
+        target_id: String,
+        /// Display name of the fired target at the moment of firing (survives a
+        /// later rename / delete). Stored in the generic `command_name` SQL
+        /// column so the name filter works without a JSON scan.
+        target_name: String,
+        /// `"tray"` or `"shell"` — what triggered the launch. Drives the
+        /// History row label / badge.
+        source: String,
+        /// The right-clicked filesystem path passed by the shell integration,
+        /// injected as the `PROCMIX_SELECTED_PATH` command variable. `None`
+        /// (omitted from the wire) for a tray launch and for legacy rows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selected_path: Option<String>,
+        status: String,
+        /// Exit code of the fired command, when captured. Omitted from the wire
+        /// (not `null`) for workflow fires and unresolved targets.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        /// Wall-clock duration of the fire in milliseconds, when captured.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        /// Captured console output (bounded by [`MAX_HISTORY_OUTPUT_BYTES`] by
+        /// the producer). `None` when nothing ran.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<Vec<HistoryLogLine>>,
+        /// Structured output-schema extraction, when the fired command declared
+        /// a schema.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<HistoryExtractedResult>,
+    },
 
     // ----- SSH connection events (v0.10.0) ----------------------------------
     //
@@ -407,6 +452,7 @@ impl HistoryEventPayload {
             HistoryEventPayload::WorkflowDeleted { .. } => "workflowDeleted",
             HistoryEventPayload::WorkflowRun { .. } => "workflowRun",
             HistoryEventPayload::ScheduledRun { .. } => "scheduledRun",
+            HistoryEventPayload::QuickLaunch { .. } => "quickLaunch",
             HistoryEventPayload::SshHostAdded { .. } => "sshHostAdded",
             HistoryEventPayload::SshHostDiscovered { .. } => "sshHostDiscovered",
             HistoryEventPayload::SshHostEdited { .. } => "sshHostEdited",
@@ -434,6 +480,7 @@ impl HistoryEventPayload {
             | HistoryEventPayload::WorkflowDeleted { .. }
             | HistoryEventPayload::WorkflowRun { .. }
             | HistoryEventPayload::ScheduledRun { .. }
+            | HistoryEventPayload::QuickLaunch { .. }
             | HistoryEventPayload::SshHostAdded { .. }
             | HistoryEventPayload::SshHostDiscovered { .. }
             | HistoryEventPayload::SshHostEdited { .. }
@@ -487,6 +534,7 @@ impl HistoryEventPayload {
             | HistoryEventPayload::WorkflowDeleted { workflow_name, .. }
             | HistoryEventPayload::WorkflowRun { workflow_name, .. } => workflow_name,
             HistoryEventPayload::ScheduledRun { schedule_name, .. } => schedule_name,
+            HistoryEventPayload::QuickLaunch { target_name, .. } => target_name,
             HistoryEventPayload::SshHostAdded { host_name, .. }
             | HistoryEventPayload::SshHostDiscovered { host_name, .. }
             | HistoryEventPayload::SshHostEdited { host_name, .. }
@@ -1350,6 +1398,8 @@ mod wire_format_tests {
             target: None,
             api_slug: None,
             api_enabled: false,
+            explorer_enabled: false,
+            explorer_path_variable: None,
         }
     }
 
@@ -1863,6 +1913,80 @@ mod wire_format_tests {
         }
     }
 
+    /// The quick-launch accessors: subject name is the target name (feeds the
+    /// NOT NULL `command_name` column), there is no owning command / workflow
+    /// id, no schedule id, and no execution id (recorded finalised).
+    #[test]
+    fn quick_launch_accessors() {
+        let p = HistoryEventPayload::QuickLaunch {
+            target_kind: "command".into(),
+            target_id: "cmd-1".into(),
+            target_name: "Build".into(),
+            source: "tray".into(),
+            selected_path: None,
+            status: "success".into(),
+            exit_code: Some(0),
+            duration_ms: Some(12),
+            output: None,
+            result: None,
+        };
+        assert_eq!(p.command_name(), "Build");
+        assert_eq!(p.command_id(), None);
+        assert_eq!(p.workflow_id(), None);
+        assert_eq!(p.schedule_id(), None);
+        assert_eq!(p.execution_id(), None);
+        assert_eq!(p.run_status(), None);
+        assert_eq!(p.kind_str(), "quickLaunch");
+    }
+
+    /// A tray quick-launch (no path) omits `selectedPath` from the wire so the
+    /// payload stays minimal; a shell launch includes it. Both serialise their
+    /// fields in camelCase and round-trip losslessly.
+    #[test]
+    fn quick_launch_selected_path_is_omit_when_absent() {
+        let tray = HistoryEventPayload::QuickLaunch {
+            target_kind: "command".into(),
+            target_id: "cmd-1".into(),
+            target_name: "Build".into(),
+            source: "tray".into(),
+            selected_path: None,
+            status: "success".into(),
+            exit_code: Some(0),
+            duration_ms: Some(12),
+            output: None,
+            result: None,
+        };
+        let json = serde_json::to_value(&tray).unwrap();
+        assert_eq!(json["kind"], "quickLaunch");
+        assert_eq!(json["targetKind"], "command");
+        assert_eq!(json["targetName"], "Build");
+        assert_eq!(json["source"], "tray");
+        // Omitted when absent — keeps the tray payload minimal.
+        assert!(json.get("selectedPath").is_none());
+        assert!(json.get("selected_path").is_none());
+        // Lossless decode.
+        let back: HistoryEventPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back, tray);
+
+        let shell = HistoryEventPayload::QuickLaunch {
+            target_kind: "command".into(),
+            target_id: "cmd-1".into(),
+            target_name: "Build".into(),
+            source: "shell".into(),
+            selected_path: Some("/home/user/project".into()),
+            status: "success".into(),
+            exit_code: Some(0),
+            duration_ms: Some(12),
+            output: None,
+            result: None,
+        };
+        let json = serde_json::to_value(&shell).unwrap();
+        assert_eq!(json["source"], "shell");
+        assert_eq!(json["selectedPath"], "/home/user/project");
+        let back: HistoryEventPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back, shell);
+    }
+
     /// The denormalised subject-name accessor returns the workflow name
     /// for workflow variants (it feeds the NOT NULL `command_name`
     /// column and the name filter), and `command_id` is `None` while
@@ -1954,6 +2078,18 @@ mod wire_format_tests {
                 duration_ms: Some(99),
                 status: RunStatus::Succeeded,
                 timed_out: None,
+                output: None,
+                result: None,
+            },
+            HistoryEventPayload::QuickLaunch {
+                target_kind: "command".into(),
+                target_id: "c1".into(),
+                target_name: "Build".into(),
+                source: "shell".into(),
+                selected_path: Some("/home/user/project".into()),
+                status: "success".into(),
+                exit_code: Some(0),
+                duration_ms: Some(12),
                 output: None,
                 result: None,
             },
@@ -2127,6 +2263,8 @@ mod sqlite_integration_tests {
             target: None,
             api_slug: None,
             api_enabled: false,
+            explorer_enabled: false,
+            explorer_path_variable: None,
         }
     }
 

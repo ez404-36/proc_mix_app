@@ -56,6 +56,7 @@ function actionGroup(kind: HistoryEvent["kind"]): ActionGroup {
     case "commandRun":
     case "workflowRun":
     case "scheduledRun":
+    case "quickLaunch":
       return "run";
     case "commandRestored":
       return "restore";
@@ -93,6 +94,7 @@ function ActionIcon({ kind }: { kind: HistoryEvent["kind"] }): ReactElement {
     case "commandRun":
     case "workflowRun":
     case "scheduledRun":
+    case "quickLaunch":
       return <RunIcon />;
     case "sshHostAdded":
     case "sshHostDiscovered":
@@ -176,6 +178,11 @@ function kindKey(event: HistoryEvent): string {
   if (event.kind === "scheduledRun" && event.manual) {
     return "history.kinds.scheduledRun_manual";
   }
+  // A quick-launch reads "Launched from tray …" / "Launched from Explorer …"
+  // depending on its origin.
+  if (event.kind === "quickLaunch") {
+    return `history.kinds.quickLaunch_${event.source}`;
+  }
   return `history.kinds.${event.kind}`;
 }
 
@@ -249,6 +256,18 @@ export function HistoryRow({
         className={`history-row__status history-row__status--scheduled-${event.status}`}
       >
         {t(`scheduler.status.${event.status}` as const)}
+      </span>
+    );
+  } else if (event.kind === "quickLaunch") {
+    // Quick-launch fires carry their own status set (success / error /
+    // missingVariable / notFound). Reuse the scheduled-status hue classes for
+    // the shared values; `notFound` falls back to the error hue.
+    const hue = event.status === "notFound" ? "error" : event.status;
+    runStatusBadge = (
+      <span
+        className={`history-row__status history-row__status--scheduled-${hue}`}
+      >
+        {t(`history.quickLaunchStatus.${event.status}` as const)}
       </span>
     );
   }
@@ -339,7 +358,9 @@ export function HistoryRow({
   const runDetail =
     event.kind === "scheduledRun"
       ? { output: event.output, result: event.result }
-      : (event.kind === "commandRun" || event.kind === "workflowRun") &&
+      : (event.kind === "commandRun" ||
+            event.kind === "workflowRun" ||
+            event.kind === "quickLaunch") &&
           event.output !== undefined &&
           event.output.length > 0
         ? { output: event.output, result: event.result }

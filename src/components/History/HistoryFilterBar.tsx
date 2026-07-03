@@ -2,11 +2,31 @@
 // name search (debounced), date range. State lives in the history
 // store — this component is a thin controller binding inputs to it.
 
-import { useEffect, useRef, useState, type ChangeEvent, type ReactElement } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactElement,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useHistoryStore } from "../../stores/historyStore";
 import type { HistoryEventKind } from "../../types";
-import { DatePicker } from "../DatePicker/DatePicker";
+
+// Lazy-load the date picker so react-datepicker (~179 kB) + its CSS split into
+// their own async chunk instead of the startup bundle. The picker only appears
+// in the History view's filter bar, so it loads on demand when History opens.
+const DatePicker = lazy(() =>
+  import("../DatePicker/DatePicker").then((m) => ({ default: m.DatePicker })),
+);
+
+// Placeholder shown while the date-picker chunk loads. Uses the same `.input`
+// class so the filter-bar layout does not shift when the real control mounts.
+function DatePickerFallback(): ReactElement {
+  return <span className="input" aria-hidden="true" />;
+}
 
 /**
  * Chips in the type filter. Each entry represents one visible chip and maps
@@ -156,22 +176,26 @@ export function HistoryFilterBar(): ReactElement {
       <div className="history-filter-bar__dates">
         <label className="history-filter-bar__date">
           <span>{t("history.filterByDateFrom")}</span>
-          <DatePicker
-            value={dateFromValue}
-            onChange={(v) => setFilter({ dateFrom: v ? `${v}T00:00:00.000Z` : undefined })}
-            placeholder={t("history.filterByDateFrom")}
-            maxDate={dateToMax}
-          />
+          <Suspense fallback={<DatePickerFallback />}>
+            <DatePicker
+              value={dateFromValue}
+              onChange={(v) => setFilter({ dateFrom: v ? `${v}T00:00:00.000Z` : undefined })}
+              placeholder={t("history.filterByDateFrom")}
+              maxDate={dateToMax}
+            />
+          </Suspense>
         </label>
         <label className="history-filter-bar__date">
           <span>{t("history.filterByDateTo")}</span>
-          <DatePicker
-            value={dateToValue}
-            onChange={(v) => setFilter({ dateTo: v ? `${v}T23:59:59.999Z` : undefined })}
-            placeholder={t("history.filterByDateTo")}
-            maxDate={today}
-            minDate={dateToMin}
-          />
+          <Suspense fallback={<DatePickerFallback />}>
+            <DatePicker
+              value={dateToValue}
+              onChange={(v) => setFilter({ dateTo: v ? `${v}T23:59:59.999Z` : undefined })}
+              placeholder={t("history.filterByDateTo")}
+              maxDate={today}
+              minDate={dateToMin}
+            />
+          </Suspense>
         </label>
       </div>
 

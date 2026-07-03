@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { AppearanceSection } from "./AppearanceSection";
 import { TraySection } from "./TraySection";
 import { AutostartSection } from "./AutostartSection";
+import { ShellIntegrationSection } from "./ShellIntegrationSection";
 import { AdminPasswordSection } from "./AdminPasswordSection";
 import { DataSection } from "./DataSection";
 import { UpdatesSection } from "./UpdatesSection";
@@ -52,6 +53,7 @@ export function Settings(): ReactElement {
         <>
           <TraySection />
           <AutostartSection />
+          <ShellIntegrationSection />
         </>
       )}
       {activeTab === "security" && (

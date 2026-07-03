@@ -5,6 +5,62 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-06-30
+
+**Run your favorites without opening ProcMix.** Two new quick-launch paths fire
+a favorite command or workflow out of band — from the **tray icon's Favorites
+submenu** and from the **OS file-manager right-click menu** (Windows & Linux).
+Both run headlessly, land in History, and never pop a window; the file-manager
+path also hands the right-clicked file/folder to the command.
+
+### Added
+
+- **Tray "Favorites" submenu.** Right-clicking the tray icon now lists your
+  favorite commands and workflows. Clicking one runs it headlessly (recorded in
+  History) and shows a brief native notification with the outcome — the window
+  stays in the tray. The list is capped at 15 with a "More… (open ProcMix)"
+  overflow item, and refreshes automatically when your favorites change.
+- **Explorer / file-manager integration (Windows & Linux).** A new
+  **Settings → System → Explorer integration** toggle adds a "ProcMix" submenu
+  to the OS file manager's right-click menu listing your favorites. Right-click
+  a **file**, a **folder**, or **empty space** (the current folder) to run a
+  favorite on it. The selected path is passed to the command as the
+  **`PROCMIX_SELECTED_PATH`** variable; for a folder it also becomes the working
+  directory. Per-user, no administrator rights required. macOS is unsupported
+  (the toggle is hidden).
+- **Per-command Explorer tab.** A new **Explorer** tab in the command editor
+  opts an individual command into the OS file-manager menu independently of the
+  favorite flag, and lets you bind the right-clicked path to one of the command's
+  variables (a `--don't substitute--` sentinel keeps it optional). For a folder
+  target the selected folder also becomes the working directory.
+- **`quickLaunch` history events.** Tray and file-manager launches are recorded
+  in History, labelled by origin ("Launched … from the tray" / "… from
+  Explorer"), with viewable output for command targets.
+- **Interactive quick-launch.** When a favorite command needs input — a variable
+  value or (on Unix) an administrator password — a small prompt dialog appears
+  instead of failing silently, while the main window stays hidden. You fill in
+  the values and the command runs. Favorites that need no input still run
+  instantly with no dialog. The admin password is used for that single run and
+  not saved.
+
+### Changed
+
+- **Tuned release build profile.** The shipped binary is now compiled with
+  `lto = "thin"`, `codegen-units = 1`, and `strip = true`, cutting the on-disk
+  size by roughly two thirds (≈154 MB → ≈47 MB) with no behavioural change.
+  `panic` is deliberately left as `"unwind"` so `core::js_parser`'s
+  `catch_unwind`-based error handling keeps working.
+
+### Security
+
+- The right-clicked path — the only untrusted value the integration handles — is
+  allow-list validated at the boundary (rejecting empty, control-character, and
+  non-existent paths) and passed only as an environment-variable value /
+  working-directory override, never built into a shell string. See
+  [`docs/shell-integration.md`](../docs/shell-integration.md).
+
+---
+
 ## [0.11.0] - 2026-06-29
 
 **The web UI gets a proper phone treatment.** The browser web interface is

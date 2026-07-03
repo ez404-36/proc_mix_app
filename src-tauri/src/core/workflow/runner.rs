@@ -151,6 +151,7 @@ async fn run_command_node<R: Runtime>(
             variable_values,
             workflow_run_id: Some(ctx.run_id.to_string()),
             timeout_override: None,
+            working_dir_override: None,
             capture_output: ctx.capture_output,
             silent: ctx.silent,
         },

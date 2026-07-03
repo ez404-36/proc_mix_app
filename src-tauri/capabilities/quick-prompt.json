@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick-prompt",
+  "description": "Capability for the standalone quick-launch prompt dialog window (v0.12.0). Deliberately minimal: it only needs core IPC (to call the app-defined get/submit/cancel quick-prompt commands), the ability to close/focus itself, and start-dragging. It does NOT get the main window's plugin permissions (updater, global-shortcut, autostart, window-state, notification, etc.).",
+  "windows": ["quick-prompt"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-start-dragging"
+  ]
+}

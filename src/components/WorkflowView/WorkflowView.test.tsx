@@ -93,7 +93,7 @@ describe("WorkflowView", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("renders the workflow's name, description, tags, and the canvas", () => {
+  it("renders the workflow's name, description, tags, and the canvas", async () => {
     render(
       <WorkflowView
         workflow={makeWorkflow()}
@@ -107,8 +107,10 @@ describe("WorkflowView", () => {
     expect(screen.getByText("Build, test, ship")).toBeTruthy();
     expect(screen.getByText("ci")).toBeTruthy();
     expect(screen.getByText("deploy")).toBeTruthy();
-    // The read-only canvas (mocked) is mounted as the modal body.
-    expect(screen.getByTestId("reactflow")).toBeTruthy();
+    // The read-only canvas (mocked) is mounted as the modal body. It is now
+    // lazy-loaded (Suspense), so it appears after the dynamic import resolves —
+    // await it rather than asserting synchronously.
+    expect(await screen.findByTestId("reactflow")).toBeTruthy();
   });
 
   it("fires onEdit / onRun / onClose from the footer buttons", () => {

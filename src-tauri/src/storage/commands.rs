@@ -279,6 +279,21 @@ pub struct CommandRecord {
     /// as the `api_enabled` INTEGER column. Serialised as `apiEnabled`.
     #[serde(default)]
     pub api_enabled: bool,
+    /// Whether this command appears in the OS file-manager ("Explorer") context
+    /// menu. `false` (the default) keeps it out of the menu until the user opts
+    /// in — this is INDEPENDENT of the `favorite` flag. Persisted as the
+    /// `explorer_enabled` INTEGER column. Serialised as `explorerEnabled`.
+    #[serde(default)]
+    pub explorer_enabled: bool,
+    /// Optional name of a command variable that should receive the right-clicked
+    /// filesystem path (`PROCMIX_SELECTED_PATH`) when the command is launched
+    /// from the Explorer context menu. `None` (the default) means the path is
+    /// only exposed via the reserved `PROCMIX_SELECTED_PATH` variable. Persisted
+    /// as the `explorer_path_variable` TEXT column (NULL when absent).
+    /// Serialised as `explorerPathVariable`. `#[serde(default)]` keeps legacy
+    /// payloads parsing cleanly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explorer_path_variable: Option<String>,
 }
 
 /// Return every command in insertion order (oldest first).
@@ -288,7 +303,7 @@ pub async fn list_all(pool: &DbPool) -> Result<Vec<CommandRecord>, String> {
                 args_json, working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
                 timeout_seconds, output_schema, scope, workflow_id, target, \
-                api_slug, api_enabled \
+                api_slug, api_enabled, explorer_enabled, explorer_path_variable \
          FROM commands \
          ORDER BY created_at ASC",
     )
@@ -375,8 +390,8 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             args_json, working_dir, env_json, tags_json, category_id, favorite, \
             created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
             timeout_seconds, output_schema, scope, workflow_id, target, \
-            api_slug, api_enabled \
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            api_slug, api_enabled, explorer_enabled, explorer_path_variable \
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \
             name_key = excluded.name_key, \
@@ -402,7 +417,9 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             workflow_id = excluded.workflow_id, \
             target = excluded.target, \
             api_slug = excluded.api_slug, \
-            api_enabled = excluded.api_enabled",
+            api_enabled = excluded.api_enabled, \
+            explorer_enabled = excluded.explorer_enabled, \
+            explorer_path_variable = excluded.explorer_path_variable",
     )
     .bind(&cmd.id)
     .bind(&cmd.name)
@@ -437,6 +454,10 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
     // the partial unique index if two commands sent "".
     .bind(cmd.api_slug.as_deref().filter(|s| !s.is_empty()))
     .bind(if cmd.api_enabled { 1_i64 } else { 0_i64 })
+    .bind(if cmd.explorer_enabled { 1_i64 } else { 0_i64 })
+    // An empty variable name from the UI ("— don't substitute —") normalises to
+    // NULL so "no variable" is a single representation.
+    .bind(cmd.explorer_path_variable.as_deref().filter(|s| !s.is_empty()))
     .execute(pool.as_ref())
     .await
     .map_err(|e| format!("upsert: {e}"))?;
@@ -541,6 +562,12 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
     let api_enabled_i: i64 = row
         .try_get("api_enabled")
         .map_err(|e| format!("read api_enabled: {e}"))?;
+    let explorer_enabled_i: i64 = row
+        .try_get("explorer_enabled")
+        .map_err(|e| format!("read explorer_enabled: {e}"))?;
+    let explorer_path_variable: Option<String> = row
+        .try_get("explorer_path_variable")
+        .map_err(|e| format!("read explorer_path_variable: {e}"))?;
 
     Ok(CommandRecord {
         id: row.try_get("id").map_err(|e| format!("read id: {e}"))?,
@@ -592,6 +619,8 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
         target,
         api_slug,
         api_enabled: api_enabled_i != 0,
+        explorer_enabled: explorer_enabled_i != 0,
+        explorer_path_variable,
     })
 }
 
@@ -617,7 +646,7 @@ pub async fn find_by_api_ref(
                 args_json, working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
                 timeout_seconds, output_schema, scope, workflow_id, target, \
-                api_slug, api_enabled \
+                api_slug, api_enabled, explorer_enabled, explorer_path_variable \
          FROM commands \
          WHERE api_enabled = 1 AND (api_slug = ? OR id = ?) \
          ORDER BY (api_slug = ?) DESC \
@@ -645,7 +674,7 @@ pub async fn find_by_id(pool: &DbPool, id: &str) -> Result<Option<CommandRecord>
                 args_json, working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
                 timeout_seconds, output_schema, scope, workflow_id, target, \
-                api_slug, api_enabled \
+                api_slug, api_enabled, explorer_enabled, explorer_path_variable \
          FROM commands \
          WHERE id = ? \
          LIMIT 1",
@@ -722,6 +751,8 @@ mod wire_format_tests {
             target: None,
             api_slug: Some("deploy".into()),
             api_enabled: true,
+            explorer_enabled: true,
+            explorer_path_variable: Some("target".into()),
         }
     }
 
@@ -987,6 +1018,8 @@ mod sqlite_integration_tests {
             // (empty slug normalises to NULL, default disabled).
             api_slug: None,
             api_enabled: false,
+            explorer_enabled: true,
+            explorer_path_variable: Some("target".into()),
         }
     }
 

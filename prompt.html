@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ProcMix</title>
+  </head>
+
+  <body>
+    <!--
+      Pre-paint theme bootstrap — identical to index.html so the prompt
+      dialog window picks up the user's saved light/dark theme from
+      localStorage BEFORE React mounts (no flash of the wrong theme). The
+      prompt window shares the same webview origin, hence the same
+      `procmix-ui` localStorage key.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("procmix-ui");
+          var theme = "system";
+          if (stored) {
+            var parsed = JSON.parse(stored);
+            if (parsed && parsed.state && typeof parsed.state.theme === "string") {
+              theme = parsed.state.theme;
+            }
+          }
+          var resolved =
+            theme === "system"
+              ? window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light"
+              : theme;
+          document.documentElement.setAttribute("data-theme", resolved);
+          if (resolved === "dark") {
+            document.body.setAttribute("arco-theme", "dark");
+          }
+        } catch (e) {
+          /* localStorage unavailable — fall back to React-side init */
+        }
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/prompt-main.tsx"></script>
+  </body>
+</html>

@@ -364,6 +364,11 @@ pub struct RunOptions {
     /// When `Some`, overrides the command's own `timeout_seconds` (used by the
     /// scheduler's per-run timeout). `None` falls back to `cmd.timeout_seconds`.
     pub timeout_override: Option<u64>,
+    /// When `Some`, overrides the command's own `working_dir` for this run. Used
+    /// by the shell-integration quick-launch when the right-clicked path is a
+    /// DIRECTORY, so the favorite runs in that directory. `None` falls back to
+    /// `cmd.working_dir`.
+    pub working_dir_override: Option<String>,
     /// Buffer every stdout/stderr line for history persistence.
     pub capture_output: bool,
     /// Suppress every `execution-event` (planned/cron fire) — the history
@@ -406,7 +411,12 @@ impl ExecuteRequest {
             script: cmd.script.clone(),
             shell: cmd.shell.clone(),
             args: cmd.args.clone(),
-            working_dir: cmd.working_dir.as_ref().map(Into::into),
+            // A per-run working-dir override (shell quick-launch on a directory)
+            // wins over the command's saved `working_dir`.
+            working_dir: opts
+                .working_dir_override
+                .map(Into::into)
+                .or_else(|| cmd.working_dir.as_ref().map(Into::into)),
             env,
             command_id: Some(cmd.id.clone()),
             execution_id: Some(opts.execution_id),

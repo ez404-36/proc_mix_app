@@ -114,6 +114,19 @@ export interface CommandRecord {
    * `false`); {@link recordToCommand} normalises a missing value to `false`.
    */
   apiEnabled?: boolean;
+  /**
+   * Mirror of the Rust `explorer_enabled` field. Optional/absent on the wire
+   * for legacy records (`#[serde(default)]` → `false`);
+   * {@link recordToCommand} normalises a missing value to `false`.
+   */
+  explorerEnabled?: boolean;
+  /**
+   * Mirror of the Rust `explorer_path_variable` field — the optional command
+   * variable that receives the selected path. `null` / absent when unset.
+   * {@link commandToRecord} omits it (empty → `null`) when the UI has no
+   * variable selected so the wire stays byte-identical to legacy payloads.
+   */
+  explorerPathVariable?: string | null;
 }
 
 /**
@@ -166,6 +179,13 @@ export function commandToRecord(c: Command): CommandRecord {
     ),
     // HTTP-API opt-in. Always send so toggling it off persists.
     apiEnabled: c.apiEnabled ?? false,
+    // Explorer context-menu opt-in. Always send so toggling it off persists.
+    explorerEnabled: c.explorerEnabled ?? false,
+    // Path-target variable: omit when absent so the wire stays byte-identical to
+    // legacy payloads. An empty string normalises to `null` (no variable).
+    ...omitWhenUndefined("explorerPathVariable", c.explorerPathVariable, (v) =>
+      v.trim() === "" ? null : v.trim(),
+    ),
   };
 }
 
@@ -226,6 +246,11 @@ export function recordToCommand(r: CommandRecord): Command {
     // Default to `false` so commands loaded from old DBs (no column) are not
     // accidentally treated as API-enabled.
     apiEnabled: r.apiEnabled ?? false,
+    // Default to `false` so commands loaded from old DBs (no column) are not
+    // accidentally treated as Explorer-enabled.
+    explorerEnabled: r.explorerEnabled ?? false,
+    // The opted-in path variable; `undefined` when the command has none.
+    explorerPathVariable: nullToUndef(r.explorerPathVariable),
   };
 }
 

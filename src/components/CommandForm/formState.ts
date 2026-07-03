@@ -266,6 +266,8 @@ export function buildInitialState(
       promptSshPassword: command.promptSshPassword ?? false,
       apiEnabled: command.apiEnabled ?? false,
       apiSlug: command.apiSlug ?? "",
+      explorerEnabled: command.explorerEnabled ?? false,
+      explorerPathVariable: command.explorerPathVariable ?? "",
     };
   }
   return {
@@ -293,6 +295,9 @@ export function buildInitialState(
     // New commands are not API-exposed until the user opts in.
     apiEnabled: false,
     apiSlug: "",
+    // New commands are not in the Explorer menu until the user opts in.
+    explorerEnabled: false,
+    explorerPathVariable: "",
   };
 }
 
@@ -332,5 +337,7 @@ export function fingerprintForm(form: FormState): string {
     promptSshPassword: form.promptSshPassword,
     apiEnabled: form.apiEnabled,
     apiSlug: form.apiSlug,
+    explorerEnabled: form.explorerEnabled,
+    explorerPathVariable: form.explorerPathVariable,
   });
 }

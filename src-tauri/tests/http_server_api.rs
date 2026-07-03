@@ -96,6 +96,8 @@ fn command(id: &str, script: &str, api_slug: Option<&str>, api_enabled: bool) ->
         target: None,
         api_slug: api_slug.map(Into::into),
         api_enabled,
+        explorer_enabled: false,
+        explorer_path_variable: None,
     }
 }
 

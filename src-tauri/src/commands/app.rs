@@ -11,7 +11,9 @@ use crate::storage::commands as storage_commands;
 
 #[tauri::command]
 pub async fn update_tray_menu(app: AppHandle, labels: TrayLabels) -> Result<(), String> {
-    tray::apply_labels(&app, &labels).map_err(|e| e.to_string())
+    tray::apply_labels(&app, &labels)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Returns the list of shell identifiers (matching the JS `Shell` union)

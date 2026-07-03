@@ -121,6 +121,8 @@ fn command(id: &str, script: &str) -> CommandRecord {
         target: None,
         api_slug: None,
         api_enabled: false,
+        explorer_enabled: false,
+        explorer_path_variable: None,
     }
 }
 

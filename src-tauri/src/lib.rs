@@ -84,9 +84,26 @@ pub fn run() {
         Some(vec!["--autostart"]),
     ));
 
+    // Native notifications for the tray "Favorites" quick-launch outcome
+    // (v0.12.0). Desktop-only — the plugin (and the tray) are unavailable on
+    // mobile. The notification is raised from Rust (`platform::tray`), so no JS
+    // capability is required.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_notification::init());
+
     builder
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            let _ = crate::platform::tray::show_main_window(app);
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // A second launch can be the OS file-manager firing a favorite
+            // (`--run-favorite <kind>:<id> --path <p>`). Route that to the
+            // HEADLESS quick-launch path WITHOUT showing the window. `argv`
+            // includes the program name at [0], so skip it before parsing.
+            if let Some(run) = crate::core::launch::parse_run_args(argv.get(1..).unwrap_or(&[])) {
+                crate::platform::tray::spawn_shell_launch(app, run);
+            } else {
+                // A normal second launch (user re-opened ProcMix) brings the
+                // existing window to the front.
+                let _ = crate::platform::tray::show_main_window(app);
+            }
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -108,6 +125,9 @@ pub fn run() {
         // save/delete commands advance it to echo-suppress ProcMix's own
         // writes (so they aren't logged as external changes).
         .manage(Arc::new(crate::core::ssh::SshWatchState::new()))
+        // Pending quick-launch prompt (v0.12.0): holds the command awaiting
+        // interactive input while the standalone prompt dialog collects it.
+        .manage(Arc::new(crate::platform::quick_prompt::QuickPromptState::new()))
         .setup(|app| {
             // Initialise the SQLite-backed command library. `setup` is a
             // synchronous Tauri hook, so we block_on the async pool
@@ -228,15 +248,33 @@ pub fn run() {
             // window independently of visibility, so the restored size/position
             // is correct whether we show it now or later from the tray.
             let launched_by_os = std::env::args().any(|arg| arg == "--autostart");
-            let start_hidden = launched_by_os && {
-                let pool = app.state::<crate::storage::DbPool>().inner().clone();
-                tauri::async_runtime::block_on(async move {
-                    crate::storage::autostart::load(&pool)
-                        .await
-                        .map(|cfg| cfg.start_minimized)
-                        .unwrap_or(false)
-                })
-            };
+
+            // COLD-START shell launch: the OS file manager launched ProcMix
+            // (no prior instance) with `--run-favorite …`. Fire the favorite
+            // headlessly and keep the window hidden — the app behaves like a
+            // background quick-launch, then lives in the tray. The state
+            // (pool / executor) is already managed by this point in `setup`, so
+            // the spawned task can resolve it. `args()` includes the program
+            // name at [0]; skip it before parsing.
+            let cli_args: Vec<String> = std::env::args().skip(1).collect();
+            let shell_launch = crate::core::launch::parse_run_args(&cli_args);
+            let is_shell_launch = shell_launch.is_some();
+            if let Some(run) = shell_launch {
+                crate::platform::tray::spawn_shell_launch(app.handle(), run);
+            }
+
+            // Start hidden when launched minimized at login OR when this is a
+            // headless shell launch (which must never pop a window).
+            let start_hidden = is_shell_launch
+                || (launched_by_os && {
+                    let pool = app.state::<crate::storage::DbPool>().inner().clone();
+                    tauri::async_runtime::block_on(async move {
+                        crate::storage::autostart::load(&pool)
+                            .await
+                            .map(|cfg| cfg.start_minimized)
+                            .unwrap_or(false)
+                    })
+                });
 
             // Initialise the runtime "close to tray" cache from SQLite before the
             // CloseRequested handler can fire, so the very first window close
@@ -298,6 +336,11 @@ pub fn run() {
             commands::clear_admin_password,
             commands::autostart_status,
             commands::set_autostart,
+            commands::shell_integration_status,
+            commands::set_shell_integration,
+            crate::platform::quick_prompt::get_quick_prompt_request,
+            crate::platform::quick_prompt::submit_quick_prompt,
+            crate::platform::quick_prompt::cancel_quick_prompt,
             commands::get_window_behavior,
             commands::set_window_behavior,
             commands::http_server_status,

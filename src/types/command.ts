@@ -233,6 +233,22 @@ export interface Command {
    * `false` keeps it invisible to the API until the user explicitly opts in.
    */
   apiEnabled?: boolean;
+  /**
+   * Whether this command appears in the OS file-manager ("Explorer") context
+   * menu. `undefined` / `false` keeps it out of the menu until the user opts
+   * in. INDEPENDENT of {@link favorite}. When enabled, right-clicking a file or
+   * folder and picking this command runs it headlessly with the selected path
+   * exposed as the reserved `PROCMIX_SELECTED_PATH` variable (a selected folder
+   * also becomes the run's working directory).
+   */
+  explorerEnabled?: boolean;
+  /**
+   * Optional name of one of this command's {@link variables} that should
+   * receive the right-clicked path when launched from the Explorer menu, in
+   * addition to the reserved `PROCMIX_SELECTED_PATH`. `undefined` / `""` means
+   * the path is only exposed via `PROCMIX_SELECTED_PATH`.
+   */
+  explorerPathVariable?: string;
 }
 
 /**

@@ -140,9 +140,9 @@ function getVariableRows(): HTMLLIElement[] {
 }
 
 function clickSave(): void {
-  // The footer save button label depends on mode; in create-mode it's
-  // "Create" (commandForm.actions.create).
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  // The footer save button is labelled "Save" in both create and edit mode
+  // (commandForm.actions.save).
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
 }
 
 describe("CommandForm — Variables section", () => {
@@ -259,7 +259,7 @@ describe("CommandForm — Variables section", () => {
     // (form-level aggregation — hasErrors). It is intentionally NOT the
     // native `disabled` attribute, so clicking it can reveal the errors.
     const saveBtn = screen.getByRole("button", {
-      name: "Create",
+      name: "Save",
     }) as HTMLButtonElement;
     expect(saveBtn.getAttribute("aria-disabled")).toBe("true");
   });
@@ -319,7 +319,7 @@ describe("CommandForm — Variables section", () => {
 
     // But Save is marked invalid via aria-disabled (still clickable).
     const saveBtn = screen.getByRole("button", {
-      name: "Create",
+      name: "Save",
     }) as HTMLButtonElement;
     expect(saveBtn.getAttribute("aria-disabled")).toBe("true");
   });

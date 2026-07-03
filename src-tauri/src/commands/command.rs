@@ -45,15 +45,37 @@ pub async fn list_commands(
 
 #[tauri::command]
 pub async fn upsert_command(
+    app: AppHandle,
     pool: State<'_, DbPool>,
     command: storage_commands::CommandRecord,
 ) -> Result<(), String> {
-    storage_commands::upsert(pool.inner(), &command).await
+    storage_commands::upsert(pool.inner(), &command).await?;
+    // A favorite toggle / rename must be reflected in the tray "Favorites"
+    // submenu and (when enabled) the OS file-manager menu.
+    crate::platform::tray::rebuild_favorites(&app).await;
+    refresh_shell_integration(pool.inner()).await;
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_command(pool: State<'_, DbPool>, id: String) -> Result<(), String> {
-    storage_commands::delete(pool.inner(), &id).await
+pub async fn delete_command(
+    app: AppHandle,
+    pool: State<'_, DbPool>,
+    id: String,
+) -> Result<(), String> {
+    storage_commands::delete(pool.inner(), &id).await?;
+    crate::platform::tray::rebuild_favorites(&app).await;
+    refresh_shell_integration(pool.inner()).await;
+    Ok(())
+}
+
+/// Re-materialise the file-manager shell integration after a favorite change,
+/// but only when it is currently enabled (a no-op otherwise). Shared by the
+/// command and workflow mutation paths. Never errors — a refresh failure is
+/// logged inside `refresh_if_enabled` and must not fail the save.
+pub(crate) async fn refresh_shell_integration(pool: &DbPool) {
+    let favorites = crate::commands::shell_integration::load_shell_favorites(pool).await;
+    crate::platform::shell_integration::refresh_if_enabled(&favorites);
 }
 
 /// Cascade-delete every `local`-scoped command owned by the given workflow.

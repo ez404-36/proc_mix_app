@@ -1,11 +1,21 @@
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { Workflow } from "../../types";
 import { CancelIcon, EditIcon, RunIcon, TrashIcon } from "../icons";
 import { IdBadge } from "../IdBadge";
-import { WorkflowPreviewCanvas } from "./WorkflowPreviewCanvas";
+
+// Lazy-load the reactflow canvas so @xyflow/react (~178 kB) is split into its
+// own async chunk instead of riding in the startup bundle. WorkflowView is
+// imported statically by Home/Library (the first screen), so a static import
+// here would pull reactflow into `main-*.js`. The canvas only renders inside
+// the modal body (opened on demand), making it a natural lazy boundary.
+const WorkflowPreviewCanvas = lazy(() =>
+  import("./WorkflowPreviewCanvas").then((m) => ({
+    default: m.WorkflowPreviewCanvas,
+  })),
+);
 
 interface WorkflowViewProps {
   /** The workflow to display, or `null` when the view is closed. */
@@ -92,7 +102,13 @@ export function WorkflowView({
         ) : null}
 
         <div className="workflow-view__canvas">
-          <WorkflowPreviewCanvas workflow={workflow} />
+          <Suspense
+            fallback={
+              <div className="empty-state">{t("common.loading")}</div>
+            }
+          >
+            <WorkflowPreviewCanvas workflow={workflow} />
+          </Suspense>
         </div>
 
         <div className="command-form__actions">

@@ -1,6 +1,6 @@
 [package]
 name = "procmix"
-version = "0.11.0"
+version = "0.12.0"
 description = "ProcMix - cross-platform automation tool"
 authors = ["Zenkin Egor Andreevich"]
 edition = "2021"
@@ -24,6 +24,19 @@ default-run = "procmix"
 [profile.dev]
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
+
+# Release profile: optimise the shipped binary for size and startup.
+# `lto = "thin"` does cross-crate inlining/DCE (smaller, slightly faster);
+# `codegen-units = 1` maximises optimisation at the cost of build time;
+# `strip = true` removes debug symbols from the final binary (biggest on-disk
+# win). `panic` is left as the default `"unwind"` on purpose — `core::js_parser`
+# relies on `std::panic::catch_unwind` to turn a panicking sandboxed-JS run into
+# a clean error, and `panic = "abort"` would break that (the process would die
+# instead of reporting the parser error).
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
@@ -215,6 +228,14 @@ rfd = "0.15"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2.4.1"
 
+# Native OS notifications for the tray "Favorites" quick-launch outcome (v0.12.0).
+# A tray-triggered run is headless (no window), so a brief notification is the
+# only immediate feedback that the favorite finished / failed. Used via the
+# Rust `NotificationExt` API from the tray menu handler — never from JS — so no
+# JS capability is added. Desktop-only: meaningless on mobile (and the tray
+# itself is desktop-only).
+tauri-plugin-notification = "2"
+
 # Launch ProcMix at system startup when the user opts in (Settings → Autostart).
 # Cross-platform: Windows (HKCU\…\Run), macOS (LaunchAgent — chosen over the
 # AppleScript backend so no Terminal window flashes and no Automation
@@ -249,6 +270,13 @@ keyring = { version = "3", features = ["apple-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+
+# Per-user registry access (HKCU\Software\Classes) for the file-manager
+# shell-integration (v0.12.0). Writes the "ProcMix" cascade verbs WITHOUT admin
+# rights. Windows-only; the Linux backend uses a `.desktop` file instead.
+# Already present transitively (via reqwest); declared explicitly and scoped to
+# Windows so the dependency is intentional and auditable.
+winreg = "0.55"
 
 # Event Tracing for Windows (ETW) subscription for Process Capture — the
 # background "command recorder" that observes process births and surfaces

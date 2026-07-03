@@ -33,6 +33,7 @@ import { MainTab } from "./MainTab";
 import { ScriptTab } from "./ScriptTab";
 import { OutputTab } from "./OutputTab";
 import { EnvTab } from "./EnvTab";
+import { ExplorerTab } from "./ExplorerTab";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { useCommandStore } from "../../stores/commandStore";
@@ -145,7 +146,7 @@ export interface CommandFormProps {
  *   - Esc cancels
  *   - Backdrop click cancels
  *   - Cmd/Ctrl+Enter saves (when validation passes)
- *   - In create mode, label is "Create"; in edit mode, "Save"
+  *   - Save button label is "Save" in both create and edit mode
  *   - Editing a seed command (one carrying `nameKey`) converts it into a
  *     regular user command: `nameKey`/`descriptionKey` are dropped and the
  *     literal `name`/`description` taken from the form (already populated
@@ -759,10 +760,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
         ? t("commandForm.title.createLocal", { workflow: localWorkflowName })
         : t("commandForm.title.create")
       : t("commandForm.title.edit");
-  const saveLabel =
-    mode === "create"
-      ? t("commandForm.actions.create")
-      : t("commandForm.actions.save");
+  const saveLabel = t("commandForm.actions.save");
 
   // Build the shell dropdown options every render. Cheap (at most ~8
   // entries); cannot meaningfully be memoized because both
@@ -918,6 +916,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
               { key: "env", hasError: false },
               { key: "script", hasError: scriptTabHasError },
               { key: "output", hasError: false },
+              { key: "explorer", hasError: false },
             ] as ReadonlyArray<{ key: FormTab; hasError: boolean }>
           ).map(({ key, hasError }) => {
             const showBadge = showErrors && hasError;
@@ -1040,6 +1039,18 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
             onEnvRowAdd={handleEnvRowAdd}
             onEnvRowRemove={handleEnvRowRemove}
             updateEnvRow={updateEnvRow}
+          />
+
+          <ExplorerTab
+            t={t}
+            active={activeTab === "explorer"}
+            form={form}
+            onExplorerEnabledChange={(next) =>
+              setForm((s) => ({ ...s, explorerEnabled: next }))
+            }
+            onExplorerPathVariableChange={(next) =>
+              setForm((s) => ({ ...s, explorerPathVariable: next }))
+            }
           />
         </div>
 

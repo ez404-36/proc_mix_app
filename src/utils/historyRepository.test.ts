@@ -36,6 +36,9 @@ const sampleCommand: Command = {
   // `recordToCommand` always materialises `apiEnabled` (default false), so a
   // round-tripped command comes back with it set explicitly.
   apiEnabled: false,
+  // `recordToCommand` always materialises `explorerEnabled` (default false), so
+  // a round-tripped command comes back with it set explicitly.
+  explorerEnabled: false,
 };
 
 const sampleRecord: CommandRecord = {
@@ -464,6 +467,63 @@ describe("eventToWire", () => {
     });
     if (back.kind !== "scheduledRun") throw new Error("kind narrowing");
     expect(back.manual).toBe(false);
+  });
+
+  it("quickLaunch (tray): omits `selectedPath` from the wire and round-trips", () => {
+    const e: HistoryEvent = {
+      id: "q-tray",
+      createdAt: "2026-06-30T00:00:00Z",
+      kind: "quickLaunch",
+      targetKind: "command",
+      targetId: "cmd-1",
+      targetName: "Build",
+      source: "tray",
+      status: "success",
+      exitCode: 0,
+      durationMs: 12,
+    };
+    const wire = eventToWire(e);
+    if (wire.kind !== "quickLaunch") throw new Error("kind narrowing");
+    // A tray launch has no path: key absent, not `null`.
+    expect("selectedPath" in wire).toBe(false);
+    expect(wireToEvent(wire)).toEqual(e);
+  });
+
+  it("quickLaunch (shell): includes `selectedPath` and round-trips", () => {
+    const e: HistoryEvent = {
+      id: "q-shell",
+      createdAt: "2026-06-30T00:00:00Z",
+      kind: "quickLaunch",
+      targetKind: "command",
+      targetId: "cmd-1",
+      targetName: "Build",
+      source: "shell",
+      selectedPath: "/home/user/project",
+      status: "success",
+      exitCode: 0,
+      durationMs: 12,
+    };
+    const wire = eventToWire(e);
+    if (wire.kind !== "quickLaunch") throw new Error("kind narrowing");
+    expect(wire.selectedPath).toBe("/home/user/project");
+    expect(wireToEvent(wire)).toEqual(e);
+  });
+
+  it("quickLaunch: an unknown wire status decodes to `error`", () => {
+    const back = wireToEvent({
+      id: "q-bad",
+      createdAt: "2026-06-30T00:00:00Z",
+      kind: "quickLaunch",
+      targetKind: "command",
+      targetId: "cmd-1",
+      targetName: "Build",
+      source: "tray",
+      status: "bogus",
+    });
+    if (back.kind !== "quickLaunch") throw new Error("kind narrowing");
+    expect(back.status).toBe("error");
+    // An unknown source collapses to "tray".
+    expect(back.source).toBe("tray");
   });
 });
 

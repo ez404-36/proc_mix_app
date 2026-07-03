@@ -28,15 +28,28 @@ pub async fn list_workflows(
 
 #[tauri::command]
 pub async fn upsert_workflow(
+    app: AppHandle,
     pool: State<'_, DbPool>,
     workflow: storage_workflows::WorkflowRecord,
 ) -> Result<(), String> {
-    storage_workflows::upsert(pool.inner(), &workflow).await
+    storage_workflows::upsert(pool.inner(), &workflow).await?;
+    // Reflect a favorite toggle / rename in the tray "Favorites" submenu and
+    // (when enabled) the OS file-manager menu.
+    crate::platform::tray::rebuild_favorites(&app).await;
+    crate::commands::command::refresh_shell_integration(pool.inner()).await;
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_workflow(pool: State<'_, DbPool>, id: String) -> Result<(), String> {
-    storage_workflows::delete(pool.inner(), &id).await
+pub async fn delete_workflow(
+    app: AppHandle,
+    pool: State<'_, DbPool>,
+    id: String,
+) -> Result<(), String> {
+    storage_workflows::delete(pool.inner(), &id).await?;
+    crate::platform::tray::rebuild_favorites(&app).await;
+    crate::commands::command::refresh_shell_integration(pool.inner()).await;
+    Ok(())
 }
 
 /// Start a workflow run. The frontend sends the full `WorkflowRecord`

@@ -6,6 +6,14 @@ export interface TrayLabels {
   hide: string;
   quit: string;
   tooltip: string;
+  favorites: string;
+  favoritesEmpty: string;
+  favoritesMore: string;
+  notifyTitle: string;
+  notifySuccess: string;
+  notifyError: string;
+  notifyMissingVariable: string;
+  notifyNotFound: string;
 }
 
 /**
@@ -16,6 +24,12 @@ export interface TrayLabels {
  * becomes "Выйти из ProcMix (dev)"). The replacement is locale-agnostic:
  * every translation embeds the literal "ProcMix" token, so a single
  * substitution covers all languages.
+ *
+ * The favorites-submenu labels and notification bodies are passed too so the
+ * backend tray (which builds the menu and raises the quick-launch outcome
+ * notification) renders them in the user's language. The notification bodies
+ * keep their `{{name}}` placeholder — the backend substitutes the entity name
+ * at fire time.
  */
 export function buildTrayLabels(t: TFunction): TrayLabels {
   return withDevSuffix({
@@ -23,6 +37,15 @@ export function buildTrayLabels(t: TFunction): TrayLabels {
     hide: t("tray.hide"),
     quit: t("tray.quit"),
     tooltip: t("tray.tooltip"),
+    favorites: t("tray.favorites"),
+    favoritesEmpty: t("tray.favoritesEmpty"),
+    favoritesMore: t("tray.favoritesMore"),
+    notifyTitle: t("tray.notifyTitle"),
+    // Keep `{{name}}` literal — the backend interpolates the entity name.
+    notifySuccess: t("tray.notifySuccess", { name: "{{name}}" }),
+    notifyError: t("tray.notifyError", { name: "{{name}}" }),
+    notifyMissingVariable: t("tray.notifyMissingVariable", { name: "{{name}}" }),
+    notifyNotFound: t("tray.notifyNotFound"),
   });
 }
 
@@ -38,11 +61,22 @@ function withDevSuffix(labels: TrayLabels): TrayLabels {
   if (!import.meta.env.DEV) return labels;
   const tag = (s: string): string =>
     s.replace(PRODUCT_NAME, `${PRODUCT_NAME} (dev)`);
+  // Tag every string label. Only those containing "ProcMix" (show / hide /
+  // quit / tooltip / notifyTitle) change; the rest pass through unchanged so
+  // the object stays complete.
   return {
     show: tag(labels.show),
     hide: tag(labels.hide),
     quit: tag(labels.quit),
     tooltip: tag(labels.tooltip),
+    favorites: tag(labels.favorites),
+    favoritesEmpty: tag(labels.favoritesEmpty),
+    favoritesMore: tag(labels.favoritesMore),
+    notifyTitle: tag(labels.notifyTitle),
+    notifySuccess: tag(labels.notifySuccess),
+    notifyError: tag(labels.notifyError),
+    notifyMissingVariable: tag(labels.notifyMissingVariable),
+    notifyNotFound: tag(labels.notifyNotFound),
   };
 }
 

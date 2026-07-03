@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { ConfigProvider } from "@arco-design/web-react";
@@ -19,7 +19,13 @@ import { SshPasswordPrompt } from "./components/SshPasswordPrompt/SshPasswordPro
 import { Home } from "./components/Home";
 import { Library } from "./components/Library";
 import { SchedulerTab, ScheduleEditor } from "./components/Scheduler";
-import { Editor } from "./components/Editor";
+// Lazy-load the workflow Editor so @xyflow/react (~178 kB) is split into its
+// own async chunk rather than the startup bundle. The editor is only reached
+// via the "editor" view (opened on demand), so its reactflow dependency never
+// needs to load until the user opens a workflow.
+const Editor = lazy(() =>
+  import("./components/Editor").then((m) => ({ default: m.Editor })),
+);
 import { CommandEditor } from "./components/CommandEditor";
 import { History } from "./components/History";
 import { Recorder } from "./components/Recorder";
@@ -297,7 +303,15 @@ function App(): ReactElement {
               )}
             </div>
           </aside>
-          <main className="app-main">{renderView(currentView)}</main>
+          <main className="app-main">
+            <Suspense
+              fallback={
+                <div className="empty-state">{t("common.loading")}</div>
+              }
+            >
+              {renderView(currentView)}
+            </Suspense>
+          </main>
         </div>
         <CommandPalette />
         <OutputPanel />

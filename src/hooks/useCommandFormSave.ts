@@ -138,6 +138,14 @@ export function useCommandFormSave(
     const trimmedSlug = form.apiSlug.trim();
     const apiSlugValue = trimmedSlug === "" ? undefined : trimmedSlug;
 
+    // Explorer path-target variable. A blank selection means "don't substitute
+    // into a variable" (stored as undefined). Only meaningful when the Explorer
+    // integration is enabled, but persisted regardless so toggling off then on
+    // keeps the selection.
+    const trimmedExplorerVar = form.explorerPathVariable.trim();
+    const explorerPathVariableValue =
+      trimmedExplorerVar === "" ? undefined : trimmedExplorerVar;
+
     // Convert UI rows to wire-format specs. Empty list → omit the
     // field entirely from the saved Command (matches the `args` / `env`
     // convention elsewhere in this file). For the edit path we always
@@ -193,6 +201,11 @@ export function useCommandFormSave(
         // the slug or disabling access drops the value on the stored command.
         apiEnabled: form.apiEnabled,
         apiSlug: apiSlugValue,
+        // Explorer: explicit fields (including `undefined` variable) so clearing
+        // the variable or disabling the menu entry drops the value on the stored
+        // command rather than leaving the old value behind the spread merge.
+        explorerEnabled: form.explorerEnabled,
+        explorerPathVariable: explorerPathVariableValue,
       };
       if (command.nameKey !== undefined) patch.nameKey = undefined;
       if (command.descriptionKey !== undefined) {
@@ -231,6 +244,12 @@ export function useCommandFormSave(
         // byte-identical to a command that predates this feature.
         ...(form.apiEnabled ? { apiEnabled: true } : {}),
         ...(apiSlugValue !== undefined ? { apiSlug: apiSlugValue } : {}),
+        // Explorer: omit entirely when not opted in / no variable so the wire
+        // stays byte-identical to a command that predates this feature.
+        ...(form.explorerEnabled ? { explorerEnabled: true } : {}),
+        ...(explorerPathVariableValue !== undefined
+          ? { explorerPathVariable: explorerPathVariableValue }
+          : {}),
         // A command created from within a workflow editor is scoped LOCAL to
         // that workflow (hidden from the global library). Stamp the scope +
         // owning workflow id supplied by the host. Omitted entirely for a
@@ -272,6 +291,8 @@ export function useCommandFormSave(
     form.promptSshPassword,
     form.apiEnabled,
     form.apiSlug,
+    form.explorerEnabled,
+    form.explorerPathVariable,
     errors,
     hasErrors,
     hasVariableErrors,

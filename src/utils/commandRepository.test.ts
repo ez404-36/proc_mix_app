@@ -39,6 +39,8 @@ const fullCommand: Command = {
   scope: "global",
   apiSlug: "deploy",
   apiEnabled: true,
+  explorerEnabled: true,
+  explorerPathVariable: "target",
 };
 
 const fullRecord: CommandRecord = {
@@ -64,6 +66,8 @@ const fullRecord: CommandRecord = {
   scope: "global",
   apiSlug: "deploy",
   apiEnabled: true,
+  explorerEnabled: true,
+  explorerPathVariable: "target",
 };
 
 const minimalCommand: Command = {
@@ -78,6 +82,7 @@ const minimalCommand: Command = {
   runAsAdmin: false,
   scope: "global",
   apiEnabled: false,
+  explorerEnabled: false,
 };
 
 const minimalRecord: CommandRecord = {
@@ -102,6 +107,7 @@ const minimalRecord: CommandRecord = {
   runAsAdmin: false,
   scope: "global",
   apiEnabled: false,
+  explorerEnabled: false,
 };
 
 beforeEach(() => {
