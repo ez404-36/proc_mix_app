@@ -268,6 +268,7 @@ export function buildInitialState(
       apiSlug: command.apiSlug ?? "",
       explorerEnabled: command.explorerEnabled ?? false,
       explorerPathVariable: command.explorerPathVariable ?? "",
+      sound: command.sound,
     };
   }
   return {
@@ -298,6 +299,8 @@ export function buildInitialState(
     // New commands are not in the Explorer menu until the user opts in.
     explorerEnabled: false,
     explorerPathVariable: "",
+    // New commands inherit the global sound settings until configured.
+    sound: undefined,
   };
 }
 
@@ -339,5 +342,6 @@ export function fingerprintForm(form: FormState): string {
     apiSlug: form.apiSlug,
     explorerEnabled: form.explorerEnabled,
     explorerPathVariable: form.explorerPathVariable,
+    sound: form.sound ?? null,
   });
 }

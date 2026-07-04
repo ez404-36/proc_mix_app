@@ -433,7 +433,14 @@ function appendImplicitEnds(
 export function flowToWorkflow(
   base: Pick<
     Workflow,
-    "name" | "description" | "icon" | "tags" | "categoryId" | "apiEnabled" | "apiSlug"
+    | "name"
+    | "description"
+    | "icon"
+    | "tags"
+    | "categoryId"
+    | "apiEnabled"
+    | "apiSlug"
+    | "sound"
   >,
   nodes: WorkflowFlowNode[],
   edges: WorkflowFlowEdge[],
@@ -446,6 +453,7 @@ export function flowToWorkflow(
   | "categoryId"
   | "apiEnabled"
   | "apiSlug"
+  | "sound"
   | "nodes"
   | "edges"
 > {
@@ -465,6 +473,7 @@ export function flowToWorkflow(
     categoryId: base.categoryId,
     apiEnabled: base.apiEnabled,
     apiSlug: base.apiSlug,
+    sound: base.sound,
     nodes: withEnds.nodes.map(flowNodeToNode),
     edges: withEnds.edges.map(flowEdgeToEdge),
   };

@@ -26,10 +26,7 @@ pub fn shell_integration_status() -> Result<ShellIntegrationStatus, String> {
 /// favorite commands / workflows are materialised into the OS menu; when
 /// disabling, the registration is removed.
 #[tauri::command]
-pub async fn set_shell_integration(
-    pool: State<'_, DbPool>,
-    enabled: bool,
-) -> Result<(), String> {
+pub async fn set_shell_integration(pool: State<'_, DbPool>, enabled: bool) -> Result<(), String> {
     let favorites = load_shell_favorites(pool.inner()).await;
     shell_integration::set_enabled(enabled, &favorites)
 }

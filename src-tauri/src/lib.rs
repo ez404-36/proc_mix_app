@@ -127,7 +127,9 @@ pub fn run() {
         .manage(Arc::new(crate::core::ssh::SshWatchState::new()))
         // Pending quick-launch prompt (v0.12.0): holds the command awaiting
         // interactive input while the standalone prompt dialog collects it.
-        .manage(Arc::new(crate::platform::quick_prompt::QuickPromptState::new()))
+        .manage(Arc::new(
+            crate::platform::quick_prompt::QuickPromptState::new(),
+        ))
         .setup(|app| {
             // Initialise the SQLite-backed command library. `setup` is a
             // synchronous Tauri hook, so we block_on the async pool
@@ -384,6 +386,12 @@ pub fn run() {
             commands::has_ssh_password,
             commands::set_ssh_password,
             commands::clear_ssh_password,
+            commands::get_sound_settings,
+            commands::set_sound_settings,
+            commands::list_sounds,
+            commands::import_custom_sound,
+            commands::delete_custom_sound,
+            commands::preview_sound,
             commands::sftp::sftp_list_dir,
             commands::sftp::sftp_download,
             commands::sftp::sftp_upload,

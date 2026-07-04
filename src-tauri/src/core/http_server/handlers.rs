@@ -941,6 +941,7 @@ mod tests {
             api_enabled: true,
             explorer_enabled: false,
             explorer_path_variable: None,
+            sound: None,
         }
     }
 
@@ -1074,6 +1075,7 @@ mod tests {
             run_count: 0,
             api_slug: None,
             api_enabled: true,
+            sound: None,
         };
         let mut commands = HashMap::new();
         commands.insert("c1".to_string(), cmd);

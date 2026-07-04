@@ -1,6 +1,6 @@
 [package]
 name = "procmix"
-version = "0.12.0"
+version = "0.13.0"
 description = "ProcMix - cross-platform automation tool"
 authors = ["Zenkin Egor Andreevich"]
 edition = "2021"
@@ -246,6 +246,16 @@ tauri-plugin-notification = "2"
 # system-launched start from a manual one. Desktop-only — meaningless on mobile.
 tauri-plugin-autostart = "2"
 
+# Audio playback for sound notifications (`core::sound`). Plays the bundled
+# built-in tones (generated offline by `examples/gen_sounds.rs`) and user-
+# uploaded custom sounds when a run finishes — including headless tray/schedule
+# fires. Desktop-only: pulls native audio backends (ALSA on Linux via `cpal`,
+# CoreAudio on macOS, WASAPI on Windows) and audio is meaningless on mobile.
+# `default-features = false` + only the decoders we accept keeps the native
+# dependency surface (and the allowed upload formats) explicit. Playback is
+# best-effort: a missing device or decode error is logged, never fatal.
+rodio = { version = "0.19", default-features = false, features = ["symphonia-wav", "symphonia-mp3", "symphonia-vorbis", "symphonia-flac"] }
+
 # OS keychain access for storing the sudo password used by the
 # "Run as administrator" feature on Unix. On Windows the keychain is
 # never read (UAC handles elevation); the crate still compiles cleanly
@@ -314,6 +324,17 @@ tower = { version = "0.5", features = ["util"] }
 # Dev-only — never linked into the app binary. Run with `cargo bench`.
 # `html_reports` is off to keep the dependency tree (and CI output) lean.
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+# WAV writer for the ONE-TIME built-in notification-sound generator
+# (`examples/gen_sounds.rs`). The built-in success/error tones are generated
+# offline by that example and COMMITTED as static `.wav` assets under
+# `sounds/`; the app itself never synthesises audio — it only plays the
+# committed files (and user uploads) via `rodio`. `hound` therefore lives in
+# dev-dependencies only and is never linked into the shipped binary. It has no
+# ALSA/system-audio dependency (pure PCM-to-file), so the generator builds and
+# runs anywhere, unlike the `rodio` playback path. Run with
+# `cargo run --example gen_sounds`.
+hound = "3"
 
 # Output-extraction benchmarks: the parser pipeline (raw/lines/json/regex/
 # keyValue/table) plus the JS `parse(data)` step. `harness = false` lets

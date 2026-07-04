@@ -9038,3 +9038,104 @@ body.is-editor-fullscreen .output-panel {
   color: var(--color-text-muted);
   background: var(--color-bg-subtle);
 }
+
+/* ---- Per-entity sound-notification editor ------------------------------- */
+/* Two outcome rows (Success / Error), each a toggle + label header and, when
+   enabled, a sound picker with an optional Play button. Uses the shared
+   design tokens only — no new colours. */
+.sound-config-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sound-config-editor__row {
+  gap: 8px;
+}
+
+.sound-config-editor__row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sound-config-editor__label {
+  margin: 0;
+}
+
+.sound-config-editor__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Cap the picker + Play row so it doesn't stretch across the whole pane —
+     applies to both the per-entity editor (command/workflow forms) and the
+     global Settings → Sound section. */
+  max-width: 320px;
+}
+
+/* Let the picker take the available width; the Play button stays intrinsic. */
+.sound-config-editor__controls .dropdown {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sound-config-editor__preview {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Play/preview button next to a sound picker: green (success) frame + icon
+   when a sound is selected (enabled), muted grey when nothing is chosen
+   (disabled). The icon uses `currentColor`, so `color` styles the glyph too.
+   Scoped to the picker control row so the custom-list's play/delete buttons
+   keep their own styling. Shared by the form editor and Settings → Sound. */
+.sound-config-editor__controls .sound-config-editor__preview {
+  border: 1px solid var(--color-success);
+  color: var(--color-success);
+}
+
+.sound-config-editor__controls .sound-config-editor__preview:disabled {
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+/* Custom-sound library list in Settings → Sound. */
+.sound-config-editor__custom-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sound-config-editor__custom-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sound-config-editor__custom-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Settings → Sound tab ------------------------------------------------ */
+/* The picker + Play-button styling (width cap, green/grey states) is shared and
+   lives on the base `.sound-config-editor__controls` rules above. These rules
+   only cap the Settings-specific controls (the volume slider and the custom-
+   sound list) that have no equivalent in the per-entity form editor. */
+.sound-settings input[type="range"] {
+  width: 100%;
+  max-width: 320px;
+}
+
+.sound-settings .sound-config-editor__custom-list {
+  max-width: 320px;
+}

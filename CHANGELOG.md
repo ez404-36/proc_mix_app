@@ -5,6 +5,56 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-07-05
+
+**Sound notifications when a run finishes.** ProcMix can now play a short audio
+cue when a command or workflow run finishes, with independent configuration for
+the success and error outcomes. Sounds are off by default — nothing plays until
+you opt in, either globally (Settings → Sound) or on a specific command/workflow.
+The cue fires in the backend, so it also covers headless runs with no window:
+tray "Favorites" quick-launch, Explorer integration, and the Scheduler.
+
+### Added
+
+- **Sound cues on run completion.** A short tone plays when a run reaches a
+  terminal state — one sound for **success** (exit `0`) and another for **error**
+  (non-zero exit, timeout, or runtime error). Workflows use the aggregate
+  outcome, so there is a single cue at the end rather than one per node.
+- **Global sound settings (Settings → Sound).** A master on/off switch, a default
+  success sound, a default error sound, and a volume slider. Disabled out of the
+  box.
+- **Per-command / per-workflow overrides.** A new **Sound** tab in the command
+  editor and the same control in the workflow properties enable a cue for a
+  single entity, choosing a sound per outcome or falling back to the global
+  default. Success and error are independent slots — enable only success, only
+  error, or both. A per-entity cue plays **even while the global master switch is
+  off**.
+- **Bundled tones + custom uploads.** Four click-free built-in tones ship with
+  the app (`success`, `error`, `chime`, `buzz`). Users can upload their own audio
+  (`wav` / `mp3` / `ogg` / `flac`), copied into the app data directory and
+  referenced by a stable id, with an in-app **preview** button. Deleting a custom
+  sound clears any slot that referenced it.
+- **Sound config in Export/Import.** A command's or workflow's sound
+  configuration is part of its portable definition and round-trips through
+  Export/Import. Custom-sound files are not exported; a missing referenced sound
+  degrades gracefully to the global default / silence.
+
+### Changed
+
+- **Silent by default is preserved.** Existing commands and workflows keep their
+  current behaviour — no cue plays until one is explicitly enabled. The
+  per-entity `sound_config` column is an additive, nullable migration; no data
+  migration is required.
+
+### Security
+
+- Custom sound files are validated by an allow-listed extension set before being
+  stored, and are only ever decoded by the audio player — never executed or
+  passed to a shell. See
+  [`docs/sound-notifications.md`](../docs/sound-notifications.md).
+
+---
+
 ## [0.12.0] - 2026-06-30
 
 **Run your favorites without opening ProcMix.** Two new quick-launch paths fire

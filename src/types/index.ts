@@ -7,4 +7,5 @@ export * from "./outputSchema";
 export * from "./platform";
 export * from "./plugin";
 export * from "./schedule";
+export * from "./sound";
 export * from "./workflow";

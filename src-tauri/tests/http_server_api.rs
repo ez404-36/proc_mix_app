@@ -98,6 +98,7 @@ fn command(id: &str, script: &str, api_slug: Option<&str>, api_enabled: bool) ->
         api_enabled,
         explorer_enabled: false,
         explorer_path_variable: None,
+        sound: None,
     }
 }
 
@@ -145,6 +146,7 @@ fn workflow(id: &str, command_id: &str, api_slug: &str) -> WorkflowRecord {
         run_count: 0,
         api_slug: Some(api_slug.into()),
         api_enabled: true,
+        sound: None,
     }
 }
 

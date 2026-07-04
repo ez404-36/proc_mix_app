@@ -12,6 +12,9 @@ import { isValidApiSlug, sanitizeApiSlugInput } from "../../utils/apiSlug";
 import { CancelIcon, CheckIcon } from "../icons";
 import { IdBadge } from "../IdBadge";
 import { ToggleSwitch } from "../ToggleSwitch";
+import { SoundConfigEditor } from "../SoundConfigEditor";
+import { useSoundStore } from "../../stores/soundStore";
+import type { EntitySoundConfig } from "../../types";
 
 /**
  * Editable workflow metadata, distinct from the persisted `Workflow` (no id,
@@ -28,6 +31,11 @@ export interface WorkflowMeta {
   apiEnabled?: boolean;
   /** Optional HTTP-API slug (`undefined` = no slug). */
   apiSlug?: string;
+  /**
+   * Optional per-workflow sound-notification override (`undefined` = inherit
+   * the global sound settings for both outcomes).
+   */
+  sound?: EntitySoundConfig;
 }
 
 interface WorkflowMetaModalProps {
@@ -82,7 +90,22 @@ export function WorkflowMetaModal({
   );
   const [apiEnabled, setApiEnabled] = useState(initial.apiEnabled ?? false);
   const [apiSlug, setApiSlug] = useState(initial.apiSlug ?? "");
+  const [sound, setSound] = useState<EntitySoundConfig | undefined>(
+    initial.sound,
+  );
   const [tagDraft, setTagDraft] = useState<string>("");
+
+  // Sound picker data (built-ins + custom uploads) + preview + global defaults.
+  const sounds = useSoundStore((s) => s.sounds);
+  const preview = useSoundStore((s) => s.preview);
+  const soundSettings = useSoundStore((s) => s.settings);
+  const loadSounds = useSoundStore((s) => s.load);
+  useEffect(() => {
+    if (sounds.length === 0) {
+      void loadSounds();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [tagSuggestActiveIndex, setTagSuggestActiveIndex] =
     useState<number>(-1);
   const [showError, setShowError] = useState(false);
@@ -199,6 +222,7 @@ export function WorkflowMetaModal({
       icon: initial.icon,
       apiEnabled,
       apiSlug: trimmedSlug === "" ? undefined : trimmedSlug,
+      sound,
     });
   };
 
@@ -354,6 +378,24 @@ export function WorkflowMetaModal({
             ) : null}
           </div>
         ) : null}
+
+        <div className="command-form__field">
+          <span className="command-form__label">
+            {t("sound.workflowSectionLabel", {
+              defaultValue: "Sound notifications",
+            })}
+          </span>
+          <SoundConfigEditor
+            value={sound}
+            onChange={setSound}
+            sounds={sounds}
+            onPreview={(id) => void preview(id)}
+            globalDefaults={{
+              successSoundId: soundSettings.successSoundId,
+              errorSoundId: soundSettings.errorSoundId,
+            }}
+          />
+        </div>
 
         <div className="command-form__actions">
           <button

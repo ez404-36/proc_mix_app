@@ -249,6 +249,12 @@ pub struct WorkflowRecord {
     /// (default) keeps it invisible to the API. Serialised `apiEnabled`.
     #[serde(default)]
     pub api_enabled: bool,
+    /// Optional per-workflow sound-notification override. `None` (the default
+    /// for legacy rows) means the workflow inherits the global sound settings
+    /// for both outcomes. Persisted as the `sound_config` TEXT column
+    /// (JSON-encoded `EntitySoundConfig`, NULL when absent). Serialised `sound`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<crate::storage::sound::EntitySoundConfig>,
 }
 
 /// Return every workflow in insertion order (oldest first).
@@ -256,7 +262,7 @@ pub async fn list_all(pool: &DbPool) -> Result<Vec<WorkflowRecord>, String> {
     let rows = sqlx::query(
         "SELECT id, name, description, icon, nodes_json, edges_json, tags_json, \
                 category_id, favorite, created_at, updated_at, last_run_at, run_count, \
-                api_slug, api_enabled \
+                api_slug, api_enabled, sound_config \
          FROM workflows \
          ORDER BY created_at ASC",
     )
@@ -295,13 +301,18 @@ pub async fn upsert(pool: &DbPool, wf: &WorkflowRecord) -> Result<(), String> {
     let nodes_json = serde_json::to_string(&wf.nodes).map_err(|e| format!("encode nodes: {e}"))?;
     let edges_json = serde_json::to_string(&wf.edges).map_err(|e| format!("encode edges: {e}"))?;
     let tags_json = serde_json::to_string(&wf.tags).map_err(|e| format!("encode tags: {e}"))?;
+    // Per-workflow sound override → JSON, NULL when absent (inherit global).
+    let sound_config_json = match &wf.sound {
+        Some(s) => Some(serde_json::to_string(s).map_err(|e| format!("encode sound: {e}"))?),
+        None => None,
+    };
 
     sqlx::query(
         "INSERT INTO workflows ( \
             id, name, description, icon, nodes_json, edges_json, tags_json, \
             category_id, favorite, created_at, updated_at, last_run_at, run_count, \
-            api_slug, api_enabled \
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            api_slug, api_enabled, sound_config \
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \
             description = excluded.description, \
@@ -315,7 +326,8 @@ pub async fn upsert(pool: &DbPool, wf: &WorkflowRecord) -> Result<(), String> {
             last_run_at = excluded.last_run_at, \
             run_count = excluded.run_count, \
             api_slug = excluded.api_slug, \
-            api_enabled = excluded.api_enabled",
+            api_enabled = excluded.api_enabled, \
+            sound_config = excluded.sound_config",
     )
     .bind(&wf.id)
     .bind(&wf.name)
@@ -332,6 +344,7 @@ pub async fn upsert(pool: &DbPool, wf: &WorkflowRecord) -> Result<(), String> {
     .bind(wf.run_count)
     .bind(wf.api_slug.as_deref().filter(|s| !s.is_empty()))
     .bind(if wf.api_enabled { 1_i64 } else { 0_i64 })
+    .bind(&sound_config_json)
     .execute(pool.as_ref())
     .await
     .map_err(|e| format!("upsert: {e}"))?;
@@ -370,6 +383,16 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<WorkflowRecord, String>
         .map_err(|e| format!("decode edges_json: {e}"))?;
     let tags = serde_json::from_str::<Vec<String>>(&tags_json)
         .map_err(|e| format!("decode tags_json: {e}"))?;
+    let sound_config_json: Option<String> = row
+        .try_get("sound_config")
+        .map_err(|e| format!("read sound_config: {e}"))?;
+    let sound = match sound_config_json {
+        Some(s) => Some(
+            serde_json::from_str::<crate::storage::sound::EntitySoundConfig>(&s)
+                .map_err(|e| format!("decode sound_config: {e}"))?,
+        ),
+        None => None,
+    };
 
     Ok(WorkflowRecord {
         id: row.try_get("id").map_err(|e| format!("read id: {e}"))?,
@@ -404,6 +427,7 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<WorkflowRecord, String>
             .try_get::<i64, _>("api_enabled")
             .map_err(|e| format!("read api_enabled: {e}"))?
             != 0,
+        sound,
     })
 }
 
@@ -420,7 +444,7 @@ pub async fn find_by_api_ref(
     let row = sqlx::query(
         "SELECT id, name, description, icon, nodes_json, edges_json, tags_json, \
                 category_id, favorite, created_at, updated_at, last_run_at, run_count, \
-                api_slug, api_enabled \
+                api_slug, api_enabled, sound_config \
          FROM workflows \
          WHERE api_enabled = 1 AND (api_slug = ? OR id = ?) \
          ORDER BY (api_slug = ?) DESC \
@@ -498,6 +522,7 @@ mod wire_format_tests {
             run_count: 3,
             api_slug: Some("deploy-wf".into()),
             api_enabled: true,
+            sound: None,
         }
     }
 
@@ -798,6 +823,7 @@ mod sqlite_integration_tests {
             run_count: 0,
             api_slug: None,
             api_enabled: false,
+            sound: None,
         }
     }
 

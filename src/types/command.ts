@@ -1,4 +1,5 @@
 import type { OutputSchema } from "./outputSchema";
+import type { EntitySoundConfig } from "./sound";
 
 /**
  * Logical shell name persisted on a `Command`. The Rust executor maps each
@@ -249,6 +250,13 @@ export interface Command {
    * the path is only exposed via `PROCMIX_SELECTED_PATH`.
    */
   explorerPathVariable?: string;
+  /**
+   * Optional per-command sound-notification override. `undefined` means the
+   * command inherits the global sound settings for both outcomes (the default
+   * for existing / seed commands — no migration needed). See
+   * {@link EntitySoundConfig} for the per-outcome resolution rules.
+   */
+  sound?: EntitySoundConfig;
 }
 
 /**

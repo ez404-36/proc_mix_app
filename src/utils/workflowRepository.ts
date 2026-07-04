@@ -17,6 +17,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   DataAssignment,
   DataSource,
+  EntitySoundConfig,
   LoopConfig,
   OutputSchema,
   RetryConfig,
@@ -146,6 +147,14 @@ export interface WorkflowRecord {
    * legacy records (Rust `#[serde(default)]` → `false`); decoded to `false`.
    */
   apiEnabled?: boolean;
+  /**
+   * Mirror of the Rust `sound` field — the optional per-workflow sound-
+   * notification override, stored as a JSON column. Optional/absent on the
+   * wire for legacy records (`#[serde(default)]` → `None`, serialised with
+   * `skip_serializing_if = "Option::is_none"`). {@link workflowToRecord} omits
+   * it when absent so the wire stays byte-identical to legacy payloads.
+   */
+  sound?: EntitySoundConfig | null;
 }
 
 function nodeToRecord(n: WorkflowNode): WorkflowNodeRecord {
@@ -236,6 +245,10 @@ export function workflowToRecord(w: Workflow): WorkflowRecord {
     ),
     // HTTP-API opt-in. Always sent so toggling it off persists.
     apiEnabled: w.apiEnabled ?? false,
+    // Per-workflow sound override: pass through verbatim as a JSON column,
+    // omitted when absent so the wire stays byte-identical to legacy payloads
+    // for workflows that inherit the global sound settings.
+    ...omitWhenUndefined("sound", w.sound),
   };
 }
 
@@ -263,6 +276,9 @@ export function recordToWorkflow(r: WorkflowRecord): Workflow {
     apiSlug: nullToUndef(r.apiSlug),
     // Default to `false` for legacy rows (no column).
     apiEnabled: r.apiEnabled ?? false,
+    // Per-workflow sound override; `undefined` (inherit global) when the
+    // record carries no value or an explicit `null`.
+    sound: nullToUndef(r.sound),
   };
 }
 

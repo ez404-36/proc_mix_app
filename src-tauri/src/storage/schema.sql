@@ -81,7 +81,12 @@ CREATE TABLE IF NOT EXISTS commands (
   -- filesystem path (PROCMIX_SELECTED_PATH) when launched from the Explorer
   -- context menu. NULL = the path is only exposed via the reserved
   -- PROCMIX_SELECTED_PATH variable. Added in v0.12.x.
-  explorer_path_variable TEXT
+  explorer_path_variable TEXT,
+  -- Optional per-command sound-notification override, JSON-encoded
+  -- `EntitySoundConfig` ({"success":{…},"error":{…}}). NULL = inherit the
+  -- global sound settings for both outcomes. Added in v0.12.x; see
+  -- docs/sound-notifications.md and db.rs::ensure_commands_columns.
+  sound_config TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_commands_favorite ON commands(favorite);
@@ -165,7 +170,11 @@ CREATE TABLE IF NOT EXISTS workflows (
   -- Whether this workflow may be run over the built-in HTTP API. Default 0 —
   -- invisible to the API until the user explicitly opts in. The companion ALTER
   -- in db.rs::ensure_workflows_columns handles older databases. Added in v0.10.0.
-  api_enabled   INTEGER NOT NULL DEFAULT 0
+  api_enabled   INTEGER NOT NULL DEFAULT 0,
+  -- Optional per-workflow sound-notification override, JSON-encoded
+  -- `EntitySoundConfig`. NULL = inherit the global sound settings for both
+  -- outcomes. Added in v0.12.x; see db.rs::ensure_workflows_columns.
+  sound_config  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_workflows_favorite ON workflows(favorite);
@@ -311,4 +320,31 @@ CREATE TABLE IF NOT EXISTS plugin_state (
   -- 1 = enabled, 0 = disabled (SQLite has no bool).
   enabled     INTEGER NOT NULL DEFAULT 1,
   updated_at  TEXT NOT NULL DEFAULT ''
+);
+
+-- Global sound-notification settings (v0.12.x). A single-row table (id =
+-- 'global') holding the master on/off, the fallback success/error sound ids,
+-- and the playback volume. DISABLED by default: no row (or enabled = 0) means
+-- nothing plays until the user opts in. Per-entity overrides live on the
+-- commands/workflows `sound_config` columns instead. See storage/sound.rs and
+-- docs/sound-notifications.md.
+CREATE TABLE IF NOT EXISTS sound_settings (
+  id               TEXT PRIMARY KEY NOT NULL,
+  -- 1 = master switch on, 0 = off (default).
+  enabled          INTEGER NOT NULL DEFAULT 0,
+  -- Fallback sound ids for each outcome; NULL = no default chosen.
+  success_sound_id TEXT,
+  error_sound_id   TEXT,
+  -- Playback volume, 0.0–1.0.
+  volume           REAL NOT NULL DEFAULT 0.8
+);
+
+-- User-uploaded custom sounds (v0.12.x). Metadata only — the audio bytes live
+-- under <app_data>/sounds/<stored_filename>. `id` is a uuid referenced by a
+-- `soundId` in sound_settings / a per-entity sound_config. See storage/sound.rs.
+CREATE TABLE IF NOT EXISTS custom_sounds (
+  id              TEXT PRIMARY KEY NOT NULL,
+  original_name   TEXT NOT NULL,
+  stored_filename TEXT NOT NULL,
+  created_at      TEXT NOT NULL
 );

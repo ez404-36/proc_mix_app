@@ -294,6 +294,14 @@ pub struct CommandRecord {
     /// payloads parsing cleanly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explorer_path_variable: Option<String>,
+    /// Optional per-command sound-notification override. `None` (the default
+    /// for legacy rows and commands that never set it) means the command
+    /// inherits the global sound settings for both outcomes. Persisted as the
+    /// `sound_config` TEXT column (JSON-encoded `EntitySoundConfig`, NULL when
+    /// absent). Serialised as `sound`. `#[serde(default)]` keeps legacy
+    /// payloads parsing cleanly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<crate::storage::sound::EntitySoundConfig>,
 }
 
 /// Return every command in insertion order (oldest first).
@@ -303,7 +311,7 @@ pub async fn list_all(pool: &DbPool) -> Result<Vec<CommandRecord>, String> {
                 args_json, working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
                 timeout_seconds, output_schema, scope, workflow_id, target, \
-                api_slug, api_enabled, explorer_enabled, explorer_path_variable \
+                api_slug, api_enabled, explorer_enabled, explorer_path_variable, sound_config \
          FROM commands \
          ORDER BY created_at ASC",
     )
@@ -383,6 +391,12 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
         Some(t) => Some(serde_json::to_string(t).map_err(|e| format!("encode target: {e}"))?),
         None => None,
     };
+    // Persist the per-command sound override as JSON. `None` (inherit global)
+    // is stored as NULL, which `row_to_record` decodes back to `None`.
+    let sound_config_json = match &cmd.sound {
+        Some(s) => Some(serde_json::to_string(s).map_err(|e| format!("encode sound: {e}"))?),
+        None => None,
+    };
 
     sqlx::query(
         "INSERT INTO commands ( \
@@ -390,8 +404,8 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             args_json, working_dir, env_json, tags_json, category_id, favorite, \
             created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
             timeout_seconds, output_schema, scope, workflow_id, target, \
-            api_slug, api_enabled, explorer_enabled, explorer_path_variable \
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            api_slug, api_enabled, explorer_enabled, explorer_path_variable, sound_config \
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \
             name_key = excluded.name_key, \
@@ -419,7 +433,8 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             api_slug = excluded.api_slug, \
             api_enabled = excluded.api_enabled, \
             explorer_enabled = excluded.explorer_enabled, \
-            explorer_path_variable = excluded.explorer_path_variable",
+            explorer_path_variable = excluded.explorer_path_variable, \
+            sound_config = excluded.sound_config",
     )
     .bind(&cmd.id)
     .bind(&cmd.name)
@@ -458,6 +473,7 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
     // An empty variable name from the UI ("— don't substitute —") normalises to
     // NULL so "no variable" is a single representation.
     .bind(cmd.explorer_path_variable.as_deref().filter(|s| !s.is_empty()))
+    .bind(&sound_config_json)
     .execute(pool.as_ref())
     .await
     .map_err(|e| format!("upsert: {e}"))?;
@@ -568,6 +584,16 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
     let explorer_path_variable: Option<String> = row
         .try_get("explorer_path_variable")
         .map_err(|e| format!("read explorer_path_variable: {e}"))?;
+    let sound_config_json: Option<String> = row
+        .try_get("sound_config")
+        .map_err(|e| format!("read sound_config: {e}"))?;
+    let sound = match sound_config_json {
+        Some(s) => Some(
+            serde_json::from_str::<crate::storage::sound::EntitySoundConfig>(&s)
+                .map_err(|e| format!("decode sound_config: {e}"))?,
+        ),
+        None => None,
+    };
 
     Ok(CommandRecord {
         id: row.try_get("id").map_err(|e| format!("read id: {e}"))?,
@@ -621,6 +647,7 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
         api_enabled: api_enabled_i != 0,
         explorer_enabled: explorer_enabled_i != 0,
         explorer_path_variable,
+        sound,
     })
 }
 
@@ -646,7 +673,7 @@ pub async fn find_by_api_ref(
                 args_json, working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
                 timeout_seconds, output_schema, scope, workflow_id, target, \
-                api_slug, api_enabled, explorer_enabled, explorer_path_variable \
+                api_slug, api_enabled, explorer_enabled, explorer_path_variable, sound_config \
          FROM commands \
          WHERE api_enabled = 1 AND (api_slug = ? OR id = ?) \
          ORDER BY (api_slug = ?) DESC \
@@ -674,7 +701,7 @@ pub async fn find_by_id(pool: &DbPool, id: &str) -> Result<Option<CommandRecord>
                 args_json, working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
                 timeout_seconds, output_schema, scope, workflow_id, target, \
-                api_slug, api_enabled, explorer_enabled, explorer_path_variable \
+                api_slug, api_enabled, explorer_enabled, explorer_path_variable, sound_config \
          FROM commands \
          WHERE id = ? \
          LIMIT 1",
@@ -753,6 +780,7 @@ mod wire_format_tests {
             api_enabled: true,
             explorer_enabled: true,
             explorer_path_variable: Some("target".into()),
+            sound: None,
         }
     }
 
@@ -1020,6 +1048,7 @@ mod sqlite_integration_tests {
             api_enabled: false,
             explorer_enabled: true,
             explorer_path_variable: Some("target".into()),
+            sound: None,
         }
     }
 

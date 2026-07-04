@@ -194,6 +194,13 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
             "explorer_path_variable",
             "ALTER TABLE commands ADD COLUMN explorer_path_variable TEXT",
         ),
+        (
+            // JSON-encoded per-command sound-notification override (v0.12.x).
+            // NULL on existing rows → the command inherits the global sound
+            // settings. Plain TEXT, no index needed.
+            "sound_config",
+            "ALTER TABLE commands ADD COLUMN sound_config TEXT",
+        ),
     ];
 
     apply_column_migrations(pool, "commands", migrations).await?;
@@ -236,6 +243,12 @@ async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
             // HTTP-API opt-in flag (v0.10.0). Default 0.
             "api_enabled",
             "ALTER TABLE workflows ADD COLUMN api_enabled INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            // JSON-encoded per-workflow sound-notification override (v0.12.x).
+            // NULL on existing rows → inherit the global sound settings.
+            "sound_config",
+            "ALTER TABLE workflows ADD COLUMN sound_config TEXT",
         ),
     ];
 
@@ -747,6 +760,90 @@ mod tests {
 
         // Running the migration again must remain a no-op (idempotent).
         ensure_commands_columns(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ensure_commands_columns_adds_missing_sound_config() {
+        let pool = fresh_pool().await;
+        // A schema predating the sound feature: no `sound_config` column.
+        sqlx::raw_sql(
+            "CREATE TABLE commands (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                script TEXT NOT NULL,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                favorite INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_count INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO commands (id, name, script, created_at, updated_at)
+             VALUES ('a', 'n', 'echo', '2026-07-04', '2026-07-04')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_commands_columns(&pool).await.unwrap();
+
+        let row = sqlx::query("SELECT sound_config FROM commands WHERE id = 'a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let sound_config: Option<String> = row.try_get("sound_config").unwrap();
+        assert!(
+            sound_config.is_none(),
+            "existing rows must inherit global (NULL sound_config)"
+        );
+
+        // Idempotent second run.
+        ensure_commands_columns(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ensure_workflows_columns_adds_missing_sound_config() {
+        let pool = fresh_pool().await;
+        // A workflows schema predating the sound feature.
+        sqlx::raw_sql(
+            "CREATE TABLE workflows (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                nodes_json TEXT NOT NULL DEFAULT '[]',
+                edges_json TEXT NOT NULL DEFAULT '[]',
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                favorite INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_count INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO workflows (id, name, created_at, updated_at)
+             VALUES ('w', 'wf', '2026-07-04', '2026-07-04')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_workflows_columns(&pool).await.unwrap();
+
+        let row = sqlx::query("SELECT sound_config FROM workflows WHERE id = 'w'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let sound_config: Option<String> = row.try_get("sound_config").unwrap();
+        assert!(sound_config.is_none());
+
+        // Idempotent second run.
+        ensure_workflows_columns(&pool).await.unwrap();
     }
 
     /// The schema must create the `workflows` table on a fresh database

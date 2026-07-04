@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Command,
   CommandScope,
+  EntitySoundConfig,
   OutputSchema,
   Shell,
   VariableSpec,
@@ -127,6 +128,15 @@ export interface CommandRecord {
    * variable selected so the wire stays byte-identical to legacy payloads.
    */
   explorerPathVariable?: string | null;
+  /**
+   * Mirror of the Rust `sound` field — the optional per-command sound-
+   * notification override, stored as a JSON column. Optional/absent on the
+   * wire for legacy records (`#[serde(default)]` → `None`, serialised with
+   * `skip_serializing_if = "Option::is_none"`). {@link commandToRecord} omits
+   * it entirely when the UI has no override so the wire stays byte-identical
+   * to legacy payloads.
+   */
+  sound?: EntitySoundConfig | null;
 }
 
 /**
@@ -186,6 +196,10 @@ export function commandToRecord(c: Command): CommandRecord {
     ...omitWhenUndefined("explorerPathVariable", c.explorerPathVariable, (v) =>
       v.trim() === "" ? null : v.trim(),
     ),
+    // Per-command sound override: pass through verbatim as a JSON column,
+    // omitted entirely when absent so the wire stays byte-identical to legacy
+    // payloads for commands that inherit the global sound settings.
+    ...omitWhenUndefined("sound", c.sound),
   };
 }
 
@@ -251,6 +265,9 @@ export function recordToCommand(r: CommandRecord): Command {
     explorerEnabled: r.explorerEnabled ?? false,
     // The opted-in path variable; `undefined` when the command has none.
     explorerPathVariable: nullToUndef(r.explorerPathVariable),
+    // Per-command sound override; `undefined` (inherit global) when the record
+    // carries no value or an explicit `null`.
+    sound: nullToUndef(r.sound),
   };
 }
 

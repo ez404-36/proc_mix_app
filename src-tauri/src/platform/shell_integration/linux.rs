@@ -146,7 +146,8 @@ fn data_home() -> Result<PathBuf, String> {
     match std::env::var_os("XDG_DATA_HOME") {
         Some(v) if !v.is_empty() => Ok(PathBuf::from(v)),
         _ => {
-            let home = dirs::home_dir().ok_or_else(|| "cannot resolve home directory".to_string())?;
+            let home =
+                dirs::home_dir().ok_or_else(|| "cannot resolve home directory".to_string())?;
             Ok(home.join(".local").join("share"))
         }
     }
@@ -280,9 +281,7 @@ fn unique_script_name(base: &str, used: &mut std::collections::HashSet<String>) 
 /// Strip newlines/control chars from a name before embedding it in a shell
 /// COMMENT line, so a crafted name cannot break out of the comment.
 fn comment_sanitize(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_control())
-        .collect::<String>()
+    s.chars().filter(|c| !c.is_control()).collect::<String>()
 }
 
 /// Whether a binary is resolvable on `$PATH` (used to detect installed managers).
@@ -305,11 +304,7 @@ fn binary_on_path(bin: &str) -> bool {
 fn restart_manager(mgr: &ScriptManager) {
     match Command::new(mgr.quit_bin).arg("-q").output() {
         Ok(out) if !out.status.success() => {
-            tracing::debug!(
-                "{} -q exited with {:?}",
-                mgr.quit_bin,
-                out.status.code()
-            );
+            tracing::debug!("{} -q exited with {:?}", mgr.quit_bin, out.status.code());
         }
         Ok(_) => {}
         Err(e) => tracing::debug!("{} -q unavailable: {e}", mgr.quit_bin),
@@ -338,7 +333,9 @@ mod tests {
         let out = render_launcher(nautilus(), "/usr/bin/procmix", &f);
         assert!(out.starts_with("#!/bin/sh\n"));
         // Exec line with quoted exe + entity ref + path argument.
-        assert!(out.contains("exec '/usr/bin/procmix' --run-favorite 'command:c1' --path \"$target\""));
+        assert!(
+            out.contains("exec '/usr/bin/procmix' --run-favorite 'command:c1' --path \"$target\"")
+        );
         // Reads the Nautilus selection var and the current-folder URI fallback.
         assert!(out.contains("NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"));
         assert!(out.contains("NAUTILUS_SCRIPT_CURRENT_URI"));

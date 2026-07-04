@@ -60,6 +60,10 @@ const fullWorkflow: Workflow = {
   runCount: 4,
   apiSlug: "nightly",
   apiEnabled: true,
+  sound: {
+    success: { enabled: true, soundId: "builtin:success" },
+    error: { enabled: true, soundId: "custom-uuid-2" },
+  },
 };
 
 describe("workflowRepository conversions", () => {
@@ -85,7 +89,28 @@ describe("workflowRepository conversions", () => {
     expect(rec.icon).toBeNull();
     expect(rec.categoryId).toBeNull();
     expect(rec.lastRunAt).toBeNull();
-    // Node optionals also collapse to null on the wire.
+    // A workflow with no sound override must OMIT the key entirely (mirrors
+    // Rust `skip_serializing_if`), not send it as null, so the wire stays
+    // byte-identical to legacy payloads.
+    expect("sound" in rec).toBe(false);
+  });
+
+  it("decodes a null / absent sound to undefined (inherit global)", () => {
+    const base: WorkflowRecord = {
+      id: "wf-s",
+      name: "S",
+      description: null,
+      icon: null,
+      tags: [],
+      categoryId: null,
+      favorite: false,
+      createdAt: "2026-05-28T00:00:00Z",
+      updatedAt: "2026-05-28T00:00:00Z",
+      lastRunAt: null,
+      runCount: 0,
+    };
+    expect(recordToWorkflow({ ...base, sound: null }).sound).toBeUndefined();
+    expect(recordToWorkflow(base).sound).toBeUndefined();
   });
 
   it("decodes null optionals back to undefined", () => {

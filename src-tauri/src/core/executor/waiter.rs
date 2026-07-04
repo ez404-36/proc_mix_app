@@ -111,6 +111,43 @@ fn send_completion(tx: Option<oneshot::Sender<NodeOutcome>>, outcome: NodeOutcom
     }
 }
 
+/// Play the per-command notification sound for an INTERACTIVE single-command
+/// run that just reached a terminal state. No-op when:
+///   - `silent` (a planned/headless fire — `core::launch` / the scheduler own
+///     the sound for those, so triggering here too would double-play);
+///   - `wf_run_id` is set (a workflow node — the aggregate workflow sound fires
+///     at the workflow's terminal point, not per node);
+///   - there is no `command_id` (nothing to resolve a per-command config from).
+///
+/// Best-effort and non-blocking (delegates to `sound::trigger::play_outcome`,
+/// which loads settings, resolves, and spawns playback).
+async fn maybe_play_command_sound<R: Runtime>(
+    app: &AppHandle<R>,
+    silent: bool,
+    command_id: Option<&str>,
+    wf_run_id: Option<&str>,
+    success: bool,
+) {
+    if silent || wf_run_id.is_some() {
+        return;
+    }
+    let Some(command_id) = command_id else {
+        return;
+    };
+    // Load the command's per-entity sound override (None → inherit global).
+    use tauri::Manager as _;
+    let Some(pool) = app.try_state::<crate::storage::DbPool>() else {
+        return;
+    };
+    let entity_sound = crate::storage::commands::find_by_id(pool.inner(), command_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|c| c.sound);
+    let outcome = crate::core::sound::trigger::outcome_of(success);
+    crate::core::sound::trigger::play_outcome(app, entity_sound.as_ref(), outcome).await;
+}
+
 /// Spawn the waiter task. Owns the `Child` for its entire lifetime, races
 /// child.wait() against the cancel signal and timeout, performs the
 /// OS-level kill itself on cancel/timeout, and finally removes the
@@ -400,6 +437,18 @@ pub(super) fn spawn_waiter<R: Runtime>(ctx: WaiterCtx<R>) {
                         },
                     );
                 }
+                // Interactive single-command run → play the per-command sound.
+                // Headless/planned fires (`silent`) are handled by core::launch /
+                // the scheduler; a workflow node (`wf_run_id.is_some()`) defers to
+                // the aggregate workflow sound so nodes don't each beep.
+                maybe_play_command_sound(
+                    &app_for_wait,
+                    silent,
+                    cmd_id_for_wait.as_deref(),
+                    wf_run_id_for_wait.as_deref(),
+                    status.code() == Some(0),
+                )
+                .await;
                 send_completion(
                     completion_tx,
                     NodeOutcome {
@@ -424,6 +473,15 @@ pub(super) fn spawn_waiter<R: Runtime>(ctx: WaiterCtx<R>) {
                         },
                     );
                 }
+                // A wait failure is an error outcome for the per-command sound.
+                maybe_play_command_sound(
+                    &app_for_wait,
+                    silent,
+                    cmd_id_for_wait.as_deref(),
+                    wf_run_id_for_wait.as_deref(),
+                    false,
+                )
+                .await;
                 send_completion(
                     completion_tx,
                     NodeOutcome {

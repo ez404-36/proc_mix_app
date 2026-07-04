@@ -1,6 +1,7 @@
 import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { AppearanceSection } from "./AppearanceSection";
+import { SoundSection } from "./SoundSection";
 import { TraySection } from "./TraySection";
 import { AutostartSection } from "./AutostartSection";
 import { ShellIntegrationSection } from "./ShellIntegrationSection";
@@ -9,10 +10,11 @@ import { DataSection } from "./DataSection";
 import { UpdatesSection } from "./UpdatesSection";
 import { AboutSection } from "./AboutSection";
 
-type SettingsTab = "appearance" | "system" | "security" | "about";
+type SettingsTab = "appearance" | "sound" | "system" | "security" | "about";
 
 const TABS: { key: SettingsTab; labelKey: string }[] = [
   { key: "appearance", labelKey: "settings.tabs.appearance" },
+  { key: "sound", labelKey: "settings.tabs.sound" },
   { key: "system", labelKey: "settings.tabs.system" },
   { key: "security", labelKey: "settings.tabs.security" },
   { key: "about", labelKey: "settings.tabs.about" },
@@ -49,6 +51,7 @@ export function Settings(): ReactElement {
       </div>
 
       {activeTab === "appearance" && <AppearanceSection />}
+      {activeTab === "sound" && <SoundSection />}
       {activeTab === "system" && (
         <>
           <TraySection />

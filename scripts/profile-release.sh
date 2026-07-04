@@ -2,7 +2,7 @@
 # profile-release.sh — честный release-профиль ProcMix через `tauri build --no-bundle`.
 #
 # Почему `tauri build`, а не `cargo build --release`: cargo собирает бинарник с
-# ЗАШИТЫМ devUrl (http://localhost:1420), поэтому запущенный без Vite-сервера он
+# ЗАШИТЫМ devUrl (http://localhost:1520), поэтому запущенный без Vite-сервера он
 # показывает "Connection refused" и WebView НЕ грузит реальный UI — footprint
 # рендерера получается заниженным. `tauri build` использует build.frontendDist
 # (встроенный dist), и WebView загружает настоящий интерфейс.

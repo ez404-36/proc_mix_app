@@ -34,6 +34,7 @@ import { ScriptTab } from "./ScriptTab";
 import { OutputTab } from "./OutputTab";
 import { EnvTab } from "./EnvTab";
 import { ExplorerTab } from "./ExplorerTab";
+import { SoundTab } from "./SoundTab";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { useCommandStore } from "../../stores/commandStore";
@@ -917,6 +918,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
               { key: "script", hasError: scriptTabHasError },
               { key: "output", hasError: false },
               { key: "explorer", hasError: false },
+              { key: "sound", hasError: false },
             ] as ReadonlyArray<{ key: FormTab; hasError: boolean }>
           ).map(({ key, hasError }) => {
             const showBadge = showErrors && hasError;
@@ -1051,6 +1053,12 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
             onExplorerPathVariableChange={(next) =>
               setForm((s) => ({ ...s, explorerPathVariable: next }))
             }
+          />
+
+          <SoundTab
+            active={activeTab === "sound"}
+            value={form.sound}
+            onChange={(sound) => setForm((s) => ({ ...s, sound }))}
           />
         </div>
 

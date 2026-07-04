@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ProcMix",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "identifier": "app.procmix.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1520",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
@@ -45,6 +45,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "sounds/*.wav"
     ],
     "windows": {
       "webviewInstallMode": {

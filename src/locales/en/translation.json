@@ -639,6 +639,7 @@
     "subtitle": "Personalize ProcMix to match your workflow.",
     "tabs": {
       "appearance": "Appearance",
+      "sound": "Sound",
       "system": "System",
       "security": "Security & data",
       "about": "About"
@@ -793,6 +794,7 @@
       "output": "Output schema",
       "env": "Environment",
       "explorer": "Explorer",
+      "sound": "Sound",
       "hasErrors": "has errors"
     },
     "explorer": {
@@ -1586,6 +1588,28 @@
       "toggle": "Toggle console",
       "stale": "Still running — check History",
       "noOutput": "No output."
+    }
+  },
+  "sound": {
+    "useGlobalDefault": "Use global default",
+    "preview": "Play",
+    "pickerAriaLabel": "Sound for {{outcome}}",
+    "editorHint": "Enable a cue for either outcome and pick its sound. Leave both off to inherit the global sound settings.",
+    "outcome": {
+      "success": "On success",
+      "error": "On error"
+    },
+    "workflowSectionLabel": "Sound notifications",
+    "settings": {
+      "enable": "Enable sound notifications",
+      "noDefault": "None",
+      "defaultSuccess": "Default success sound",
+      "defaultError": "Default error sound",
+      "volume": "Volume",
+      "customLibrary": "Custom sounds",
+      "upload": "Upload sound…",
+      "deleteTitle": "Delete sound",
+      "deleteMessage": "Delete “{{name}}”? Any command or workflow using it will fall back to the global default."
     }
   }
 }

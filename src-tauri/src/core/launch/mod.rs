@@ -307,11 +307,29 @@ async fn fire_command<R: Runtime>(
         Ok(Some(cmd)) => cmd,
         Ok(None) => {
             tracing::warn!(command_id = %id, "quick-launch: command not found");
-            return record_and_return(pool, LaunchKind::Command, id, "", source, None, LaunchStatus::NotFound).await;
+            return record_and_return(
+                pool,
+                LaunchKind::Command,
+                id,
+                "",
+                source,
+                None,
+                LaunchStatus::NotFound,
+            )
+            .await;
         }
         Err(e) => {
             tracing::error!(command_id = %id, "quick-launch: failed to load command: {e}");
-            return record_and_return(pool, LaunchKind::Command, id, "", source, None, LaunchStatus::Error).await;
+            return record_and_return(
+                pool,
+                LaunchKind::Command,
+                id,
+                "",
+                source,
+                None,
+                LaunchStatus::Error,
+            )
+            .await;
         }
     };
 
@@ -390,9 +408,13 @@ pub async fn fire_command_resolved<R: Runtime>(
     req.admin_password = admin_password;
 
     let (tx, rx) = tokio::sync::oneshot::channel::<NodeOutcome>();
-    if let Err(e) =
-        executor::spawn_execution_with_completion(app.clone(), executor_state.clone(), req, Some(tx))
-            .await
+    if let Err(e) = executor::spawn_execution_with_completion(
+        app.clone(),
+        executor_state.clone(),
+        req,
+        Some(tx),
+    )
+    .await
     {
         // A deterministic missing-variable failure surfaces here before any
         // child is spawned (the reserved path variable does not satisfy a
@@ -432,9 +454,26 @@ pub async fn fire_command_resolved<R: Runtime>(
     )
     .await;
 
+    // Play the per-command notification sound for this headless run. Only a
+    // definite Success/Error maps to a sound outcome; a non-run status
+    // (MissingVariable / NotFound) plays nothing. Best-effort, non-blocking.
+    if let Some(outcome) = launch_status_outcome(status) {
+        crate::core::sound::trigger::play_outcome(app, cmd.sound.as_ref(), outcome).await;
+    }
+
     LaunchOutcome {
         status,
         entity_name,
+    }
+}
+
+/// Map a [`LaunchStatus`] to a sound [`Outcome`], or `None` when the status is
+/// not a completed run (so no cue plays).
+fn launch_status_outcome(status: LaunchStatus) -> Option<crate::core::sound::resolve::Outcome> {
+    match status {
+        LaunchStatus::Success => Some(crate::core::sound::resolve::Outcome::Success),
+        LaunchStatus::Error => Some(crate::core::sound::resolve::Outcome::Error),
+        LaunchStatus::MissingVariable | LaunchStatus::NotFound => None,
     }
 }
 
@@ -455,16 +494,37 @@ async fn fire_workflow<R: Runtime>(
             Some(wf) => wf,
             None => {
                 tracing::warn!(workflow_id = %id, "quick-launch: workflow not found");
-                return record_and_return(pool, LaunchKind::Workflow, id, "", source, None, LaunchStatus::NotFound).await;
+                return record_and_return(
+                    pool,
+                    LaunchKind::Workflow,
+                    id,
+                    "",
+                    source,
+                    None,
+                    LaunchStatus::NotFound,
+                )
+                .await;
             }
         },
         Err(e) => {
             tracing::error!(workflow_id = %id, "quick-launch: failed to load workflows: {e}");
-            return record_and_return(pool, LaunchKind::Workflow, id, "", source, None, LaunchStatus::Error).await;
+            return record_and_return(
+                pool,
+                LaunchKind::Workflow,
+                id,
+                "",
+                source,
+                None,
+                LaunchStatus::Error,
+            )
+            .await;
         }
     };
 
     let entity_name = wf.name.clone();
+    // Capture the per-workflow sound override before `wf` is moved into the
+    // runner below, so we can play the completion cue after it finishes.
+    let wf_sound = wf.sound.clone();
 
     let all_commands = match storage_commands::list_all(pool).await {
         Ok(list) => list,
@@ -482,8 +542,10 @@ async fn fire_workflow<R: Runtime>(
             .await;
         }
     };
-    let commands: HashMap<String, CommandRecord> =
-        all_commands.into_iter().map(|c| (c.id.clone(), c)).collect();
+    let commands: HashMap<String, CommandRecord> = all_commands
+        .into_iter()
+        .map(|c| (c.id.clone(), c))
+        .collect();
 
     // Drive the workflow to completion in-process, silent + capturing — the
     // history record is the only observable result of a headless fire.
@@ -523,6 +585,11 @@ async fn fire_workflow<R: Runtime>(
         &capture,
     )
     .await;
+
+    // Play the per-workflow notification sound (best-effort, non-blocking).
+    if let Some(outcome) = launch_status_outcome(status) {
+        crate::core::sound::trigger::play_outcome(app, wf_sound.as_ref(), outcome).await;
+    }
 
     LaunchOutcome {
         status,
@@ -956,8 +1023,8 @@ mod tests {
         // The temp dir always exists, so it passes `is_safe_selected_path`.
         let dir = std::env::temp_dir();
         let dir_str = dir.to_str().unwrap();
-        let got = parse_run_args(&["--run-favorite", "workflow:w1", "--path", dir_str])
-            .expect("parsed");
+        let got =
+            parse_run_args(&["--run-favorite", "workflow:w1", "--path", dir_str]).expect("parsed");
         assert_eq!(got.kind, LaunchKind::Workflow);
         assert_eq!(got.id, "w1");
         assert_eq!(got.selected_path.as_deref(), Some(dir_str));
@@ -1048,6 +1115,7 @@ mod tests {
             api_enabled: false,
             explorer_enabled: false,
             explorer_path_variable: None,
+            sound: None,
         }
     }
 
@@ -1199,8 +1267,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_command_launch_unavailable_for_missing_command() {
         let pool = make_pool().await;
-        let plan =
-            resolve_command_launch(&pool, "nope", LaunchSource::Tray, None).await;
+        let plan = resolve_command_launch(&pool, "nope", LaunchSource::Tray, None).await;
         assert!(matches!(plan, CommandLaunchPlan::Unavailable));
     }
 
@@ -1210,19 +1277,20 @@ mod tests {
         storage_commands::upsert(&pool, &cmd_with(vec![], false))
             .await
             .unwrap();
-        let plan =
-            resolve_command_launch(&pool, "cmd-1", LaunchSource::Tray, None).await;
+        let plan = resolve_command_launch(&pool, "cmd-1", LaunchSource::Tray, None).await;
         assert!(matches!(plan, CommandLaunchPlan::Headless { .. }));
     }
 
     #[tokio::test]
     async fn resolve_command_launch_needs_prompt_for_required_variable() {
         let pool = make_pool().await;
-        storage_commands::upsert(&pool, &cmd_with(vec![var("target", None, false, false)], false))
-            .await
-            .unwrap();
-        let plan =
-            resolve_command_launch(&pool, "cmd-1", LaunchSource::Tray, None).await;
+        storage_commands::upsert(
+            &pool,
+            &cmd_with(vec![var("target", None, false, false)], false),
+        )
+        .await
+        .unwrap();
+        let plan = resolve_command_launch(&pool, "cmd-1", LaunchSource::Tray, None).await;
         assert!(matches!(plan, CommandLaunchPlan::NeedsPrompt { .. }));
     }
 
@@ -1250,10 +1318,7 @@ mod tests {
                 ..
             } => {
                 // The temp dir is a directory, so it also becomes the working dir.
-                assert_eq!(
-                    working_dir_override.as_deref(),
-                    Some(dir.to_str().unwrap())
-                );
+                assert_eq!(working_dir_override.as_deref(), Some(dir.to_str().unwrap()));
             }
             _ => panic!("expected headless plan"),
         }

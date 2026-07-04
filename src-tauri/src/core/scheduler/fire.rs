@@ -81,6 +81,7 @@ pub(super) async fn fire_schedule<R: Runtime>(
                 &fire.capture,
             )
             .await;
+            play_schedule_sound(app, pool, rec, fire.status).await;
         }
         "workflow" => {
             let fire = fire_workflow(app, pool, executor_state, workflow_state, rec, silent).await;
@@ -93,6 +94,7 @@ pub(super) async fn fire_schedule<R: Runtime>(
                 &fire.capture,
             )
             .await;
+            play_schedule_sound(app, pool, rec, fire.status).await;
         }
         other => {
             tracing::error!(
@@ -110,6 +112,47 @@ pub(super) async fn fire_schedule<R: Runtime>(
             .await;
         }
     }
+}
+
+/// Map a scheduled [`FireStatus`] to a sound outcome, or `None` when the fire
+/// did not run to a definite success/error (missingVariable / skipped).
+fn fire_status_outcome(status: FireStatus) -> Option<crate::core::sound::resolve::Outcome> {
+    match status {
+        FireStatus::Success => Some(crate::core::sound::resolve::Outcome::Success),
+        FireStatus::Error => Some(crate::core::sound::resolve::Outcome::Error),
+        FireStatus::MissingVariable | FireStatus::Skipped => None,
+    }
+}
+
+/// Play the notification sound for a scheduled fire's target (command or
+/// workflow), using that entity's per-entity `sound` override. Loads the
+/// entity's sound config by target id; best-effort and non-blocking. A
+/// non-run status plays nothing.
+async fn play_schedule_sound<R: Runtime>(
+    app: &AppHandle<R>,
+    pool: &DbPool,
+    rec: &ScheduleRecord,
+    status: FireStatus,
+) {
+    let Some(outcome) = fire_status_outcome(status) else {
+        return;
+    };
+    // Look up the target's per-entity sound override. A missing target simply
+    // resolves to `None` (inherit global).
+    let entity_sound = match rec.target_kind.as_str() {
+        "command" => storage_commands::find_by_id(pool, &rec.target_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|c| c.sound),
+        "workflow" => storage_workflows::list_all(pool)
+            .await
+            .ok()
+            .and_then(|list| list.into_iter().find(|w| w.id == rec.target_id))
+            .and_then(|w| w.sound),
+        _ => None,
+    };
+    crate::core::sound::trigger::play_outcome(app, entity_sound.as_ref(), outcome).await;
 }
 
 /// Resolve and run a command target. Returns the status to record plus the
@@ -721,6 +764,7 @@ mod tests {
             api_enabled: false,
             explorer_enabled: false,
             explorer_path_variable: None,
+            sound: None,
         }
     }
 

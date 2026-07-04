@@ -46,7 +46,7 @@ export interface EnvRow {
  * `env` the per-command environment variable overrides, `explorer` the OS
  * file-manager context-menu integration settings.
  */
-export type FormTab = 'main' | 'script' | 'output' | 'env' | 'explorer';
+export type FormTab = 'main' | 'script' | 'output' | 'env' | 'explorer' | 'sound';
 
 export interface FormErrors {
   name?: string;
@@ -108,4 +108,10 @@ export interface FormState {
    * Persisted as `Command.explorerPathVariable`.
    */
   explorerPathVariable: string;
+  /**
+   * Optional per-command sound-notification override. `undefined` means the
+   * command inherits the global sound settings for both outcomes. Persisted as
+   * `Command.sound`.
+   */
+  sound: import('./sound').EntitySoundConfig | undefined;
 }

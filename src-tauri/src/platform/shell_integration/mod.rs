@@ -135,14 +135,19 @@ pub fn status() -> ShellIntegrationStatus {
 /// it. On an unsupported platform both return `SHELL_INTEGRATION_UNSUPPORTED`.
 pub fn set_enabled(enabled: bool, favorites: &[ShellFavorite]) -> Result<(), String> {
     if !is_supported() {
-        return Err("SHELL_INTEGRATION_UNSUPPORTED: file-manager integration is \
+        return Err(
+            "SHELL_INTEGRATION_UNSUPPORTED: file-manager integration is \
                     available on Windows and Linux only"
-            .to_string());
+                .to_string(),
+        );
     }
     let backend = backend();
     if enabled {
-        let capped: Vec<ShellFavorite> =
-            favorites.iter().take(MAX_SHELL_FAVORITES).cloned().collect();
+        let capped: Vec<ShellFavorite> = favorites
+            .iter()
+            .take(MAX_SHELL_FAVORITES)
+            .cloned()
+            .collect();
         backend.register(&capped)
     } else {
         backend.unregister()
@@ -160,8 +165,11 @@ pub fn refresh_if_enabled(favorites: &[ShellFavorite]) {
     let backend = backend();
     match backend.is_registered() {
         Ok(true) => {
-            let capped: Vec<ShellFavorite> =
-                favorites.iter().take(MAX_SHELL_FAVORITES).cloned().collect();
+            let capped: Vec<ShellFavorite> = favorites
+                .iter()
+                .take(MAX_SHELL_FAVORITES)
+                .cloned()
+                .collect();
             if let Err(e) = backend.register(&capped) {
                 tracing::error!("shell-integration: failed to refresh registration: {e}");
             }

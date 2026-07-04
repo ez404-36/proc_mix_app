@@ -235,6 +235,7 @@ describe("fingerprintForm", () => {
     apiSlug: "",
     explorerEnabled: false,
     explorerPathVariable: "",
+    sound: undefined,
   };
 
   it("is stable for identical persisted fields", () => {
@@ -245,6 +246,15 @@ describe("fingerprintForm", () => {
     expect(fingerprintForm({ ...base, disableHints: true })).toBe(
       fingerprintForm(base),
     );
+  });
+
+  it("detects a change to the per-command sound config", () => {
+    expect(
+      fingerprintForm({
+        ...base,
+        sound: { success: { enabled: true, soundId: "builtin:success" } },
+      }),
+    ).not.toBe(fingerprintForm(base));
   });
 
   it("ignores per-row rowId and nameTouched", () => {

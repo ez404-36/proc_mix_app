@@ -41,6 +41,10 @@ const fullCommand: Command = {
   apiEnabled: true,
   explorerEnabled: true,
   explorerPathVariable: "target",
+  sound: {
+    success: { enabled: true, soundId: "builtin:chime" },
+    error: { enabled: false },
+  },
 };
 
 const fullRecord: CommandRecord = {
@@ -68,6 +72,10 @@ const fullRecord: CommandRecord = {
   apiEnabled: true,
   explorerEnabled: true,
   explorerPathVariable: "target",
+  sound: {
+    success: { enabled: true, soundId: "builtin:chime" },
+    error: { enabled: false },
+  },
 };
 
 const minimalCommand: Command = {
@@ -170,6 +178,32 @@ describe("commandToRecord / recordToCommand", () => {
     expect(
       recordToCommand({ ...minimalRecord, scope: "weird" }).scope,
     ).toBe("global");
+  });
+
+  it("omits sound from the wire when the command inherits global settings", () => {
+    // minimalCommand has no `sound`; the encoded record must not carry the
+    // key at all (mirrors Rust `skip_serializing_if`), so it stays
+    // byte-identical to legacy payloads.
+    expect("sound" in commandToRecord(minimalCommand)).toBe(false);
+  });
+
+  it("decodes a null / absent sound to undefined (inherit global)", () => {
+    expect(recordToCommand({ ...minimalRecord, sound: null }).sound).toBeUndefined();
+    const legacy = { ...minimalRecord };
+    delete (legacy as Partial<CommandRecord>).sound;
+    expect(recordToCommand(legacy).sound).toBeUndefined();
+  });
+
+  it("round-trips a per-command sound override without loss", () => {
+    const withSound: Command = {
+      ...minimalCommand,
+      sound: { error: { enabled: true, soundId: "custom-uuid-1" } },
+    };
+    const record = commandToRecord(withSound);
+    expect(record.sound).toEqual({
+      error: { enabled: true, soundId: "custom-uuid-1" },
+    });
+    expect(recordToCommand(record)).toEqual(withSound);
   });
 
   it("round-trips a local command's scope + workflowId", () => {

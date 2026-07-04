@@ -206,6 +206,10 @@ export function useCommandFormSave(
         // command rather than leaving the old value behind the spread merge.
         explorerEnabled: form.explorerEnabled,
         explorerPathVariable: explorerPathVariableValue,
+        // Explicit field (including `undefined`) so clearing the per-command
+        // sound config drops it on the stored command (inherit global) rather
+        // than leaving the old value behind the store's spread merge.
+        sound: form.sound,
       };
       if (command.nameKey !== undefined) patch.nameKey = undefined;
       if (command.descriptionKey !== undefined) {
@@ -250,6 +254,9 @@ export function useCommandFormSave(
         ...(explorerPathVariableValue !== undefined
           ? { explorerPathVariable: explorerPathVariableValue }
           : {}),
+        // Sound: omit entirely when not configured so the wire stays
+        // byte-identical to a command that predates this feature.
+        ...(form.sound !== undefined ? { sound: form.sound } : {}),
         // A command created from within a workflow editor is scoped LOCAL to
         // that workflow (hidden from the global library). Stamp the scope +
         // owning workflow id supplied by the host. Omitted entirely for a
@@ -293,6 +300,7 @@ export function useCommandFormSave(
     form.apiSlug,
     form.explorerEnabled,
     form.explorerPathVariable,
+    form.sound,
     errors,
     hasErrors,
     hasVariableErrors,

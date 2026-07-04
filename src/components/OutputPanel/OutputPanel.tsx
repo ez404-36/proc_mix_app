@@ -571,8 +571,20 @@ export function OutputPanel(): ReactElement | null {
     // Pass the raw variable values from the previous run so the user is
     // not prompted again. Falls back to an empty map (fresh prompt) when
     // the previous execution did not capture variable values.
+    //
+    // Also carry the previous run's effective working directory so a
+    // command with `promptWorkingDir` does NOT re-open the directory prompt
+    // on re-run — the re-run must reuse the same directory the user already
+    // chose. `active.workingDir` is the resolved directory (an explicit path,
+    // or the home dir when the previous run used the default); supplying it
+    // as an override short-circuits the prompt in `triggerCommandRun`.
+    // Absent for a remote (SSH) run, where the local cwd does not apply — in
+    // that case it stays undefined and no override is passed.
     void triggerCommandRun(target, {
       variableValues: active.variableValuesRaw ?? {},
+      ...(active.workingDir !== undefined
+        ? { workingDir: active.workingDir }
+        : {}),
     });
   };
 

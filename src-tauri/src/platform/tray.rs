@@ -532,8 +532,12 @@ fn notify_launch_outcome<R: Runtime>(app: &AppHandle<R>, outcome: &launch::Launc
 
     let labels = labels_snapshot();
     let body = match outcome.status {
-        LaunchStatus::Success => labels.notify_success.replace("{{name}}", &outcome.entity_name),
-        LaunchStatus::Error => labels.notify_error.replace("{{name}}", &outcome.entity_name),
+        LaunchStatus::Success => labels
+            .notify_success
+            .replace("{{name}}", &outcome.entity_name),
+        LaunchStatus::Error => labels
+            .notify_error
+            .replace("{{name}}", &outcome.entity_name),
         LaunchStatus::MissingVariable => labels
             .notify_missing_variable
             .replace("{{name}}", &outcome.entity_name),

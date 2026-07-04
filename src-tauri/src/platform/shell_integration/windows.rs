@@ -174,7 +174,11 @@ mod tests {
     #[test]
     fn command_line_quotes_exe_args_and_placeholder() {
         let f = fav("command", "c1", "Build");
-        let line = command_line(r"C:\Program Files\ProcMix\procmix.exe", &f, PLACEHOLDER_SELECTION);
+        let line = command_line(
+            r"C:\Program Files\ProcMix\procmix.exe",
+            &f,
+            PLACEHOLDER_SELECTION,
+        );
         assert_eq!(
             line,
             r#""C:\Program Files\ProcMix\procmix.exe" "--run-favorite" "command:c1" "--path" "%1""#

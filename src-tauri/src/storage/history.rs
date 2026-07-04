@@ -1366,6 +1366,7 @@ mod wire_format_tests {
             run_count: 0,
             api_slug: None,
             api_enabled: false,
+            sound: None,
         }
     }
 
@@ -1400,6 +1401,7 @@ mod wire_format_tests {
             api_enabled: false,
             explorer_enabled: false,
             explorer_path_variable: None,
+            sound: None,
         }
     }
 
@@ -2231,6 +2233,7 @@ mod sqlite_integration_tests {
             run_count: 0,
             api_slug: None,
             api_enabled: false,
+            sound: None,
         }
     }
 
@@ -2265,6 +2268,7 @@ mod sqlite_integration_tests {
             api_enabled: false,
             explorer_enabled: false,
             explorer_path_variable: None,
+            sound: None,
         }
     }
 

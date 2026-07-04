@@ -45,6 +45,7 @@ function metaFromWorkflow(wf: Workflow): WorkflowMeta {
     icon: wf.icon,
     apiEnabled: wf.apiEnabled,
     apiSlug: wf.apiSlug,
+    sound: wf.sound,
   };
 }
 
@@ -109,6 +110,7 @@ export function fingerprintDraft(draft: EditorSnapshot): string {
       icon: draft.meta.icon ?? null,
       apiEnabled: draft.meta.apiEnabled ?? false,
       apiSlug: draft.meta.apiSlug ?? null,
+      sound: draft.meta.sound ?? null,
     },
     nodes: draft.nodes.map((n) => ({
       id: n.id,

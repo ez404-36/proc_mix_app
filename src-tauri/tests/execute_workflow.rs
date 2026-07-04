@@ -123,6 +123,7 @@ fn command(id: &str, script: &str) -> CommandRecord {
         api_enabled: false,
         explorer_enabled: false,
         explorer_path_variable: None,
+        sound: None,
     }
 }
 
@@ -202,6 +203,7 @@ fn branching_workflow(test_command_id: &str) -> WorkflowRecord {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     }
 }
 
@@ -231,6 +233,7 @@ fn linear_workflow(command_id: &str) -> WorkflowRecord {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     }
 }
 
@@ -697,6 +700,7 @@ async fn extracted_field_flows_into_next_node_variable() {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     };
 
     execute_workflow(
@@ -801,6 +805,7 @@ async fn node_variable_value_overrides_data_flow_field() {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     };
 
     // Per-node override for node B: who=override.
@@ -907,6 +912,7 @@ fn switch_workflow(test_command_id: &str) -> WorkflowRecord {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     }
 }
 
@@ -1030,6 +1036,7 @@ fn counted_loop_workflow(body_command_id: &str, count: u32, max: u32) -> Workflo
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     }
 }
 
@@ -1183,6 +1190,7 @@ fn try_workflow(test_command_id: &str, retries: u32) -> WorkflowRecord {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     }
 }
 
@@ -1372,6 +1380,7 @@ async fn data_node_pulls_exit_code_from_previous_command() {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     };
 
     execute_workflow(
@@ -1467,6 +1476,7 @@ fn predicated_condition_workflow(test_command_id: &str, predicate: Condition) ->
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     }
 }
 
@@ -1566,6 +1576,7 @@ async fn data_node_assignment_flows_into_downstream_command() {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     };
 
     execute_workflow(
@@ -1681,6 +1692,7 @@ async fn data_node_variable_survives_an_intermediate_command_node() {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     };
 
     execute_workflow(
@@ -1737,6 +1749,7 @@ fn two_step_workflow(command_id: &str) -> WorkflowRecord {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     }
 }
 
@@ -1993,6 +2006,7 @@ async fn run_from_data_node_consumes_the_seed_as_raw_output() {
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     };
 
     execute_workflow_from(
@@ -2091,6 +2105,7 @@ fn fork_workflow(branch_command_ids: &[&str], with_join: bool) -> WorkflowRecord
         run_count: 0,
         api_slug: None,
         api_enabled: false,
+        sound: None,
     }
 }
 

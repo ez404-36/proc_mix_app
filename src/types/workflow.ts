@@ -8,6 +8,7 @@
 // does for `Command`. The runtime event union mirrors `execution.ts`.
 
 import type { OutputSchema } from "./outputSchema";
+import type { EntitySoundConfig } from "./sound";
 
 /**
  * Kind discriminator for a node in the workflow graph.
@@ -292,6 +293,14 @@ export interface Workflow {
    * `false` keeps it invisible to the API until the user explicitly opts in.
    */
   apiEnabled?: boolean;
+  /**
+   * Optional per-workflow sound-notification override. `undefined` means the
+   * workflow inherits the global sound settings for both outcomes (the default
+   * for existing / seed workflows — no migration needed). The success/error
+   * outcome is derived from the workflow's aggregate terminal status. See
+   * {@link EntitySoundConfig} for the per-outcome resolution rules.
+   */
+  sound?: EntitySoundConfig;
 }
 
 export type WorkflowEventKind =

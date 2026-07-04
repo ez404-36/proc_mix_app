@@ -16,6 +16,7 @@ pub mod history;
 pub mod http_server;
 pub mod plugin_state;
 pub mod schedules;
+pub mod sound;
 pub mod ssh_host_meta;
 pub mod window_behavior;
 pub mod workflows;
