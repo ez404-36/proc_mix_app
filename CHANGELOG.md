@@ -45,6 +45,23 @@ tray "Favorites" quick-launch, Explorer integration, and the Scheduler.
   current behaviour — no cue plays until one is explicitly enabled. The
   per-entity `sound_config` column is an additive, nullable migration; no data
   migration is required.
+- **Output-schema `json` parser no longer wraps its result.** With no declared
+  fields the `json` parser now returns the parsed document as-is instead of
+  nesting it under a `{ "json": … }` key. This also lets a non-object root (e.g.
+  a top-level JSON array) survive extraction. If a command relied on
+  `returnField = "json"` to unwrap the document, drop it — leaving the return
+  field empty already yields the whole document.
+
+### Fixed
+
+- **Output-schema pipeline: `raw` and `json` steps handle a structured input.**
+  A later `raw`/`json` parser step that received a structured value from a
+  previous step (e.g. a `json` or `regex` result) failed with `input value
+  cannot be used as text for parser …`. Now `raw` stringifies a structured value
+  to compact JSON text (a text/JSON-string input passes through verbatim), and
+  `json` operates on the value directly — projecting `path` fields, or passing
+  the document through unchanged when no fields are declared — instead of a
+  pointless stringify-and-re-parse round-trip.
 
 ### Security
 

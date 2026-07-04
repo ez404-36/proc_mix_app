@@ -27,7 +27,10 @@
 //   - raw      → the whole stdout string is the return value; no fields.
 //   - lines    → stdout split into a JSON array of lines (field `lines`);
 //     each declared field with an `index` locator also projects one line.
-//   - json     → stdout parsed as JSON; fields located by `path`.
+//   - json     → input parsed as JSON; declared fields located by `path`.
+//     With no fields it is a pass-through (the document is returned as-is,
+//     unwrapped). In a pipeline a structured value from a previous step is
+//     used directly (no text re-parse).
 //   - regex    → first match of `pattern`; each named group is a field.
 //   - keyValue → `key<sep>value` lines parsed into an object.
 //   - table    → rows split by `delimiter` into columns; the full table
@@ -307,6 +310,56 @@ fn apply_step(
         return Ok(PipelineValue::Json(result));
     }
 
+    // `raw` is a pass-through-to-text step: it never parses, it just yields
+    // the input as a text string. As the FIRST step it receives the raw
+    // stdout unchanged; later in a pipeline it may receive a structured value
+    // from a previous step. Rather than reject a non-text input (a `raw` step
+    // has no reason to fail), coerce the whole value to a compact JSON string.
+    // Handle it before the array-map / text-coercion branches so it applies to
+    // the value AS A WHOLE (not element-wise) and so an object/array input is
+    // stringified rather than triggering `PipelineInputNotText`.
+    if step.parser == "raw" {
+        let text = match input {
+            // Already text (or a JSON string): keep the string verbatim, no
+            // surrounding quotes, matching the first-step raw-stdout behaviour.
+            PipelineValue::Text(s) => s,
+            PipelineValue::Json(Value::String(s)) => s,
+            // Any other structured value: serialize to compact JSON text.
+            other => other.into_json().to_string(),
+        };
+        return Ok(PipelineValue::Text(text));
+    }
+
+    // `json` acts on the value AS A WHOLE (like `javascript`), not element-wise
+    // over an array. As the FIRST step it receives raw stdout as text and parses
+    // it. Later in a pipeline a previous step may already have produced a
+    // structured value; in that case operate on it DIRECTLY instead of
+    // stringifying and re-parsing it (a pointless round-trip). Only a genuine
+    // text input is parsed from a string.
+    if step.parser == "json" {
+        let cfg = StepConfig::from_step(step);
+        let doc = match input {
+            PipelineValue::Text(s) => parse_json_doc(&s).map_err(|e| {
+                ExtractError::PipelineStep {
+                    step: step_idx,
+                    parser: step.parser.clone(),
+                    source: Box::new(e),
+                }
+            })?,
+            PipelineValue::Json(Value::String(s)) => {
+                parse_json_doc(&s).map_err(|e| ExtractError::PipelineStep {
+                    step: step_idx,
+                    parser: step.parser.clone(),
+                    source: Box::new(e),
+                })?
+            }
+            // Already-structured value (object / array / number / bool / null):
+            // use it directly, no text round-trip.
+            other => other.into_json(),
+        };
+        return Ok(json_step_value(cfg, doc));
+    }
+
     match input {
         PipelineValue::Array(items) => {
             let mapped: Result<Vec<PipelineValue>, ExtractError> = items
@@ -361,11 +414,9 @@ fn step_to_pipeline_value(
                 .collect();
             Ok(PipelineValue::Array(items))
         }
-        "raw" => Ok(PipelineValue::Text(text.to_string())),
-        "json" => {
-            let fields = parse_json(cfg, text)?;
-            Ok(PipelineValue::Json(fields_to_object(&fields)))
-        }
+        // `raw` and `json` are handled up-front in `apply_step` (they act on
+        // the value as a whole and support a structured input), so they never
+        // reach this text-only dispatch.
         "regex" => {
             let fields = parse_regex(cfg, text)?;
             Ok(PipelineValue::Json(fields_to_object(&fields)))
@@ -513,18 +564,28 @@ fn parse_index(raw: Option<&str>) -> Option<usize> {
         .and_then(|s| s.parse::<usize>().ok())
 }
 
-/// `json` parser: parse stdout as JSON and pull each declared field by
-/// its `path` (e.g. `items[0].name`). A field with no path resolves to
-/// the whole document.
-fn parse_json(cfg: StepConfig, stdout: &str) -> Result<BTreeMap<String, Value>, ExtractError> {
-    let doc: Value = serde_json::from_str(stdout.trim())
-        .map_err(|e| ExtractError::InvalidJson(e.to_string()))?;
-    let mut map = BTreeMap::new();
+/// Parse a text input as a JSON document, trimming surrounding whitespace.
+/// Used by the `json` step whenever its input is genuine text (raw stdout as
+/// the first step, or a JSON *string* value from a previous step).
+fn parse_json_doc(stdout: &str) -> Result<Value, ExtractError> {
+    serde_json::from_str(stdout.trim()).map_err(|e| ExtractError::InvalidJson(e.to_string()))
+}
+
+/// Turn a parsed JSON `doc` into the `json` step's output value.
+///
+/// - With NO declared fields the step is a pass-through: the document is
+///   returned verbatim (`{"a":1}` stays `{"a":1}`, `[1,2]` stays `[1,2]`).
+///   It is deliberately NOT wrapped in a `{ "json": … }` object — that only
+///   added pointless nesting, especially when a previous step already produced
+///   valid JSON.
+/// - With declared fields each field's `path` locator projects a value into a
+///   result object keyed by field name (a field with no path yields the whole
+///   document).
+fn json_step_value(cfg: StepConfig, doc: Value) -> PipelineValue {
     if cfg.fields.is_empty() {
-        // No fields declared → expose the whole document under `json`.
-        map.insert("json".to_string(), doc);
-        return Ok(map);
+        return PipelineValue::Json(doc);
     }
+    let mut map = Map::new();
     for field in cfg.fields {
         let value = match field.path.as_deref() {
             Some(p) if !p.is_empty() => json_path(&doc, p).unwrap_or(Value::Null),
@@ -532,7 +593,7 @@ fn parse_json(cfg: StepConfig, stdout: &str) -> Result<BTreeMap<String, Value>, 
         };
         map.insert(field.name.clone(), value);
     }
-    Ok(map)
+    PipelineValue::Json(Value::Object(map))
 }
 
 /// `regex` parser: compile `pattern`, take its FIRST match against the
@@ -1406,6 +1467,103 @@ mod tests {
         // All lines contain only letters → regex NoMatch for each element.
         let err = extract(&s, "abc\ndef\n").unwrap_err();
         assert!(matches!(err, ExtractError::PipelineStep { step: 1, .. }));
+    }
+
+    #[test]
+    fn pipeline_raw_after_json_stringifies_object() {
+        // json → raw: the `raw` step no longer rejects a structured input; it
+        // stringifies the whole value to compact JSON text. json with no fields
+        // is a pass-through, so the object is stringified unwrapped.
+        let mut s = schema("raw");
+        s.pipeline = vec![step("json"), step("raw")];
+        let out = extract(&s, "{\"free\": \"34\"}").unwrap();
+        assert_eq!(out.return_value, Value::String("{\"free\":\"34\"}".into()));
+    }
+
+    #[test]
+    fn pipeline_raw_after_json_string_keeps_verbatim() {
+        // A JSON string value flows through `raw` without added quotes.
+        let mut s = schema("raw");
+        s.pipeline = vec![
+            js_step("function parse(data) { return \"hi there\"; }"),
+            step("raw"),
+        ];
+        let out = extract(&s, "ignored").unwrap();
+        assert_eq!(out.return_value, Value::String("hi there".into()));
+    }
+
+    #[test]
+    fn pipeline_raw_first_step_still_returns_stdout() {
+        // As the first step, `raw` still yields the raw stdout verbatim.
+        let mut s = schema("raw");
+        s.pipeline = vec![step("raw")];
+        let out = extract(&s, "hello\nworld\n").unwrap();
+        assert_eq!(out.return_value, Value::String("hello\nworld\n".into()));
+    }
+
+    #[test]
+    fn pipeline_json_after_regex_projects_from_structured_value() {
+        // regex → json: the json step receives an already-structured object and
+        // projects a `path` field directly, with no text re-parse.
+        let mut regex_step = step("regex");
+        regex_step.pattern = Some(r"(?P<free>\d+)".into());
+        let mut json_step = step("json");
+        let mut free_field = field("free");
+        free_field.path = Some("free".into());
+        json_step.fields = vec![free_field];
+
+        let mut s = schema("raw");
+        s.pipeline = vec![regex_step, json_step];
+        let out = extract(&s, "free 33 used 5\n").unwrap();
+        // regex → {free:"33"} → json projects path "free" → {free:"33"}
+        assert_eq!(out.return_value, serde_json::json!({ "free": "33" }));
+    }
+
+    #[test]
+    fn pipeline_json_after_structured_no_fields_is_passthrough() {
+        // With no declared fields the json step is a pass-through: the structured
+        // input is returned as-is, NOT wrapped in a `{ "json": … }` object.
+        let mut regex_step = step("regex");
+        regex_step.pattern = Some(r"(?P<free>\d+)".into());
+
+        let mut s = schema("raw");
+        s.pipeline = vec![regex_step, step("json")];
+        let out = extract(&s, "free 33\n").unwrap();
+        assert_eq!(out.return_value, serde_json::json!({ "free": "33" }));
+    }
+
+    #[test]
+    fn pipeline_json_first_step_no_fields_returns_document_unwrapped() {
+        // As the first step, json parses raw stdout and (with no fields) returns
+        // the document verbatim — no `{ "json": … }` wrapper.
+        let mut s = schema("raw");
+        s.pipeline = vec![step("json")];
+        let out = extract(&s, "{\"free\": \"33\"}").unwrap();
+        assert_eq!(out.return_value, serde_json::json!({ "free": "33" }));
+    }
+
+    #[test]
+    fn pipeline_json_first_step_preserves_non_object_document() {
+        // A top-level array is returned as-is, which the old `{ "json": … }`
+        // wrapping could not represent as a field map.
+        let mut s = schema("raw");
+        s.pipeline = vec![step("json")];
+        let out = extract(&s, "[1, 2, 3]").unwrap();
+        assert_eq!(out.return_value, serde_json::json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn pipeline_json_after_json_string_parses_string_content() {
+        // A JSON *string* value (e.g. from a `raw` step) is parsed as JSON text,
+        // then (with no fields) returned unwrapped — the string content is the
+        // document.
+        let mut s = schema("raw");
+        s.pipeline = vec![
+            js_step("function parse(data) { return \"{\\\"free\\\": \\\"33\\\"}\"; }"),
+            step("json"),
+        ];
+        let out = extract(&s, "ignored").unwrap();
+        assert_eq!(out.return_value, serde_json::json!({ "free": "33" }));
     }
 
     #[test]
