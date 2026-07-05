@@ -34,12 +34,23 @@ type InstanceStateFields =
   | "updatedAt";
 
 /**
- * Portable, definition-only shapes written to disk: a `Command` /
- * `Workflow` minus the per-install {@link InstanceStateFields}. The
- * importer re-stamps id/timestamps and resets favourite/runCount.
+ * Definition fields deliberately EXCLUDED from export even though they are
+ * part of the portable definition (not per-install state). `sound` points at
+ * a per-install sound configuration that is meaningless on another machine —
+ * the referenced sounds are not bundled — so it is stripped on export and the
+ * importer materialises no sound. Kept separate from {@link InstanceStateFields}
+ * because the reason for exclusion differs.
  */
-export type ExportedCommand = Omit<Command, InstanceStateFields>;
-export type ExportedWorkflow = Omit<Workflow, InstanceStateFields>;
+type ExportExcludedFields = "sound";
+
+/**
+ * Portable, definition-only shapes written to disk: a `Command` /
+ * `Workflow` minus the per-install {@link InstanceStateFields} and the
+ * {@link ExportExcludedFields}. The importer re-stamps id/timestamps and
+ * resets favourite/runCount.
+ */
+export type ExportedCommand = Omit<Command, InstanceStateFields | ExportExcludedFields>;
+export type ExportedWorkflow = Omit<Workflow, InstanceStateFields | ExportExcludedFields>;
 
 /**
  * Versioned container written to / read from disk. Holds only the portable
@@ -54,7 +65,10 @@ export interface ProcMixExport {
   workflows: ExportedWorkflow[];
 }
 
-/** Strip the per-install state fields from a command for export (keeps id). */
+/**
+ * Strip the per-install state fields and the excluded `sound` config from a
+ * command for export (keeps id).
+ */
 function toExportedCommand(cmd: Command): ExportedCommand {
   const {
     favorite: _favorite,
@@ -62,12 +76,16 @@ function toExportedCommand(cmd: Command): ExportedCommand {
     lastRunAt: _lastRunAt,
     createdAt: _createdAt,
     updatedAt: _updatedAt,
+    sound: _sound,
     ...definition
   } = cmd;
   return definition;
 }
 
-/** Strip the per-install state fields from a workflow for export (keeps id). */
+/**
+ * Strip the per-install state fields and the excluded `sound` config from a
+ * workflow for export (keeps id).
+ */
 function toExportedWorkflow(wf: Workflow): ExportedWorkflow {
   const {
     favorite: _favorite,
@@ -75,6 +93,7 @@ function toExportedWorkflow(wf: Workflow): ExportedWorkflow {
     lastRunAt: _lastRunAt,
     createdAt: _createdAt,
     updatedAt: _updatedAt,
+    sound: _sound,
     ...definition
   } = wf;
   return definition;

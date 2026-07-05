@@ -60,12 +60,20 @@ export interface ImportResult {
  * Per-install state keys that the export strips but which a hand-edited or
  * older-version file might still carry. The importer drops them defensively
  * — the store re-stamps id/timestamps/runCount and we force `favorite:
- * false` — so a stray field can never leak into the new record.
+ * false` — so a stray field can never leak into the new record. `sound` is
+ * likewise no longer exported and points at a per-install sound config, so an
+ * older file that still carries it is dropped rather than re-imported.
  */
 type CarriedState = Partial<
   Pick<
     Command,
-    "id" | "favorite" | "runCount" | "lastRunAt" | "createdAt" | "updatedAt"
+    | "id"
+    | "favorite"
+    | "runCount"
+    | "lastRunAt"
+    | "createdAt"
+    | "updatedAt"
+    | "sound"
   >
 >;
 
@@ -96,6 +104,7 @@ function toCommandInput(
     lastRunAt: _lastRunAt,
     createdAt: _createdAt,
     updatedAt: _updatedAt,
+    sound: _sound,
     nameKey: _nameKey,
     descriptionKey: _descriptionKey,
     ...rest
@@ -151,6 +160,7 @@ function toWorkflowInput(
     lastRunAt: _lastRunAt,
     createdAt: _createdAt,
     updatedAt: _updatedAt,
+    sound: _sound,
     ...rest
   } = wf as ExportedWorkflow & CarriedState;
   const clearedSlug =

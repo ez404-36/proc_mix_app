@@ -27,6 +27,7 @@ function sampleCommand(id = "cmd-1"): Command {
     updatedAt: "2026-01-01T00:00:00.000Z",
     runCount: 0,
     runAsAdmin: false,
+    sound: { success: { enabled: true, soundId: "builtin:chime" } },
   };
 }
 
@@ -49,6 +50,7 @@ function sampleWorkflow(id = "wf-1"): Workflow {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     runCount: 0,
+    sound: { error: { enabled: true, soundId: "builtin:buzz" } },
   };
 }
 
@@ -137,12 +139,16 @@ describe("exportData", () => {
     expect(exportedCmd).not.toHaveProperty("lastRunAt");
     expect(exportedCmd).not.toHaveProperty("createdAt");
     expect(exportedCmd).not.toHaveProperty("updatedAt");
+    // The per-entity sound config is a local preference, not portable, and
+    // must never be written to the export bundle.
+    expect(exportedCmd).not.toHaveProperty("sound");
     expect(exportedCmd.id).toBe("cmd-1");
     expect(exportedCmd.script).toBe("echo build");
     const exportedWf = envelope.workflows[0] as Record<string, unknown>;
     expect(exportedWf).not.toHaveProperty("favorite");
     expect(exportedWf).not.toHaveProperty("runCount");
     expect(exportedWf).not.toHaveProperty("createdAt");
+    expect(exportedWf).not.toHaveProperty("sound");
   });
 
   it("propagates the cancel result (false)", async () => {

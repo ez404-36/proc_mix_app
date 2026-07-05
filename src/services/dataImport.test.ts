@@ -137,6 +137,43 @@ describe("applyImport", () => {
     expect(input.script).toBe("echo hi");
   });
 
+  it("drops a sound config that a legacy export file still carries", () => {
+    createCommandMock.mockReturnValue(command("fresh"));
+    createWorkflowMock.mockImplementation((input: unknown) => ({
+      ...(input as Workflow),
+      id: "NEW-WF-ID",
+    }));
+
+    // Sound is no longer exported, but an older bundle may still contain it.
+    // The importer must strip it so it never leaks into the new record.
+    applyImport(
+      envelope(
+        [
+          command("c1", {
+            sound: { success: { enabled: true, soundId: "builtin:chime" } },
+          }),
+        ],
+        [
+          {
+            ...workflow("w1", "c1"),
+            sound: { error: { enabled: true, soundId: "builtin:buzz" } },
+          },
+        ],
+      ),
+    );
+
+    const cmdInput = createCommandMock.mock.calls[0]?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(cmdInput).not.toHaveProperty("sound");
+    const wfInput = createWorkflowMock.mock.calls[0]?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(wfInput).not.toHaveProperty("sound");
+  });
+
   it("remaps a workflow node's commandId to the freshly imported command id", () => {
     // The store assigns a brand-new id; simulate that here.
     createCommandMock.mockReturnValue(command("NEW-CMD-ID"));

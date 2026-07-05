@@ -34,12 +34,19 @@ tray "Favorites" quick-launch, Explorer integration, and the Scheduler.
   (`wav` / `mp3` / `ogg` / `flac`), copied into the app data directory and
   referenced by a stable id, with an in-app **preview** button. Deleting a custom
   sound clears any slot that referenced it.
-- **Sound config in Export/Import.** A command's or workflow's sound
-  configuration is part of its portable definition and round-trips through
-  Export/Import. Custom-sound files are not exported; a missing referenced sound
-  degrades gracefully to the global default / silence.
-
 ### Changed
+
+- **Sound config is no longer part of Export/Import.** A sound configuration
+  points at per-install sounds (built-in ids and custom files that are not
+  bundled), so it is meaningless on another machine. Export now strips the
+  `sound` field, and Import drops it from any older bundle that still carries it
+  — the imported command/workflow materialises with no sound configured.
+- **Result panel no longer shows duplicate JSON.** In the output **Result**
+  view, the **Fields** block is de-duplicated against the **Return value**: any
+  field whose value equals the chosen return value is hidden, and the whole
+  block is omitted when nothing distinct remains (e.g. a single-field parse with
+  no return field selected, where the return value already is the whole
+  document). This matches the command-form schema preview.
 
 - **Silent by default is preserved.** Existing commands and workflows keep their
   current behaviour — no cue plays until one is explicitly enabled. The

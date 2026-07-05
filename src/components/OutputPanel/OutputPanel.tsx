@@ -212,8 +212,16 @@ interface ResultViewProps {
 /**
  * Renders the structured output extraction for the active execution: an
  * inline error when extraction failed, otherwise the chosen return value
- * plus the full field map as pretty-printed JSON. Kept deliberately
- * simple (a JSON tree could come later) so the data is always inspectable.
+ * plus the field map as pretty-printed JSON. Kept deliberately simple (a
+ * JSON tree could come later) so the data is always inspectable.
+ *
+ * The Fields block is de-duplicated against the return value: any field
+ * whose value equals the chosen `returnValue` is dropped from the Fields
+ * display, and the whole block is hidden when nothing distinct remains.
+ * This mirrors the command-form schema preview (see OutputSchemaEditor)
+ * and eliminates the confusing case where "Return value" and "Fields"
+ * showed byte-for-byte identical JSON — e.g. a single-field parse with no
+ * return field selected (returnValue = the whole field object).
  */
 function ResultView({ result, t }: ResultViewProps): ReactElement {
   if (result.error !== undefined) {
@@ -228,6 +236,19 @@ function ResultView({ result, t }: ResultViewProps): ReactElement {
       </div>
     );
   }
+  const returnValueJson = JSON.stringify(result.returnValue);
+  const distinctFields = Object.fromEntries(
+    Object.entries(result.fields).filter(
+      ([, v]) => JSON.stringify(v) !== returnValueJson,
+    ),
+  );
+  const fieldsJson = JSON.stringify(result.fields);
+  // Hide the Fields block when it adds nothing beyond the return value:
+  // either every field equalled the return value (nothing distinct left),
+  // or the field map as a whole is identical to the return value (the
+  // "whole result" case where no return field was selected).
+  const showFields =
+    Object.keys(distinctFields).length > 0 && fieldsJson !== returnValueJson;
   return (
     <div className="output-panel__body output-panel__result">
       <div className="output-panel__result-section">
@@ -240,14 +261,16 @@ function ResultView({ result, t }: ResultViewProps): ReactElement {
           {JSON.stringify(result.returnValue, null, 2)}
         </pre>
       </div>
-      <div className="output-panel__result-section">
-        <span className="output-panel__result-label">
-          {t("outputPanel.result.fields", { defaultValue: "Fields" })}
-        </span>
-        <pre className="output-panel__result-json">
-          {JSON.stringify(result.fields, null, 2)}
-        </pre>
-      </div>
+      {showFields ? (
+        <div className="output-panel__result-section">
+          <span className="output-panel__result-label">
+            {t("outputPanel.result.fields", { defaultValue: "Fields" })}
+          </span>
+          <pre className="output-panel__result-json">
+            {JSON.stringify(distinctFields, null, 2)}
+          </pre>
+        </div>
+      ) : null}
     </div>
   );
 }
