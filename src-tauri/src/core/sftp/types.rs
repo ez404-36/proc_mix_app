@@ -313,6 +313,22 @@ pub fn is_root_delete_target(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    // `is_root_delete_target` reads the process-global `HOME`/`USERPROFILE`
+    // env vars. Cargo runs the tests in this binary on parallel threads, so the
+    // two tests that mutate `HOME` below would otherwise race each other
+    // (one's `set_var` clobbering the other's mid-assertion), making them flaky
+    // on any machine where the ambient `HOME` isn't `/home/tester`. This mutex
+    // serialises every `HOME`-mutating test so they never interleave.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Lock the env guard, recovering from a poisoned mutex so that a panicking
+    /// (failing) assertion in one env-mutating test doesn't cascade into false
+    /// failures in the others.
+    fn lock_env() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn sentinels_are_pinned() {
@@ -418,6 +434,9 @@ mod tests {
 
     #[test]
     fn root_delete_target_flags_home_root_only() {
+        // Serialise with the other HOME-mutating test to avoid a data race on
+        // the process-global env var.
+        let _guard = lock_env();
         // Drive the check deterministically via $HOME.
         let prev = std::env::var_os("HOME");
         std::env::set_var("HOME", "/home/tester");
@@ -432,6 +451,9 @@ mod tests {
 
     #[test]
     fn root_delete_target_flags_home_parent() {
+        // Serialise with the other HOME-mutating test to avoid a data race on
+        // the process-global env var.
+        let _guard = lock_env();
         let prev = std::env::var_os("HOME");
         std::env::set_var("HOME", "/home/tester");
         // The parent of $HOME holds every account — must be refused.
