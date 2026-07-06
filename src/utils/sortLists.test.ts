@@ -171,6 +171,16 @@ describe("sortWorkflows", () => {
     const sorted = sortWorkflows(items, { key: "createdAt", dir: "desc" });
     expect(sorted.map((w) => w.id)).toEqual(["b", "a"]);
   });
+
+  it("breaks equal-createdAt ties by name then id", () => {
+    const items = [
+      wf({ id: "z", name: "Same", createdAt: "2026-01-01T00:00:00.000Z" }),
+      wf({ id: "a", name: "Same", createdAt: "2026-01-01T00:00:00.000Z" }),
+      wf({ id: "m", name: "Apple", createdAt: "2026-01-01T00:00:00.000Z" }),
+    ];
+    const sorted = sortWorkflows(items, { key: "createdAt", dir: "desc" });
+    expect(sorted.map((w) => w.id)).toEqual(["m", "a", "z"]);
+  });
 });
 
 describe("sortSchedules", () => {
@@ -200,5 +210,33 @@ describe("sortSchedules", () => {
     ];
     const sorted = sortSchedules(items, { key: "runCount", dir: "desc" });
     expect(sorted.map((s) => s.id)).toEqual(["a", "z"]);
+  });
+
+  it("sorts by name ascending", () => {
+    const items = [
+      sched({ id: "a", name: "Build" }),
+      sched({ id: "b", name: "Apply" }),
+    ];
+    const sorted = sortSchedules(items, { key: "name", dir: "asc" });
+    expect(sorted.map((s) => s.name)).toEqual(["Apply", "Build"]);
+  });
+
+  it("sorts by createdAt descending (newest first)", () => {
+    const items = [
+      sched({ id: "a", createdAt: "2026-01-01T00:00:00.000Z" }),
+      sched({ id: "b", createdAt: "2026-02-01T00:00:00.000Z" }),
+    ];
+    const sorted = sortSchedules(items, { key: "createdAt", dir: "desc" });
+    expect(sorted.map((s) => s.id)).toEqual(["b", "a"]);
+  });
+
+  it("breaks equal-createdAt ties by name then id", () => {
+    const items = [
+      sched({ id: "z", name: "Same", createdAt: "2026-01-01T00:00:00.000Z" }),
+      sched({ id: "a", name: "Same", createdAt: "2026-01-01T00:00:00.000Z" }),
+      sched({ id: "m", name: "Apple", createdAt: "2026-01-01T00:00:00.000Z" }),
+    ];
+    const sorted = sortSchedules(items, { key: "createdAt", dir: "asc" });
+    expect(sorted.map((s) => s.id)).toEqual(["m", "a", "z"]);
   });
 });

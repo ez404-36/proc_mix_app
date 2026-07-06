@@ -11,6 +11,7 @@ import {
   type CommandRecord,
   commandToRecord,
   deleteCommandInDb,
+  deleteLocalCommandsForWorkflowInDb,
   listCommandsFromDb,
   recordToCommand,
   upsertCommandInDb,
@@ -243,5 +244,16 @@ describe("deleteCommandInDb", () => {
     invokeMock.mockResolvedValueOnce(undefined);
     await deleteCommandInDb("id-1");
     expect(invokeMock).toHaveBeenCalledWith("delete_command", { id: "id-1" });
+  });
+});
+
+describe("deleteLocalCommandsForWorkflowInDb", () => {
+  it("invokes delete_local_commands_for_workflow with the workflowId", async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await deleteLocalCommandsForWorkflowInDb("wf-9");
+    expect(invokeMock).toHaveBeenCalledWith(
+      "delete_local_commands_for_workflow",
+      { workflowId: "wf-9" },
+    );
   });
 });

@@ -103,6 +103,26 @@ describe("isProcMixExport", () => {
     };
     expect(isProcMixExport(broken)).toBe(false);
   });
+
+  it("accepts a command whose tags is a non-empty array of strings", () => {
+    const envelope = sampleEnvelope();
+    const withTags = {
+      ...envelope,
+      commands: [{ ...sampleCommand(), tags: ["build", "ci"] }],
+    };
+    // Every tag is a string → the isStringArray predicate holds for each.
+    expect(isProcMixExport(withTags)).toBe(true);
+  });
+
+  it("rejects a command whose tags array contains a non-string element", () => {
+    const envelope = sampleEnvelope();
+    const badTags = {
+      ...envelope,
+      commands: [{ ...sampleCommand(), tags: ["ok", 42] }],
+    };
+    // The non-string element makes the isStringArray predicate fail.
+    expect(isProcMixExport(badTags)).toBe(false);
+  });
 });
 
 describe("exportData", () => {

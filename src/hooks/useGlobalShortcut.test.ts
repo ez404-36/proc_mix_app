@@ -197,6 +197,155 @@ describe("useGlobalShortcut - shortcut change re-registration", () => {
   });
 });
 
+describe("useGlobalShortcut - previous-accelerator inline unregister (lines 64-66)", () => {
+  // ONE bounded attempt to reach the `if (previous && previous !== accelerator)`
+  // branch at lines 64-66 of the source, where `apply()` unregisters the
+  // previously-registered accelerator INLINE before registering the new one.
+  //
+  // The claim is that this branch is structurally unreachable from a
+  // renderHook test because, on any accelerator (dep) change, React runs the
+  // OLD effect's cleanup BEFORE the new effect's setup. The cleanup op is
+  // queued FIRST onto the FIFO `opChain`; it nulls `lastRegistered.current`.
+  // The new effect's `apply()` is queued SECOND, so by the time it reads
+  // `previous = lastRegistered.current` the ref is already null → the
+  // `previous !== accelerator` branch never runs.
+  //
+  // This test tries to interleave the ops so `apply()` observes a NON-null
+  // `previous`: it holds the cleanup's `safeUnregister` open (by making its
+  // `isRegistered` hang) at the moment of the accelerator change, hoping the
+  // new effect's `apply()` runs its synchronous prefix first. A probe records
+  // the exact operation order so the outcome is verifiable either way.
+  it("attempts to observe a non-null previous accelerator in apply() (documents reachability)", async () => {
+    const order: string[] = [];
+
+    // First mount + register settle so lastRegistered.current === DEFAULT.
+    isRegisteredMock.mockResolvedValue(false);
+    registerMock.mockResolvedValue(undefined);
+    unregisterMock.mockResolvedValue(undefined);
+
+    const { rerender } = renderHook(() => useGlobalShortcut());
+    await flush();
+    expect(registerMock).toHaveBeenCalledTimes(1);
+
+    // Now arrange the change. We make the FIRST isRegistered call after the
+    // change (the cleanup's safeUnregister(previous)) hang, so the cleanup op
+    // stays open on the opChain. If the serialization guarantee holds, apply()
+    // cannot start until this resolves — and by then the ref is null.
+    const release: { fn: (() => void) | null } = { fn: null };
+    isRegisteredMock.mockReset();
+    registerMock.mockReset();
+    unregisterMock.mockReset();
+    registerMock.mockResolvedValue(undefined);
+    unregisterMock.mockImplementation((accel: string) => {
+      order.push(`unregister:${accel}`);
+      return Promise.resolve();
+    });
+    let call = 0;
+    isRegisteredMock.mockImplementation((accel: string) => {
+      call += 1;
+      order.push(`isRegistered:${accel}#${call}`);
+      if (call === 1) {
+        // Hold the cleanup's safeUnregister open briefly.
+        return new Promise<boolean>((res) => {
+          release.fn = () => res(true);
+        });
+      }
+      return Promise.resolve(false);
+    });
+
+    act(() => {
+      useUIStore.setState({ toggleShortcut: "Alt+Shift+P" });
+    });
+    rerender();
+
+    // Let microtasks run: the cleanup op starts and blocks on isRegistered#1.
+    await flush();
+    // Release the cleanup so it can complete (unregister previous + null ref),
+    // then apply() runs.
+    release.fn?.();
+    await flush();
+    await flush();
+
+    // Whatever the order, register was called for the new accelerator.
+    expect(registerMock).toHaveBeenCalledWith(
+      "Alt+Shift+P",
+      expect.any(Function),
+    );
+
+    // EVIDENCE: the cleanup's isRegistered (for the PREVIOUS accelerator) is
+    // the very first op after the change, confirming cleanup is serialized
+    // BEFORE apply(). apply() therefore never sees a non-null `previous` that
+    // differs from the new accelerator — lines 64-66 stay unreachable.
+    expect(order[0]).toBe(`isRegistered:${DEFAULT_TOGGLE_SHORTCUT}#1`);
+    // The previous accelerator is unregistered (by the cleanup, not apply's
+    // inline branch); the new target's defensive unregister only sees it as
+    // not-registered so no second unregister of the previous fires from apply.
+    expect(order).toContain(`unregister:${DEFAULT_TOGGLE_SHORTCUT}`);
+  });
+});
+
+describe("useGlobalShortcut - previous accelerator cleanup on change", () => {
+  it("should unregister the previous accelerator and register the new one when the shortcut changes", async () => {
+    // On a dep (accelerator) change React runs the old effect's cleanup first
+    // — which unregisters the previously-registered accelerator — then the new
+    // effect registers the new accelerator.
+    isRegisteredMock.mockResolvedValue(false);
+    registerMock.mockResolvedValue(undefined);
+    unregisterMock.mockResolvedValue(undefined);
+
+    const { rerender } = renderHook(() => useGlobalShortcut());
+    await flush();
+    expect(registerMock).toHaveBeenCalledTimes(1);
+
+    // The previous accelerator is now remembered by the cleanup path: make
+    // isRegistered report it as present so unregister fires for it.
+    unregisterMock.mockClear();
+    isRegisteredMock.mockResolvedValueOnce(true); // cleanup safeUnregister(previous)
+    isRegisteredMock.mockResolvedValueOnce(false); // apply safeUnregister(new target)
+    act(() => {
+      useUIStore.setState({ toggleShortcut: "Ctrl+Alt+K" });
+    });
+    rerender();
+    await flush();
+
+    // The previous accelerator is unregistered before the new one is registered.
+    expect(unregisterMock).toHaveBeenNthCalledWith(1, DEFAULT_TOGGLE_SHORTCUT);
+    expect(registerMock).toHaveBeenCalledWith("Ctrl+Alt+K", expect.any(Function));
+  });
+});
+
+describe("useGlobalShortcut - register resolves after cancellation", () => {
+  it("should unregister the accelerator when register() resolves after the effect was cancelled", async () => {
+    // register() stays pending until AFTER unmount, so when it finally
+    // resolves `cancelled` is already true → the else-branch fires
+    // safeUnregister(accelerator) (line 91). Make isRegistered report it as
+    // registered so unregister actually runs and we can assert it.
+    const resolver: { fn: (() => void) | null } = { fn: null };
+    registerMock.mockImplementation(
+      () =>
+        new Promise<void>((res) => {
+          resolver.fn = res;
+        }),
+    );
+    // First isRegistered: the defensive pre-register unregister (false).
+    isRegisteredMock.mockResolvedValueOnce(false);
+    // Second isRegistered: the post-cancel safeUnregister(accelerator) → true.
+    isRegisteredMock.mockResolvedValueOnce(true);
+    unregisterMock.mockResolvedValue(undefined);
+
+    const { unmount } = renderHook(() => useGlobalShortcut());
+    await flush();
+    // Cancel while register() is still pending.
+    unmount();
+    await flush();
+    // Now resolve register(): the continuation sees cancelled === true.
+    resolver.fn?.();
+    await flush();
+
+    expect(unregisterMock).toHaveBeenCalledWith(DEFAULT_TOGGLE_SHORTCUT);
+  });
+});
+
 describe("useGlobalShortcut - press handler behavior", () => {
   /**
    * Helper that mounts the hook and returns the callback that the plugin

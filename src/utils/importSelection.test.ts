@@ -117,6 +117,22 @@ describe("resolveImportSelection", () => {
     expect(result.rename.get("c2")).toBe("Deploy (3)");
   });
 
+  it("keeps the original name for a renamed duplicate whose name is not yet taken", () => {
+    // The command is flagged as a name-duplicate but its own name is absent
+    // from existingNames, so `uniqueName` returns the base unchanged (its
+    // first-branch, non-colliding path) and records it.
+    const result = resolveImportSelection({
+      commands: [{ id: "c1", name: "Deploy" }],
+      workflowIds: [],
+      forcedCommandIds: new Set(),
+      duplicates: new Map([["c1", match("name", "E1")]]),
+      choiceFor: choices({ c1: "rename" }),
+      existingNames: [],
+    });
+    expect([...result.commandIds]).toEqual(["c1"]);
+    expect(result.rename.get("c1")).toBe("Deploy");
+  });
+
   it("passes the workflow ids through unchanged", () => {
     const result = resolveImportSelection({
       commands: [],

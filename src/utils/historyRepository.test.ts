@@ -11,10 +11,13 @@ import {
   type CommandRecord,
   type WireHistoryEvent,
   clearHistoryInDb,
+  decodeSnapshot,
   deleteHistoryEventInDb,
   eventToWire,
+  executionLogToHistoryOutput,
   getHistoryEventFromDb,
   listHistoryFromDb,
+  listScheduleHistoryFromDb,
   recordHistoryEventInDb,
   updateRunHistoryEventInDb,
   wireToEvent,
@@ -670,5 +673,86 @@ describe("IPC wrappers", () => {
       after: null,
       before: "2026-06-01T00:00:00.000Z",
     });
+  });
+
+  it("listScheduleHistoryFromDb filters by scheduleId + scheduledRun kind", async () => {
+    invokeMock.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 200,
+    });
+    const items = await listScheduleHistoryFromDb("sch-1");
+    expect(invokeMock).toHaveBeenCalledWith("list_history", {
+      filter: { scheduleId: "sch-1", kinds: ["scheduledRun"] },
+      page: 1,
+      pageSize: 200,
+    });
+    expect(items).toEqual([]);
+  });
+});
+
+describe("SSH history events", () => {
+  const snapshot = {
+    hostKey: "prod",
+    name: "prod",
+    source: "~/.ssh/config",
+    hostName: "prod",
+    user: null,
+    port: null,
+    identityFile: null,
+    isPattern: false,
+    rawText: "Host prod",
+  };
+
+  it("wireToEvent passes an SSH event through unchanged", () => {
+    const wire: WireHistoryEvent = {
+      kind: "sshHostAdded",
+      id: "s1",
+      createdAt: "2026-06-01T00:00:00Z",
+      hostKey: "prod",
+      hostName: "prod",
+      snapshotAfter: snapshot,
+    };
+    const event = wireToEvent(wire);
+    expect(event).toEqual(wire);
+  });
+
+  it("eventToWire throws because SSH events are backend-only", () => {
+    const event: HistoryEvent = {
+      kind: "sshHostAdded",
+      id: "s1",
+      createdAt: "2026-06-01T00:00:00Z",
+      hostKey: "prod",
+      hostName: "prod",
+      snapshotAfter: snapshot,
+    };
+    expect(() => eventToWire(event)).toThrow(
+      "SSH history events are backend-only: sshHostAdded",
+    );
+  });
+});
+
+describe("decodeSnapshot", () => {
+  it("decodes a command record via recordToCommand", () => {
+    expect(decodeSnapshot(sampleRecord)).toEqual(sampleCommand);
+  });
+});
+
+describe("executionLogToHistoryOutput", () => {
+  it("returns undefined for an empty log", () => {
+    expect(executionLogToHistoryOutput([])).toBeUndefined();
+  });
+
+  it("maps a non-empty log to stream + line, dropping the timestamp", () => {
+    expect(
+      executionLogToHistoryOutput([
+        { stream: "stdout", line: "hello", ts: 1 },
+        { stream: "stderr", line: "oops", ts: 2 },
+      ]),
+    ).toEqual([
+      { stream: "stdout", line: "hello" },
+      { stream: "stderr", line: "oops" },
+    ]);
   });
 });

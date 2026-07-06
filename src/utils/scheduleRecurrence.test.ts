@@ -43,6 +43,13 @@ describe("buildCron", () => {
     );
   });
 
+  it("clamps a non-finite numeric field to the minimum", () => {
+    // NaN is not finite → clampInt returns the min (1) for the interval.
+    expect(buildCron({ type: "everyNMinutes", interval: Number.NaN })).toBe(
+      "*/1 * * * *",
+    );
+  });
+
   it("clamps out-of-range numeric fields", () => {
     expect(buildCron({ type: "everyNMinutes", interval: 0 })).toBe(
       "*/1 * * * *",
@@ -118,6 +125,24 @@ describe("parseCron", () => {
     expect(parseCron("0 9 * * 9")).toEqual({
       type: "custom",
       cron: "0 9 * * 9",
+    });
+  });
+
+  it("falls back to custom when the everyNMinutes step is out of range", () => {
+    // `*/0` in the minute field with the everyNMinutes wildcard shape: the step
+    // parses but is < 1, so the branch returns the custom fallback.
+    expect(parseCron("*/0 * * * *")).toEqual({
+      type: "custom",
+      cron: "*/0 * * * *",
+    });
+  });
+
+  it("falls back to custom when the month field is not a wildcard", () => {
+    // Not the everyNMinutes shape (hour is fixed) and month is `6`, so the
+    // `monF !== '*'` guard returns the custom fallback.
+    expect(parseCron("0 9 * 6 *")).toEqual({
+      type: "custom",
+      cron: "0 9 * 6 *",
     });
   });
 });

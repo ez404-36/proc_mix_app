@@ -332,6 +332,42 @@ describe("useEditorDraftStore undo / redo", () => {
   });
 });
 
+describe("useEditorDraftStore misc setters", () => {
+  it("setMeta replaces the workflow metadata", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    store.setMeta({ name: "Renamed", tags: ["x"] });
+    const s = useEditorDraftStore.getState();
+    expect(s.meta.name).toBe("Renamed");
+    expect(s.meta.tags).toEqual(["x"]);
+  });
+
+  it("setCurrentId stores the persisted id", () => {
+    useEditorDraftStore.getState().setCurrentId("wf-new");
+    expect(useEditorDraftStore.getState().currentId).toBe("wf-new");
+  });
+
+  it("setSelectedNodeId stores the selected node", () => {
+    useEditorDraftStore.getState().setSelectedNodeId("n-cmd");
+    expect(useEditorDraftStore.getState().selectedNodeId).toBe("n-cmd");
+    useEditorDraftStore.getState().setSelectedNodeId(null);
+    expect(useEditorDraftStore.getState().selectedNodeId).toBeNull();
+  });
+});
+
+describe("useEditorDraftStore commitHistory cap", () => {
+  it("caps the undo history depth when committing pre-captured snapshots", () => {
+    const store = useEditorDraftStore.getState();
+    store.hydrate("wf-1", buildDraftForTarget("wf-1", [makeWorkflow()]));
+    for (let i = 0; i < 60; i++) {
+      const snapshot = store.captureSnapshot();
+      store.setNodes((nds) => [...nds, freshNode(`c-${i}`)]);
+      store.commitHistory(snapshot);
+    }
+    expect(useEditorDraftStore.getState().past.length).toBeLessThanOrEqual(50);
+  });
+});
+
 describe("useEditorDraftStore dirty tracking", () => {
   it("a freshly hydrated draft is not dirty", () => {
     const store = useEditorDraftStore.getState();

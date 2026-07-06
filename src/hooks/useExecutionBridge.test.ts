@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
 import type { ExecutionEvent } from "../types";
 import {
   __resetTransientRegistryForTests,
@@ -425,5 +426,36 @@ describe("useExecutionBridge - workflow node routing", () => {
     expect(state.executions["direct-1"].log).toHaveLength(1);
     expect(state.recentIds).toContain("direct-1");
     expect(state.activeExecutionId).toBe("direct-1");
+  });
+});
+
+describe("useExecutionBridge - history persistence failure", () => {
+  it("should log to console.error when persisting the run completion to the DB rejects", async () => {
+    // recordRunCompletion fires `updateRunHistoryEventInDb` (→ invoke
+    // 'update_run_history_event') fire-and-forget. A rejected IPC must be
+    // swallowed and logged, never propagated to the executor.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockRejectedValueOnce(new Error("db down"));
+
+    const { handler } = mountBridge();
+    handler({ kind: "started", executionId: "persist-fail" });
+    handler({
+      kind: "finished",
+      executionId: "persist-fail",
+      exitCode: 0,
+      durationMs: 7,
+    });
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith(
+        "failed to update run history event",
+        "persist-fail",
+        expect.any(Error),
+      );
+    });
+
+    errorSpy.mockRestore();
+    invokeMock.mockReset();
   });
 });

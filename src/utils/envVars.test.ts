@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   basename,
+  findOverride,
   isOverridingSystem,
   isSensitiveKey,
   isValidEnvVarName,
 } from './envVars';
+
+type Summaries = Record<
+  string,
+  { entries: ReadonlyArray<{ key: string; value: string }> }
+>;
 
 describe('isSensitiveKey', () => {
   it('flags common secret-bearing names (case-insensitive)', () => {
@@ -62,5 +68,57 @@ describe('isValidEnvVarName', () => {
     expect(isValidEnvVarName('HAS SPACE')).toBe(false);
     expect(isValidEnvVarName('HAS-DASH')).toBe(false);
     expect(isValidEnvVarName('HAS=EQ')).toBe(false);
+  });
+});
+
+describe('findOverride', () => {
+  const paths = ['/a.env', '/b.env', '/c.env'];
+
+  it('reports the most-recent earlier file that defines the key', () => {
+    const summaries: Summaries = {
+      '/a.env': { entries: [{ key: 'FOO', value: 'from-a' }] },
+      '/b.env': { entries: [{ key: 'FOO', value: 'from-b' }] },
+      '/c.env': { entries: [{ key: 'FOO', value: 'from-c' }] },
+    };
+    expect(findOverride('FOO', '/c.env', {}, paths, summaries)).toEqual({
+      value: 'from-b',
+      source: 'file',
+      filePath: '/b.env',
+    });
+  });
+
+  it('falls back to the system layer when no earlier file matches', () => {
+    const summaries: Summaries = {
+      '/a.env': { entries: [{ key: 'OTHER', value: 'x' }] },
+    };
+    expect(
+      findOverride('FOO', '/b.env', { FOO: 'sys' }, paths, summaries),
+    ).toEqual({ value: 'sys', source: 'system' });
+  });
+
+  it('returns the empty-string system value when the key exists but is empty', () => {
+    const summaries: Summaries = {};
+    expect(
+      findOverride('FOO', '/b.env', { FOO: '' }, paths, summaries),
+    ).toEqual({ value: '', source: 'system' });
+  });
+
+  it('returns null when nothing overrides the key', () => {
+    const summaries: Summaries = {
+      '/a.env': { entries: [{ key: 'OTHER', value: 'x' }] },
+    };
+    expect(findOverride('FOO', '/c.env', {}, paths, summaries)).toBeNull();
+  });
+
+  it('skips earlier files with no summary and keeps walking', () => {
+    const summaries: Summaries = {
+      '/a.env': { entries: [{ key: 'FOO', value: 'from-a' }] },
+      // '/b.env' has no summary → skipped by the `!prev` guard
+    };
+    expect(findOverride('FOO', '/c.env', {}, paths, summaries)).toEqual({
+      value: 'from-a',
+      source: 'file',
+      filePath: '/a.env',
+    });
   });
 });

@@ -40,6 +40,10 @@ describe("inferTsType", () => {
   it("maps an empty object to object", () => {
     expect(inferTsType({})).toBe("object");
   });
+
+  it("maps a non-JSON primitive (bigint) to unknown via the default branch", () => {
+    expect(inferTsType(10n)).toBe("unknown");
+  });
 });
 
 describe("jsTemplate", () => {

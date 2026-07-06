@@ -3,6 +3,7 @@ import type { Command } from "../types";
 import type { WorkflowFlowEdge, WorkflowFlowNode } from "./workflowGraph";
 import {
   dominatingDataNodeVariableNames,
+  variableSourceId,
   variableSourceOptions,
 } from "./variableSourceOptions";
 
@@ -117,6 +118,69 @@ describe("dominatingDataNodeVariableNames", () => {
     const nodes = [dataNode("set", ["a"]), node("cmd", "command")];
     const edges = [edge("set", "cmd")];
     expect(dominatingDataNodeVariableNames(nodes, edges, "cmd")).toEqual([]);
+  });
+
+  it("skips a data node that IS the current node", () => {
+    // The current node is itself a data node — it must not offer its own vars.
+    const nodes = [
+      node("start", "start"),
+      dataNode("cur", ["self"]),
+    ];
+    const edges = [edge("start", "cur")];
+    expect(dominatingDataNodeVariableNames(nodes, edges, "cur")).toEqual([]);
+  });
+
+  it("handles multiple out-edges and revisited nodes when a side data node is removed", () => {
+    //         start → fork ─→ left ──→ cmd
+    //                    │        └────↑
+    //                    └→ right ─────┘
+    //                    └→ side(a)  (a side data node, NOT dominating cmd)
+    // When the side data node `side` is removed to test ITS domination, the
+    // main diamond survives: `fork` still has multiple out-edges (the
+    // `else list.push` branch) and `cmd` is reached via both `left` and
+    // `right`, so the visited-guard `continue` (revisit) fires.
+    const nodes = [
+      node("start", "start"),
+      node("fork", "command"),
+      node("left", "command"),
+      node("right", "command"),
+      node("merge", "command"),
+      dataNode("side", ["a"]),
+      node("cmd", "command"),
+    ];
+    const edges = [
+      edge("start", "fork"),
+      edge("fork", "left"),
+      edge("fork", "right"),
+      edge("fork", "side"),
+      // Both branches merge at `merge` BEFORE reaching `cmd`, so `merge` is
+      // pushed by `left` then re-encountered by `right` (visited continue).
+      edge("left", "merge"),
+      edge("right", "merge"),
+      edge("merge", "cmd"),
+    ];
+    // `side` does not lie on any path to `cmd`, so it is NOT offered.
+    expect(dominatingDataNodeVariableNames(nodes, edges, "cmd")).toEqual([]);
+  });
+});
+
+describe("variableSourceId", () => {
+  it("encodes a field source with its field name", () => {
+    expect(
+      variableSourceId({ kind: "field", field: "col0" }),
+    ).toBe("field:col0");
+  });
+
+  it("encodes a dataVar source with its variable name", () => {
+    expect(
+      variableSourceId({ kind: "dataVar", name: "token" }),
+    ).toBe("dataVar:token");
+  });
+
+  it("returns the bare kind for other sources", () => {
+    expect(variableSourceId({ kind: "manual", value: "" })).toBe("manual");
+    expect(variableSourceId({ kind: "atRun" })).toBe("atRun");
+    expect(variableSourceId({ kind: "rawOutput" })).toBe("rawOutput");
   });
 });
 

@@ -36,7 +36,8 @@ import {
 import { useExecutionStore } from "../stores/executionStore";
 import { useWorkflowRunStore } from "../stores/workflowRunStore";
 import { useWorkflowStore } from "../stores/workflowStore";
-import type { Workflow } from "../types";
+import { useCommandStore } from "../stores/commandStore";
+import type { Command, Workflow } from "../types";
 
 type Handler = (e: WorkflowEvent) => void;
 
@@ -52,6 +53,8 @@ function resetRuns(): void {
   });
   // Branch-slot labelling reads the persisted graph from the workflow store.
   useWorkflowStore.setState({ workflows: [] });
+  // Step headers resolve a node's command name/script from the command store.
+  useCommandStore.setState({ commands: [] });
   // The branch-slot map is memoised per run id at module scope; clear it so a
   // reused run id never carries a stale (empty) map between cases.
   __resetBranchSlotCacheForTests();
@@ -487,4 +490,332 @@ describe("useWorkflowBridge - backend-initiated run (scheduler Run now)", () => 
     );
     expect(recordEventMock).not.toHaveBeenCalled();
   });
+
+  it("captures the node→command map from the workflow graph when bootstrapping a backend run", () => {
+    const { handler } = mountBridge();
+    // A saved workflow whose nodes carry commandIds — the bootstrap must copy
+    // them onto the run so later step headers resolve the command name/script.
+    const wf = {
+      id: "wf-cmd",
+      name: "Mapped job",
+      nodes: [
+        { id: "n1", kind: "command", position: { x: 0, y: 0 }, commandId: "c1" },
+        // A node with NO commandId is skipped by the map-building loop.
+        { id: "n2", kind: "parallel", position: { x: 1, y: 0 } },
+      ],
+      edges: [],
+    } as unknown as Workflow;
+    useWorkflowStore.setState({ workflows: [wf] });
+
+    handler({
+      kind: "nodeStarted",
+      runId: "run-map",
+      workflowId: "wf-cmd",
+      nodeId: "n1",
+      executionId: "exec-1",
+    });
+
+    // Only the node that had a commandId is in the captured map.
+    const run = useWorkflowRunStore.getState().runs["run-map"];
+    expect(run?.nodeCommandIds).toEqual({ n1: "c1" });
+  });
+
+  it("falls back to the localized 'Workflow run' title when the workflow is absent from the store", () => {
+    const { handler } = mountBridge();
+    // No workflow in the store: `workflow?.name ?? i18n.t(fallback)` uses the
+    // i18n fallback title.
+    handler({
+      kind: "nodeStarted",
+      runId: "run-nofallback",
+      workflowId: "wf-missing",
+      nodeId: "n1",
+      executionId: "exec-1",
+    });
+    expect(
+      useExecutionStore.getState().executions["run-nofallback"]?.commandName,
+    ).toBe("Workflow run");
+    // With no workflow, no command ids are captured.
+    expect(
+      useWorkflowRunStore.getState().runs["run-nofallback"]?.nodeCommandIds,
+    ).toEqual({});
+  });
 });
+
+describe("useWorkflowBridge - loop and retry progress", () => {
+  it("records the current loop iteration on loopIteration", () => {
+    const { handler } = mountBridge();
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+    handler({
+      kind: "loopIteration",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "loopNode",
+      iteration: 3,
+    });
+    expect(
+      useWorkflowRunStore.getState().runs["run-1"]?.loopIterations["loopNode"],
+    ).toBe(3);
+  });
+
+  it("records the current retry attempt on nodeRetry", () => {
+    const { handler } = mountBridge();
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+    handler({
+      kind: "nodeRetry",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "tryNode",
+      attempt: 2,
+    });
+    expect(
+      useWorkflowRunStore.getState().runs["run-1"]?.retryAttempts["tryNode"],
+    ).toBe(2);
+  });
+});
+
+describe("useWorkflowBridge - step header from a resolved command", () => {
+  /** Persist a command whose id a node maps to, so the header resolver enters
+   *  its command-resolved branch (name + shell/dir + script lines). */
+  function seedCommand(cmd: Partial<Command> & { id: string }): void {
+    const full: Command = {
+      name: "Cmd",
+      script: "",
+      tags: [],
+      favorite: false,
+      createdAt: "",
+      updatedAt: "",
+      runCount: 0,
+      runAsAdmin: false,
+      ...cmd,
+    };
+    useCommandStore.setState({ commands: [full] });
+  }
+
+  it("renders name + (shell) dir + script lines for a node's resolved command with a workingDir", () => {
+    const { handler } = mountBridge();
+    seedCommand({
+      id: "c1",
+      name: "Deploy",
+      shell: "bash",
+      workingDir: "/srv/app",
+      script: "make deploy",
+    });
+    const wf = {
+      id: "wf-1",
+      name: "Flow",
+      nodes: [
+        { id: "A", kind: "command", position: { x: 0, y: 0 }, commandId: "c1" },
+      ],
+      edges: [],
+    } as unknown as Workflow;
+    useWorkflowStore.setState({ workflows: [wf] });
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore
+      .getState()
+      .startRun("run-1", "wf-1", { A: "c1" });
+
+    handler({
+      kind: "nodeStarted",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      executionId: "ea",
+    });
+    handler({
+      kind: "nodeFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      exitCode: 0,
+    });
+
+    expect(aggregateLog("run-1")).toEqual([
+      ["meta", "▸ Deploy"],
+      ["meta", "  (bash) /srv/app"],
+      ["meta", "  $ make deploy"],
+      ["meta", "  exit 0"],
+    ]);
+  });
+
+  it("uses the default shell label and omits script line when the command has no workingDir and an empty script", () => {
+    const { handler } = mountBridge();
+    // No shell (→ default "shell" label), no workingDir, blank script.
+    seedCommand({ id: "c1", name: "Silent", script: "   " });
+    const wf = {
+      id: "wf-1",
+      name: "Flow",
+      nodes: [
+        { id: "A", kind: "command", position: { x: 0, y: 0 }, commandId: "c1" },
+      ],
+      edges: [],
+    } as unknown as Workflow;
+    useWorkflowStore.setState({ workflows: [wf] });
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1", { A: "c1" });
+
+    handler({
+      kind: "nodeStarted",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      executionId: "ea",
+    });
+    handler({
+      kind: "nodeFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      exitCode: 0,
+    });
+
+    // Title + default-shell line only (no dir suffix, no `$ script` line).
+    expect(aggregateLog("run-1")).toEqual([
+      ["meta", "▸ Silent"],
+      ["meta", "  (shell)"],
+      ["meta", "  exit 0"],
+    ]);
+  });
+
+  it("falls back to the node's own label when its commandId resolves to no command", () => {
+    const { handler } = mountBridge();
+    // The run maps node A → a commandId that is NOT in the command store, so
+    // the resolver drops through to the node-label fallback.
+    const wf = {
+      id: "wf-1",
+      name: "Flow",
+      nodes: [
+        {
+          id: "A",
+          kind: "command",
+          position: { x: 0, y: 0 },
+          commandId: "missing",
+          label: "Custom label",
+        },
+      ],
+      edges: [],
+    } as unknown as Workflow;
+    useWorkflowStore.setState({ workflows: [wf] });
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore
+      .getState()
+      .startRun("run-1", "wf-1", { A: "missing" });
+
+    handler({
+      kind: "nodeStarted",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      executionId: "ea",
+    });
+    handler({
+      kind: "nodeFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      exitCode: 0,
+    });
+
+    expect(aggregateLog("run-1")).toEqual([
+      ["meta", "▸ Custom label"],
+      ["meta", "  exit 0"],
+    ]);
+  });
+});
+
+describe("useWorkflowBridge - terminal-event details", () => {
+  it("workflowFinished captures the aggregate output and persists it to history", () => {
+    const { handler } = mountBridge();
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+
+    // Produce some real aggregate output so `recordWorkflowRunCompletion`
+    // captures a non-undefined `output` payload for the DB call.
+    runNodeQuick(handler, "run-1", "wf-1", "A", "ea", ["out-line"]);
+
+    handler({
+      kind: "workflowFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      durationMs: 99,
+    });
+
+    // The DB writer receives the captured output (an array of history log
+    // lines) as its last argument.
+    const calls = updateRunMock.mock.calls;
+    const call = calls[calls.length - 1];
+    expect(call?.[0]).toBe("run-1");
+    expect(call?.[3]).toBe("succeeded");
+    expect(call?.[5]).toContainEqual({ stream: "stdout", line: "out-line" });
+  });
+
+  it("nodeFinished with a null exitCode emits no exit trailer", () => {
+    const { handler } = mountBridge();
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+
+    handler({
+      kind: "nodeStarted",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      executionId: "ea",
+    });
+    handler({
+      kind: "nodeFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      exitCode: null,
+    });
+
+    // Only the header — no `exit N` trailer since the code was null.
+    expect(aggregateLog("run-1")).toEqual([["meta", "▸ A"]]);
+  });
+
+  it("logs to console.error when persisting the workflow completion to the DB rejects", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    updateRunMock.mockRejectedValueOnce(new Error("db down"));
+
+    const { handler } = mountBridge();
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+    handler({
+      kind: "workflowFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      durationMs: 7,
+    });
+
+    // The fire-and-forget rejection is caught and logged, never propagated.
+    await vi.waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith(
+        "failed to update workflow run history event",
+        "run-1",
+        expect.any(Error),
+      );
+    });
+    errorSpy.mockRestore();
+  });
+});
+
+/** Drive one node start→buffer→finish, used by the aggregate-output tests. */
+function runNodeQuick(
+  handler: Handler,
+  runId: string,
+  workflowId: string,
+  nodeId: string,
+  executionId: string,
+  lines: string[],
+): void {
+  handler({ kind: "nodeStarted", runId, workflowId, nodeId, executionId });
+  for (const line of lines) {
+    useWorkflowRunStore
+      .getState()
+      .bufferNodeLine(runId, executionId, {
+        stream: "stdout",
+        line,
+        ts: Date.now(),
+      });
+  }
+  handler({ kind: "nodeFinished", runId, workflowId, nodeId, exitCode: 0 });
+}

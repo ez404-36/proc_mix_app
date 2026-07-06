@@ -212,3 +212,91 @@ describe("uiStore.setLanguage", () => {
     expect(parsed.state.language).toBe("ru");
   });
 });
+
+describe("uiStore navigation-target setters", () => {
+  it("setLibraryTab switches the active library tab", () => {
+    useUIStore.getState().setLibraryTab("workflows");
+    expect(useUIStore.getState().libraryTab).toBe("workflows");
+  });
+
+  it("setEditorWorkflowId stores an id or null", () => {
+    useUIStore.getState().setEditorWorkflowId("wf-9");
+    expect(useUIStore.getState().editorWorkflowId).toBe("wf-9");
+    useUIStore.getState().setEditorWorkflowId(null);
+    expect(useUIStore.getState().editorWorkflowId).toBeNull();
+  });
+
+  it("setCommandEditorTarget sets the target and clears any stale live script", () => {
+    useUIStore.setState({ commandEditorLiveScript: "leftover" });
+    useUIStore
+      .getState()
+      .setCommandEditorTarget({ mode: "edit", commandId: "c-1" });
+    const s = useUIStore.getState();
+    expect(s.commandEditorTarget).toEqual({ mode: "edit", commandId: "c-1" });
+    expect(s.commandEditorLiveScript).toBeNull();
+  });
+
+  it("setCommandEditorLiveScript updates the live script body", () => {
+    useUIStore.getState().setCommandEditorLiveScript("echo hi");
+    expect(useUIStore.getState().commandEditorLiveScript).toBe("echo hi");
+    useUIStore.getState().setCommandEditorLiveScript(null);
+    expect(useUIStore.getState().commandEditorLiveScript).toBeNull();
+  });
+
+  it("setScheduleEditorTarget stores the target or null", () => {
+    useUIStore
+      .getState()
+      .setScheduleEditorTarget({ mode: "edit", scheduleId: "s-1" });
+    expect(useUIStore.getState().scheduleEditorTarget).toEqual({
+      mode: "edit",
+      scheduleId: "s-1",
+    });
+    useUIStore.getState().setScheduleEditorTarget(null);
+    expect(useUIStore.getState().scheduleEditorTarget).toBeNull();
+  });
+
+  it("setCommandEditorDirty flips the dirty flag", () => {
+    useUIStore.getState().setCommandEditorDirty(true);
+    expect(useUIStore.getState().commandEditorDirty).toBe(true);
+    useUIStore.getState().setCommandEditorDirty(false);
+    expect(useUIStore.getState().commandEditorDirty).toBe(false);
+  });
+});
+
+describe("uiStore.toggleSidebar", () => {
+  it("flips the sidebarCollapsed flag on each call", () => {
+    const initial = useUIStore.getState().sidebarCollapsed;
+    useUIStore.getState().toggleSidebar();
+    expect(useUIStore.getState().sidebarCollapsed).toBe(!initial);
+    useUIStore.getState().toggleSidebar();
+    expect(useUIStore.getState().sidebarCollapsed).toBe(initial);
+  });
+});
+
+describe("uiStore.setConsolePosition", () => {
+  it("updates the console dock position", () => {
+    useUIStore.getState().setConsolePosition("right");
+    expect(useUIStore.getState().consolePosition).toBe("right");
+  });
+});
+
+describe("uiStore list-view preference setters", () => {
+  it("updateCommandsView merges a partial patch", () => {
+    useUIStore.getState().updateCommandsView({ mode: "table", pageSize: 25 });
+    const view = useUIStore.getState().commandsView;
+    expect(view.mode).toBe("table");
+    expect(view.pageSize).toBe(25);
+    // Untouched keys are preserved from the default.
+    expect(view.sortKey).toBe("createdAt");
+  });
+
+  it("updateWorkflowsView merges a partial patch", () => {
+    useUIStore.getState().updateWorkflowsView({ grouped: true });
+    expect(useUIStore.getState().workflowsView.grouped).toBe(true);
+  });
+
+  it("updateSchedulesView merges a partial patch", () => {
+    useUIStore.getState().updateSchedulesView({ sortDir: "asc" });
+    expect(useUIStore.getState().schedulesView.sortDir).toBe("asc");
+  });
+});

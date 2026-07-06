@@ -106,4 +106,40 @@ describe("soundStore", () => {
     await useSoundStore.getState().preview("builtin:success");
     expect(previewSound).toHaveBeenCalledWith("builtin:success");
   });
+
+  it("load() records an error and stops loading when a call rejects", async () => {
+    getSoundSettings.mockRejectedValueOnce(new Error("load-failed"));
+    listSounds.mockResolvedValueOnce(builtins);
+
+    await useSoundStore.getState().load();
+
+    const s = useSoundStore.getState();
+    expect(s.error).toContain("load-failed");
+    expect(s.isLoading).toBe(false);
+  });
+
+  it("importSound() records an error and returns null on failure", async () => {
+    importCustomSound.mockRejectedValueOnce(new Error("import-failed"));
+
+    const result = await useSoundStore.getState().importSound();
+
+    expect(result).toBeNull();
+    expect(useSoundStore.getState().error).toContain("import-failed");
+  });
+
+  it("deleteSound() records an error when the delete rejects", async () => {
+    deleteCustomSound.mockRejectedValueOnce(new Error("delete-failed"));
+
+    await useSoundStore.getState().deleteSound("c1");
+
+    expect(useSoundStore.getState().error).toContain("delete-failed");
+  });
+
+  it("preview() records an error when playback rejects", async () => {
+    previewSound.mockRejectedValueOnce(new Error("preview-failed"));
+
+    await useSoundStore.getState().preview("builtin:success");
+
+    expect(useSoundStore.getState().error).toContain("preview-failed");
+  });
 });

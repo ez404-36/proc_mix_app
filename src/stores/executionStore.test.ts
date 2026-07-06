@@ -244,6 +244,51 @@ describe("executionStore.finishExecution", () => {
   });
 });
 
+describe("executionStore.setExecutionResult", () => {
+  it("attaches the result to an existing execution", () => {
+    useExecutionStore.getState().startExecution("e1", undefined, "n");
+    const result = { fields: { host: "srv" }, returnValue: "srv" };
+    useExecutionStore.getState().setExecutionResult("e1", result);
+    expect(useExecutionStore.getState().executions["e1"].result).toEqual(result);
+  });
+
+  it("creates a running stub when the id does not exist yet (out-of-order result)", () => {
+    const result = { fields: { x: 1 }, returnValue: 1 };
+    useExecutionStore.getState().setExecutionResult("ghost", result);
+    const state = useExecutionStore.getState();
+    const exec = state.executions["ghost"];
+    expect(exec).toBeDefined();
+    expect(exec.status).toBe("running");
+    expect(exec.commandName).toBe("");
+    expect(exec.result).toEqual(result);
+    expect(state.recentIds).toContain("ghost");
+    expect(state.activeExecutionId).toBe("ghost");
+    expect(state.panelOpen).toBe(true);
+  });
+});
+
+describe("executionStore panel sizing / dock position", () => {
+  it("setPanelHeight clamps to the minimum panel height", () => {
+    useExecutionStore.getState().setPanelHeight(1);
+    expect(useExecutionStore.getState().panelHeight).toBeGreaterThanOrEqual(1);
+    // A very large request is clamped down to fit the viewport.
+    useExecutionStore.getState().setPanelHeight(100000);
+    expect(useExecutionStore.getState().panelHeight).toBeLessThan(100000);
+  });
+
+  it("setPanelWidth clamps to the minimum panel width", () => {
+    useExecutionStore.getState().setPanelWidth(1);
+    expect(useExecutionStore.getState().panelWidth).toBeGreaterThanOrEqual(1);
+    useExecutionStore.getState().setPanelWidth(100000);
+    expect(useExecutionStore.getState().panelWidth).toBeLessThan(100000);
+  });
+
+  it("setConsolePosition updates the dock position", () => {
+    useExecutionStore.getState().setConsolePosition("left");
+    expect(useExecutionStore.getState().consolePosition).toBe("left");
+  });
+});
+
 describe("executionStore.setActiveExecution / setPanelOpen", () => {
   it("setActiveExecution should set the active id to a string or null", () => {
     useExecutionStore.getState().setActiveExecution("x");

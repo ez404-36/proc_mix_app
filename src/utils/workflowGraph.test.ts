@@ -12,6 +12,7 @@ import {
   findSinglePredecessor,
   flowToWorkflow,
   insertNodeOnEdge,
+  insertPreviewPoint,
   INSERT_SHIFT_X,
   isUnconnectedNode,
   makeGraphId,
@@ -403,6 +404,40 @@ describe("flowToWorkflow parallel branch normalization", () => {
     expect(byId.get("e1")).toBe("branch:1");
   });
 
+  it("falls back an unknown source handle to the default `out` branch", () => {
+    // A hand-crafted / stale flow edge with an unrecognised sourceHandle (not
+    // case:/branch:/a known static branch) round-trips to the default `out`.
+    const nodes: WorkflowFlowNode[] = [
+      {
+        id: "cmd",
+        type: "command",
+        position: { x: 0, y: 0 },
+        data: { kind: "command" },
+      },
+      { id: "t", type: "end", position: { x: 1, y: 0 }, data: { kind: "end" } },
+    ];
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e", source: "cmd", target: "t", sourceHandle: "totally-unknown" },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, nodes, edges);
+    expect(back.edges[0]?.branch).toBe("out");
+  });
+
+  it("skips a parallel fork edge with a null or non-branch handle during normalization", () => {
+    // A fork with one real branch edge plus a stray non-branch handle edge: the
+    // normalizer must skip the stray (handle null / not `branch:`) and still
+    // densify the real branch to branch:0.
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e2", source: "fork", target: "a", sourceHandle: "branch:2" },
+      { id: "stray", source: "fork", target: "b", sourceHandle: null },
+    ];
+    const back = flowToWorkflow({ name: "n", tags: [] }, forkNodes, edges);
+    const byId = new Map(back.edges.map((e) => [e.id, e.branch]));
+    expect(byId.get("e2")).toBe("branch:0");
+    // The stray edge keeps its default `out` branch (untouched by normalizer).
+    expect(byId.get("stray")).toBe("out");
+  });
+
   it("does not re-index a branch:<n> handle on a non-parallel source", () => {
     // Normalization only re-indexes a `parallel` node's fork exits. A
     // `branch:<n>` handle from a non-parallel source is left to the regular
@@ -558,6 +593,32 @@ describe("branchSlotsByNode", () => {
     });
   });
 
+  it("handles a diamond within a branch and an edge looping back to the fork", () => {
+    // fork ─branch:0→ A ─→ L ─→ M
+    //                        └→ R ─→ M   (diamond: M revisited → visited.has)
+    //                  A ─→ fork          (loops back to the fork → forkId guard)
+    const nodes: WorkflowNode[] = [
+      { id: "fork", kind: "parallel", position: { x: 0, y: 0 } },
+      { id: "A", kind: "command", position: { x: 1, y: 0 } },
+      { id: "L", kind: "command", position: { x: 2, y: 0 } },
+      { id: "R", kind: "command", position: { x: 2, y: 1 } },
+      { id: "M", kind: "command", position: { x: 3, y: 0 } },
+    ];
+    const edges: WorkflowEdge[] = [
+      { id: "e0", source: "fork", target: "A", branch: "branch:0" },
+      { id: "aL", source: "A", target: "L", branch: "out" },
+      { id: "aR", source: "A", target: "R", branch: "out" },
+      { id: "lM", source: "L", target: "M", branch: "out" },
+      { id: "rM", source: "R", target: "M", branch: "out" },
+      // A loops back to the fork; the walk must not re-claim the fork itself.
+      { id: "aFork", source: "A", target: "fork", branch: "out" },
+    ];
+    const slots = branchSlotsByNode(nodes, edges);
+    expect(slots["A"]).toBe(1);
+    expect(slots["M"]).toBe(1);
+    expect(slots["fork"]).toBeUndefined();
+  });
+
   it("stops a branch walk at the fork's bound join (the join is not in any branch)", () => {
     const nodes: WorkflowNode[] = [
       { id: "fork", kind: "parallel", position: { x: 0, y: 0 }, joinNodeId: "join" },
@@ -609,6 +670,14 @@ describe("parallelBranchCount", () => {
     const edges: WorkflowFlowEdge[] = [
       { id: "x", source: "other", target: "a", sourceHandle: "branch:5" },
       { id: "y", source: "fork", target: "b", sourceHandle: "branch:nan" },
+    ];
+    expect(parallelBranchCount("fork", edges)).toBe(0);
+  });
+
+  it("skips a fork edge whose handle is null or not a branch handle", () => {
+    const edges: WorkflowFlowEdge[] = [
+      { id: "n", source: "fork", target: "a", sourceHandle: null },
+      { id: "o", source: "fork", target: "b", sourceHandle: "out" },
     ];
     expect(parallelBranchCount("fork", edges)).toBe(0);
   });
@@ -814,6 +883,27 @@ describe("findEdgeNearPoint", () => {
     ];
     expect(findEdgeNearPoint(nodes, dangling, { x: 225, y: 176 })).toBeNull();
   });
+
+  it("handles a degenerate (zero-length) segment where the anchors coincide", () => {
+    // source out-anchor = (x+150, y+26); target in-anchor = (x, y+26). Placing
+    // the target at (150,0) relative to a source at (0,0) makes both anchors
+    // equal (150,26), so the segment length is zero (point-distance branch).
+    const collapsed = [
+      flowNode("a", "start", 0, 0),
+      flowNode("b", "command", 150, 0),
+    ];
+    const collapsedEdge: WorkflowFlowEdge[] = [
+      { id: "z", source: "a", target: "b" },
+    ];
+    // A point right on the shared anchor is within threshold → the edge id.
+    expect(findEdgeNearPoint(collapsed, collapsedEdge, { x: 150, y: 26 })).toBe(
+      "z",
+    );
+    // A far point is out of range → null (still exercises the degenerate path).
+    expect(
+      findEdgeNearPoint(collapsed, collapsedEdge, { x: 900, y: 900 }),
+    ).toBeNull();
+  });
 });
 
 describe("findAttachTail", () => {
@@ -894,6 +984,112 @@ describe("findAttachTail", () => {
   it("returns null when no node has any free output port", () => {
     const nodes = [flowNode("e", "end", 0, 0)];
     expect(findAttachTail(nodes, [], { x: 0, y: 0 })).toBeNull();
+  });
+
+  it("auto-attaches to a try node's ok/catch branches", () => {
+    const nodes: WorkflowFlowNode[] = [
+      { id: "t", type: "try", position: { x: 0, y: 0 }, data: { kind: "try" } },
+    ];
+    // ok @60% (≈31), catch @85% (≈44); a high point resolves to ok.
+    expect(findAttachTail(nodes, [], { x: 150, y: 30 })).toEqual({
+      id: "t",
+      sourceHandle: "ok",
+    });
+    expect(findAttachTail(nodes, [], { x: 150, y: 46 })).toEqual({
+      id: "t",
+      sourceHandle: "catch",
+    });
+  });
+
+  it("auto-attaches to a loop node's body/done branches", () => {
+    const nodes: WorkflowFlowNode[] = [
+      {
+        id: "l",
+        type: "loop",
+        position: { x: 0, y: 0 },
+        data: { kind: "loop" },
+      },
+    ];
+    expect(findAttachTail(nodes, [], { x: 150, y: 30 })).toEqual({
+      id: "l",
+      sourceHandle: "body",
+    });
+    expect(findAttachTail(nodes, [], { x: 150, y: 46 })).toEqual({
+      id: "l",
+      sourceHandle: "done",
+    });
+  });
+
+  it("auto-attaches to a switch node's case + default handles", () => {
+    const nodes: WorkflowFlowNode[] = [
+      {
+        id: "sw",
+        type: "switch",
+        position: { x: 0, y: 0 },
+        data: {
+          kind: "switch",
+          cases: [
+            {
+              id: "c1",
+              condition: { subject: { kind: "exitCode" }, op: "eq", value: "0" },
+            },
+            {
+              id: "c2",
+              condition: { subject: { kind: "exitCode" }, op: "eq", value: "1" },
+            },
+          ],
+        },
+      },
+    ];
+    const tail = findAttachTail(nodes, [], { x: 150, y: 60 });
+    // The nearest free handle is one of the case handles or the default.
+    expect(tail?.id).toBe("sw");
+    expect(
+      ["case:c1", "case:c2", "default"].includes(tail?.sourceHandle ?? ""),
+    ).toBe(true);
+  });
+});
+
+describe("insertPreviewPoint", () => {
+  const nodes = [
+    flowNode("a", "start", 0, 0),
+    flowNode("b", "command", 300, 200),
+  ];
+  const edges: WorkflowFlowEdge[] = [
+    { id: "e1", source: "a", target: "b", sourceHandle: "out" },
+  ];
+
+  it("returns null for a null edge id", () => {
+    expect(insertPreviewPoint(nodes, edges, null)).toBeNull();
+  });
+
+  it("returns null for an unknown edge id", () => {
+    expect(insertPreviewPoint(nodes, edges, "missing")).toBeNull();
+  });
+
+  it("returns null when the source node is missing", () => {
+    const dangling: WorkflowFlowEdge[] = [
+      { id: "e1", source: "ghost", target: "b", sourceHandle: "out" },
+    ];
+    expect(insertPreviewPoint(nodes, dangling, "e1")).toBeNull();
+  });
+
+  it("returns null when the target node is missing", () => {
+    const dangling: WorkflowFlowEdge[] = [
+      { id: "e1", source: "a", target: "ghost", sourceHandle: "out" },
+    ];
+    expect(insertPreviewPoint(nodes, dangling, "e1")).toBeNull();
+  });
+
+  it("returns the midpoint of the source-output → target-input segment", () => {
+    const point = insertPreviewPoint(nodes, edges, "e1");
+    expect(point).not.toBeNull();
+    // The exact value depends on the node geometry; assert it is a finite,
+    // sensible midpoint between the two nodes.
+    expect(Number.isFinite(point?.x ?? NaN)).toBe(true);
+    expect(Number.isFinite(point?.y ?? NaN)).toBe(true);
+    expect(point?.x).toBeGreaterThan(0);
+    expect(point?.y).toBeGreaterThan(0);
   });
 });
 
@@ -1236,6 +1432,12 @@ describe("spliceExistingNodeOnEdge", () => {
   it("returns null for an unknown edge", () => {
     expect(spliceExistingNodeOnEdge(nodes, edges, "free", "nope")).toBeNull();
   });
+
+  it("returns null when the node id is not present in the node list", () => {
+    // `ghost` has no edges (unconnected) and the edge is valid + does not touch
+    // it, but the node itself is absent from `nodes` → the missing-node guard.
+    expect(spliceExistingNodeOnEdge(nodes, edges, "ghost", "e1")).toBeNull();
+  });
 });
 
 describe("markInsertNeighbors", () => {
@@ -1369,6 +1571,27 @@ describe("removeNodeReconnecting", () => {
     );
     expect(aToB).toHaveLength(1);
     expect(aToB[0]?.id).toBe("e3");
+  });
+
+  it("does not add the same bridge twice when two identical inbound edges converge", () => {
+    // Two parallel A→X edges sharing the same source+handle, both feeding X→B.
+    // The first (in,out) pair adds bridge A→B; the second pair must find it
+    // already in the pending `bridges` list (not in `remaining`) and skip it.
+    const nodes = [
+      flowNode("a", "start", 0, 0),
+      flowNode("x", "command", 180, 0),
+      flowNode("b", "command", 360, 0),
+    ];
+    const edges: WorkflowFlowEdge[] = [
+      { id: "e1a", source: "a", target: "x", sourceHandle: "out" },
+      { id: "e1b", source: "a", target: "x", sourceHandle: "out" },
+      { id: "e2", source: "x", target: "b", sourceHandle: "out" },
+    ];
+    const next = removeNodeReconnecting(nodes, edges, "x");
+    const aToB = next.edges.filter(
+      (e) => e.source === "a" && e.target === "b",
+    );
+    expect(aToB).toHaveLength(1);
   });
 
   it("skips a self-loop bridge", () => {

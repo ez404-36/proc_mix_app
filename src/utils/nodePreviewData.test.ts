@@ -95,6 +95,23 @@ describe("previewText", () => {
   });
 });
 
+describe("structuredText", () => {
+  it("returns an empty string when there is no structured result", () => {
+    expect(structuredText(null)).toBe("");
+    expect(structuredText({ text: "raw", truncated: false })).toBe("");
+  });
+
+  it("stringifies a non-serialisable (cyclic) value via the catch fallback", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const result = structuredText({
+      structured: { fields: {}, returnValue: cyclic },
+      truncated: false,
+    });
+    expect(result).toBe("[object Object]");
+  });
+});
+
 function commandNode(commandId: string): WorkflowFlowNode {
   return {
     id: "p",
@@ -150,6 +167,16 @@ describe("predecessorOutputSchema", () => {
 
   it("returns undefined when there is no predecessor", () => {
     expect(predecessorOutputSchema(null, [])).toBeUndefined();
+  });
+
+  it("returns undefined for a command node with no commandId", () => {
+    const noCmd: WorkflowFlowNode = {
+      id: "p",
+      type: "command",
+      position: { x: 0, y: 0 },
+      data: { kind: "command" },
+    };
+    expect(predecessorOutputSchema(noCmd, [])).toBeUndefined();
   });
 });
 
@@ -217,5 +244,33 @@ describe("resolveAssignmentDisplayValue", () => {
         ph,
       ),
     ).toBe("<field>");
+  });
+
+  it("falls back to the schemaOutput placeholder when there is no extraction", () => {
+    expect(
+      resolveAssignmentDisplayValue(
+        assign({ kind: "schemaOutput" }),
+        "raw",
+        null,
+        ph,
+      ),
+    ).toBe("<schemaOutput>");
+  });
+
+  it("stringifies a non-serialisable field value via the catch fallback", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const cyclicResult: ExtractedResult = {
+      fields: { host: cyclic },
+      returnValue: null,
+    };
+    expect(
+      resolveAssignmentDisplayValue(
+        assign({ kind: "field", field: "host" }),
+        "raw",
+        cyclicResult,
+        ph,
+      ),
+    ).toBe("[object Object]");
   });
 });

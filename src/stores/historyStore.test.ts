@@ -41,13 +41,24 @@ vi.mock("@arco-design/web-react", () => ({
   },
 }));
 
+const saveSshHostMock = vi.fn();
+vi.mock("../services/sshConnectionService", () => ({
+  saveSshHost: (...args: unknown[]) => saveSshHostMock(...args),
+}));
+
+import { Message } from "@arco-design/web-react";
 import type { Command, HistoryEvent } from "../types";
+import type { SshHostSnapshot } from "../types/history";
 import { useCommandStore } from "./commandStore";
 import {
+  deleteHistoryEventAndReload,
   HISTORY_PAGE_SIZE,
   __test__,
+  selectCommandExists,
   useHistoryStore,
 } from "./historyStore";
+
+const MessageMock = vi.mocked(Message);
 
 const sampleCommand: Command = {
   id: "cmd-1",
@@ -90,6 +101,9 @@ beforeEach(() => {
   clearHistoryInDbMock.mockReset();
   deleteHistoryEventInDbMock.mockReset();
   upsertCommandInDbMock.mockReset();
+  saveSshHostMock.mockReset();
+  MessageMock.error.mockReset();
+  MessageMock.success.mockReset();
   resetCommandStore();
   resetHistoryStore();
 });
@@ -522,5 +536,353 @@ describe("selection (toggleSelected / clearSelection / deleteSelected)", () => {
     expect(deleteHistoryEventInDbMock).toHaveBeenCalledTimes(2);
     expect(useHistoryStore.getState().selectedIds).toEqual(["e1", "e2"]);
     expect(listHistoryFromDbMock).not.toHaveBeenCalled();
+  });
+});
+
+const okListing = {
+  items: [],
+  total: 0,
+  page: 1,
+  pageSize: HISTORY_PAGE_SIZE,
+} as const;
+
+describe("undoEdit — error paths", () => {
+  it("surfaces a toast when the source fetch rejects", async () => {
+    getHistoryEventFromDbMock.mockRejectedValueOnce(new Error("db read failed"));
+    await useHistoryStore.getState().undoEdit("e1");
+    expect(MessageMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("db read failed"),
+    );
+    expect(upsertCommandInDbMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a toast when the upsert/record throws", async () => {
+    const before: Command = { ...sampleCommand, name: "Original" };
+    const after: Command = { ...sampleCommand, name: "Edited" };
+    getHistoryEventFromDbMock.mockResolvedValueOnce({
+      id: "e-edit",
+      createdAt: "2026-05-28T00:00:00Z",
+      kind: "commandEdited",
+      commandId: "cmd-1",
+      commandName: "Edited",
+      snapshotBefore: before,
+      snapshotAfter: after,
+    } satisfies HistoryEvent);
+    upsertCommandInDbMock.mockRejectedValueOnce(new Error("write blocked"));
+    useCommandStore.setState({ commands: [after], favorites: [] });
+
+    await useHistoryStore.getState().undoEdit("e-edit");
+
+    expect(MessageMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("write blocked"),
+    );
+    expect(recordHistoryEventInDbMock).not.toHaveBeenCalled();
+  });
+
+  it("appends the command when the store does not already contain it", async () => {
+    const before: Command = { ...sampleCommand, id: "cmd-new", name: "Fresh" };
+    const after: Command = { ...before, name: "Edited" };
+    getHistoryEventFromDbMock.mockResolvedValueOnce({
+      id: "e-edit",
+      createdAt: "2026-05-28T00:00:00Z",
+      kind: "commandEdited",
+      commandId: "cmd-new",
+      commandName: "Edited",
+      snapshotBefore: before,
+      snapshotAfter: after,
+    } satisfies HistoryEvent);
+    recordHistoryEventInDbMock.mockResolvedValueOnce("ok");
+    upsertCommandInDbMock.mockResolvedValueOnce(undefined);
+    listHistoryFromDbMock.mockResolvedValue(okListing);
+    // Command store does NOT contain cmd-new → the append branch runs.
+    useCommandStore.setState({ commands: [], favorites: [] });
+
+    await useHistoryStore.getState().undoEdit("e-edit");
+
+    expect(useCommandStore.getState().commands).toHaveLength(1);
+    expect(useCommandStore.getState().commands[0]?.id).toBe("cmd-new");
+    expect(MessageMock.success).toHaveBeenCalled();
+  });
+});
+
+describe("restoreDeleted — error paths", () => {
+  it("surfaces a toast when the source fetch rejects", async () => {
+    getHistoryEventFromDbMock.mockRejectedValueOnce(new Error("io error"));
+    await useHistoryStore.getState().restoreDeleted("e1");
+    expect(MessageMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("io error"),
+    );
+  });
+
+  it("shows an error and reloads when the source is missing", async () => {
+    getHistoryEventFromDbMock.mockResolvedValueOnce(null);
+    listHistoryFromDbMock.mockResolvedValue(okListing);
+    await useHistoryStore.getState().restoreDeleted("missing");
+    expect(MessageMock.error).toHaveBeenCalled();
+    expect(upsertCommandInDbMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a source whose kind is not commandDeleted", async () => {
+    getHistoryEventFromDbMock.mockResolvedValueOnce({
+      id: "e1",
+      createdAt: "2026-05-28T00:00:00Z",
+      kind: "commandCreated",
+      commandId: "cmd-1",
+      commandName: "Greet",
+      snapshotAfter: sampleCommand,
+    } satisfies HistoryEvent);
+    listHistoryFromDbMock.mockResolvedValue(okListing);
+    await useHistoryStore.getState().restoreDeleted("e1");
+    expect(upsertCommandInDbMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a toast when the upsert/record throws", async () => {
+    const snap: Command = { ...sampleCommand, id: "cmd-77", name: "Killed" };
+    getHistoryEventFromDbMock.mockResolvedValueOnce({
+      id: "e-del",
+      createdAt: "2026-05-28T00:00:00Z",
+      kind: "commandDeleted",
+      commandId: "cmd-77",
+      commandName: "Killed",
+      snapshotBefore: snap,
+    } satisfies HistoryEvent);
+    upsertCommandInDbMock.mockRejectedValueOnce(new Error("locked"));
+    useCommandStore.setState({ commands: [], favorites: [] });
+    await useHistoryStore.getState().restoreDeleted("e-del");
+    expect(MessageMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("locked"),
+    );
+  });
+
+  it("replaces an existing command and drops it from favorites when snapshot is not favourite", async () => {
+    const existing: Command = { ...sampleCommand, id: "cmd-x", name: "Old" };
+    const snap: Command = { ...existing, name: "Restored", favorite: false };
+    getHistoryEventFromDbMock.mockResolvedValueOnce({
+      id: "e-del",
+      createdAt: "2026-05-28T00:00:00Z",
+      kind: "commandDeleted",
+      commandId: "cmd-x",
+      commandName: "Restored",
+      snapshotBefore: snap,
+    } satisfies HistoryEvent);
+    recordHistoryEventInDbMock.mockResolvedValueOnce("ok");
+    upsertCommandInDbMock.mockResolvedValueOnce(undefined);
+    listHistoryFromDbMock.mockResolvedValue(okListing);
+    // Command exists AND is currently a favourite → exists branch + favorite removal.
+    useCommandStore.setState({
+      commands: [existing],
+      favorites: ["cmd-x"],
+    });
+    await useHistoryStore.getState().restoreDeleted("e-del");
+    expect(useCommandStore.getState().commands[0]?.name).toBe("Restored");
+    expect(useCommandStore.getState().favorites).not.toContain("cmd-x");
+  });
+});
+
+describe("undoSshEdit", () => {
+  const writableSnapshot: SshHostSnapshot = {
+    hostKey: "open-ssh-config:prod",
+    name: "prod",
+    source: "open-ssh-config",
+    hostName: "1.2.3.4",
+    user: "deploy",
+    port: 22,
+    identityFile: "~/.ssh/id_ed25519",
+    isPattern: false,
+    rawText: "Host prod\n  HostName 1.2.3.4\n",
+  };
+
+  function sshEditedEvent(
+    snapshotBefore: SshHostSnapshot,
+    kind: "sshHostEdited" | "sshHostEditedExternally" = "sshHostEdited",
+  ): HistoryEvent {
+    return {
+      id: "e-ssh",
+      createdAt: "2026-05-28T00:00:00Z",
+      kind,
+      hostKey: snapshotBefore.hostKey,
+      hostName: snapshotBefore.name,
+      snapshotBefore,
+      snapshotAfter: { ...snapshotBefore, hostName: "9.9.9.9" },
+    };
+  }
+
+  it("surfaces a toast when the source fetch rejects", async () => {
+    getHistoryEventFromDbMock.mockRejectedValueOnce(new Error("read fail"));
+    await useHistoryStore.getState().undoSshEdit("e-ssh");
+    expect(MessageMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("read fail"),
+    );
+    expect(saveSshHostMock).not.toHaveBeenCalled();
+  });
+
+  it("shows an error and reloads when the source is missing or wrong kind", async () => {
+    getHistoryEventFromDbMock.mockResolvedValueOnce({
+      id: "e1",
+      createdAt: "2026-05-28T00:00:00Z",
+      kind: "commandCreated",
+      commandId: "cmd-1",
+      commandName: "Greet",
+      snapshotAfter: sampleCommand,
+    } satisfies HistoryEvent);
+    listHistoryFromDbMock.mockResolvedValue(okListing);
+    await useHistoryStore.getState().undoSshEdit("e1");
+    expect(MessageMock.error).toHaveBeenCalled();
+    expect(saveSshHostMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to revert a read-only source without calling saveSshHost", async () => {
+    getHistoryEventFromDbMock.mockResolvedValueOnce(
+      sshEditedEvent({ ...writableSnapshot, source: "system-config" }),
+    );
+    await useHistoryStore.getState().undoSshEdit("e-ssh");
+    expect(MessageMock.error).toHaveBeenCalled();
+    expect(saveSshHostMock).not.toHaveBeenCalled();
+  });
+
+  it("reverts a writable snapshot via saveSshHost, toasts success, and reloads", async () => {
+    getHistoryEventFromDbMock.mockResolvedValueOnce(
+      sshEditedEvent(writableSnapshot),
+    );
+    saveSshHostMock.mockResolvedValueOnce(undefined);
+    listHistoryFromDbMock.mockResolvedValue(okListing);
+
+    await useHistoryStore.getState().undoSshEdit("e-ssh");
+
+    expect(saveSshHostMock).toHaveBeenCalledWith("open-ssh-config", {
+      name: "prod",
+      previousName: null,
+      hostName: "1.2.3.4",
+      user: "deploy",
+      port: 22,
+      identityFile: "~/.ssh/id_ed25519",
+    });
+    expect(MessageMock.success).toHaveBeenCalled();
+    expect(listHistoryFromDbMock).toHaveBeenCalled();
+  });
+
+  it("handles the externally-edited kind as revertable", async () => {
+    getHistoryEventFromDbMock.mockResolvedValueOnce(
+      sshEditedEvent(writableSnapshot, "sshHostEditedExternally"),
+    );
+    saveSshHostMock.mockResolvedValueOnce(undefined);
+    listHistoryFromDbMock.mockResolvedValue(okListing);
+    await useHistoryStore.getState().undoSshEdit("e-ssh");
+    expect(saveSshHostMock).toHaveBeenCalled();
+  });
+
+  it("surfaces a toast when saveSshHost throws", async () => {
+    getHistoryEventFromDbMock.mockResolvedValueOnce(
+      sshEditedEvent(writableSnapshot),
+    );
+    saveSshHostMock.mockRejectedValueOnce(new Error("write failed"));
+    await useHistoryStore.getState().undoSshEdit("e-ssh");
+    expect(MessageMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("write failed"),
+    );
+  });
+});
+
+describe("applyRunCompletion — optional fields", () => {
+  it("applies timedOut, output, and result when supplied", () => {
+    const row: HistoryEvent = {
+      id: "evt-run-1",
+      createdAt: "2026-06-04T00:00:00Z",
+      kind: "commandRun",
+      commandId: "cmd-1",
+      commandName: "Greet",
+      executionId: "exec-1",
+      status: "running",
+    };
+    useHistoryStore.setState({ items: [row], total: 1 });
+    useHistoryStore.getState().applyRunCompletion("exec-1", {
+      status: "succeeded",
+      timedOut: true,
+      output: [{ stream: "stdout", line: "hi" }],
+      result: { fields: { count: "1" }, returnValue: 1 },
+    });
+    const patched = useHistoryStore.getState().items[0];
+    if (patched.kind === "commandRun") {
+      expect(patched.timedOut).toBe(true);
+      expect(patched.output).toHaveLength(1);
+      expect(patched.result).toEqual({ fields: { count: "1" }, returnValue: 1 });
+    }
+  });
+});
+
+describe("clearAll — bounded range and errors", () => {
+  it("clears a bounded range then reloads from page 1", async () => {
+    clearHistoryInDbMock.mockResolvedValueOnce(undefined);
+    listHistoryFromDbMock.mockResolvedValue(okListing);
+    useHistoryStore.setState({ page: 4 });
+    await useHistoryStore.getState().clearAll({ kind: "lastHour" });
+    expect(clearHistoryInDbMock).toHaveBeenCalled();
+    expect(useHistoryStore.getState().page).toBe(1);
+    expect(listHistoryFromDbMock).toHaveBeenCalled();
+  });
+
+  it("surfaces a toast when the clear fails", async () => {
+    clearHistoryInDbMock.mockRejectedValueOnce(new Error("cannot clear"));
+    await useHistoryStore.getState().clearAll();
+    expect(MessageMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("cannot clear"),
+    );
+  });
+});
+
+describe("deleteHistoryEventAndReload", () => {
+  it("deletes the event then reloads the store", async () => {
+    deleteHistoryEventInDbMock.mockResolvedValueOnce(undefined);
+    listHistoryFromDbMock.mockResolvedValue(okListing);
+    await deleteHistoryEventAndReload("e-1");
+    expect(deleteHistoryEventInDbMock).toHaveBeenCalledWith("e-1");
+    expect(listHistoryFromDbMock).toHaveBeenCalled();
+  });
+});
+
+describe("selectCommandExists", () => {
+  it("returns true when the command is present and false otherwise", () => {
+    const predicate = selectCommandExists("cmd-1");
+    expect(predicate([sampleCommand])).toBe(true);
+    expect(predicate([])).toBe(false);
+  });
+});
+
+describe("makeId fallback (no crypto.randomUUID)", () => {
+  it("still records a revert event when crypto.randomUUID is unavailable", async () => {
+    const original = crypto.randomUUID;
+    // Force the non-crypto fallback path in makeId.
+    Object.defineProperty(crypto, "randomUUID", {
+      configurable: true,
+      value: undefined,
+    });
+    try {
+      const before: Command = { ...sampleCommand, name: "Original" };
+      const after: Command = { ...sampleCommand, name: "Edited" };
+      getHistoryEventFromDbMock.mockResolvedValueOnce({
+        id: "e-edit",
+        createdAt: "2026-05-28T00:00:00Z",
+        kind: "commandEdited",
+        commandId: "cmd-1",
+        commandName: "Edited",
+        snapshotBefore: before,
+        snapshotAfter: after,
+      } satisfies HistoryEvent);
+      recordHistoryEventInDbMock.mockResolvedValueOnce("ok");
+      upsertCommandInDbMock.mockResolvedValueOnce(undefined);
+      listHistoryFromDbMock.mockResolvedValue(okListing);
+      useCommandStore.setState({ commands: [after], favorites: [] });
+
+      await useHistoryStore.getState().undoEdit("e-edit");
+
+      const recorded = recordHistoryEventInDbMock.mock
+        .calls[0]?.[0] as HistoryEvent;
+      expect(recorded.id).toMatch(/^evt-/);
+    } finally {
+      Object.defineProperty(crypto, "randomUUID", {
+        configurable: true,
+        value: original,
+      });
+    }
   });
 });

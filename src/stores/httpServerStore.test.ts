@@ -176,6 +176,14 @@ describe("start / stop", () => {
     expect(stopMock).toHaveBeenCalledTimes(1);
     expect(useHttpServerStore.getState().status.running).toBe(false);
   });
+
+  it("stop rethrows and records the error on failure", async () => {
+    stopMock.mockRejectedValue(new Error("STOP_FAILED"));
+    await expect(useHttpServerStore.getState().stop()).rejects.toThrow(
+      "STOP_FAILED",
+    );
+    expect(useHttpServerStore.getState().error).toContain("STOP_FAILED");
+  });
 });
 
 describe("saveConfig", () => {

@@ -64,6 +64,18 @@ describe("isCaptureUnsupportedError", () => {
   });
 });
 
+describe("isCaptureRequiresPrivilegeError", () => {
+  it("matches the exact requires-privilege sentinel only", async () => {
+    const { isCaptureRequiresPrivilegeError, CAPTURE_REQUIRES_PRIVILEGE } =
+      await import("./processCapture");
+    expect(
+      isCaptureRequiresPrivilegeError(CAPTURE_REQUIRES_PRIVILEGE),
+    ).toBe(true);
+    expect(isCaptureRequiresPrivilegeError("CAPTURE_UNSUPPORTED")).toBe(false);
+    expect(isCaptureRequiresPrivilegeError(undefined)).toBe(false);
+  });
+});
+
 describe("IPC wrappers", () => {
   it("startProcessCapture invokes the start command with no scope by default", async () => {
     mocks.invoke.mockResolvedValue(undefined);
@@ -163,5 +175,33 @@ describe("subscribeCaptureEvents", () => {
     const unsub = subscribeCaptureEvents(vi.fn());
     expect(typeof unsub).toBe("function");
     unsub();
+  });
+
+  it("logs an error when the listener fails to attach", async () => {
+    const failure = new Error("attach failed");
+    mocks.listen.mockReset();
+    mocks.listen.mockRejectedValue(failure);
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    const { subscribeCaptureEvents } = await import("./processCapture");
+    subscribeCaptureEvents(vi.fn());
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "capture-event listener failed to attach:",
+      failure,
+    );
+    errorSpy.mockRestore();
+  });
+});
+
+describe("awaitCaptureBridgeReady", () => {
+  it("resolves once the listener is attached", async () => {
+    const { awaitCaptureBridgeReady } = await import("./processCapture");
+    await expect(awaitCaptureBridgeReady()).resolves.toBeUndefined();
+    expect(mocks.listen).toHaveBeenCalledTimes(1);
   });
 });

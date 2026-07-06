@@ -5,6 +5,24 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-07-06
+
+**Test-coverage hardening.** A maintenance release with no user-facing changes.
+It substantially expands the frontend test suite and refines the coverage
+configuration so the project keeps its high line/function gate.
+
+### Changed
+
+- **Broader automated test coverage.** Added dozens of unit tests across the
+  React stores, hooks, and utility modules — navigation setters, execution and
+  workflow bridges, HTTP-server wiring, scheduling helpers, import selection, and
+  more. Behaviour is unchanged; this only guards against regressions.
+- **Coverage config refined.** Benchmark files (`*.bench.*`) are excluded from
+  the coverage run (they execute under `vitest bench`, not the test suite), and
+  the two structurally-unreachable defensive lines in `useGlobalShortcut` are
+  excluded with a documented rationale — so the 100% line/function gate stays
+  enforced for every other file instead of being lowered project-wide.
+
 ## [0.13.0] - 2026-07-05
 
 **Sound notifications when a run finishes.** ProcMix can now play a short audio

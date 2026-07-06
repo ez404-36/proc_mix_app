@@ -10,10 +10,13 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 const listMock = vi.fn();
 const upsertMock = vi.fn();
 const deleteMock = vi.fn();
+const deleteLocalForWorkflowMock = vi.fn();
 vi.mock("../utils/commandRepository", () => ({
   listCommandsFromDb: () => listMock(),
   upsertCommandInDb: (cmd: unknown) => upsertMock(cmd),
   deleteCommandInDb: (id: string) => deleteMock(id),
+  deleteLocalCommandsForWorkflowInDb: (workflowId: string) =>
+    deleteLocalForWorkflowMock(workflowId),
 }));
 
 // Mock Arco's Message so failure paths don't try to render a toast in
@@ -23,6 +26,7 @@ vi.mock("@arco-design/web-react", () => ({
   Message: { error: (...args: unknown[]) => messageErrorMock(...args) },
 }));
 
+import type { Command } from "../types";
 import { useCommandStore } from "./commandStore";
 import { buildSeedsForPlatform } from "./seeds";
 
@@ -49,6 +53,8 @@ beforeEach(() => {
   upsertMock.mockResolvedValue(undefined);
   deleteMock.mockReset();
   deleteMock.mockResolvedValue(undefined);
+  deleteLocalForWorkflowMock.mockReset();
+  deleteLocalForWorkflowMock.mockResolvedValue(undefined);
   messageErrorMock.mockReset();
 });
 
@@ -401,5 +407,77 @@ describe("commandStore.initializeSeeds", () => {
     upsertMock.mockClear();
     useCommandStore.getState().initializeSeeds("linux");
     expect(upsertMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("commandStore.removeLocalCommandsForWorkflow", () => {
+  it("removes only the workflow's local commands and issues one bulk delete", () => {
+    const [seed] = SEED_COMMANDS;
+    const localA: Command = {
+      ...seed,
+      id: "local-a",
+      scope: "local",
+      workflowId: "wf-1",
+    };
+    const localB: Command = {
+      ...seed,
+      id: "local-b",
+      scope: "local",
+      workflowId: "wf-1",
+    };
+    const otherWorkflowLocal: Command = {
+      ...seed,
+      id: "local-c",
+      scope: "local",
+      workflowId: "wf-2",
+    };
+    useCommandStore.setState({
+      commands: [localA, localB, otherWorkflowLocal],
+      favorites: ["local-a"],
+      seedsInitialized: true,
+      hydrated: true,
+    });
+
+    const removed = useCommandStore
+      .getState()
+      .removeLocalCommandsForWorkflow("wf-1");
+
+    expect(removed.map((c) => c.id)).toEqual(["local-a", "local-b"]);
+    const remainingIds = useCommandStore
+      .getState()
+      .commands.map((c) => c.id);
+    expect(remainingIds).toEqual(["local-c"]);
+    expect(useCommandStore.getState().favorites).toEqual([]);
+    expect(deleteLocalForWorkflowMock).toHaveBeenCalledWith("wf-1");
+  });
+
+  it("returns an empty array and issues no delete when nothing matches", () => {
+    const removed = useCommandStore
+      .getState()
+      .removeLocalCommandsForWorkflow("wf-none");
+    expect(removed).toEqual([]);
+    expect(deleteLocalForWorkflowMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a Message.error toast when the bulk delete fails", async () => {
+    const [seed] = SEED_COMMANDS;
+    const local: Command = {
+      ...seed,
+      id: "local-a",
+      scope: "local",
+      workflowId: "wf-1",
+    };
+    useCommandStore.setState({
+      commands: [local],
+      favorites: [],
+      seedsInitialized: true,
+      hydrated: true,
+    });
+    deleteLocalForWorkflowMock.mockRejectedValueOnce(new Error("boom"));
+
+    useCommandStore.getState().removeLocalCommandsForWorkflow("wf-1");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(messageErrorMock).toHaveBeenCalledWith("Failed to delete command");
   });
 });
