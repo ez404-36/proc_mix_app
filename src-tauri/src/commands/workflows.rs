@@ -72,6 +72,11 @@ pub async fn delete_workflow(
 /// answers for any no-default variable. Each entry is keyed by node id
 /// and handed to the engine, which substitutes it per command run. A
 /// node with all-defaulted variables can be omitted from the map.
+///
+/// `node_working_dir_values` (camelCase `nodeWorkingDirValues`) mirrors it
+/// for the single working-directory value a node's `atRun` working-dir
+/// prompt collected (see `WorkflowNode.workingDirSource`). A node absent
+/// from the map falls back to no override.
 #[tauri::command]
 pub async fn execute_workflow(
     app: AppHandle,
@@ -80,6 +85,7 @@ pub async fn execute_workflow(
     pool: State<'_, DbPool>,
     workflow: storage_workflows::WorkflowRecord,
     node_variable_values: HashMap<String, BTreeMap<String, String>>,
+    node_working_dir_values: HashMap<String, String>,
 ) -> Result<String, String> {
     let commands = storage_commands::resolve_map(pool.inner()).await?;
 
@@ -90,6 +96,7 @@ pub async fn execute_workflow(
         workflow,
         commands,
         node_variable_values,
+        node_working_dir_values,
         // A direct UI run always streams to the live console.
         false,
     )
@@ -111,6 +118,7 @@ pub async fn run_workflow_from_node(
     pool: State<'_, DbPool>,
     workflow: storage_workflows::WorkflowRecord,
     node_variable_values: HashMap<String, BTreeMap<String, String>>,
+    node_working_dir_values: HashMap<String, String>,
     start_node_id: String,
     seed_input: Option<String>,
 ) -> Result<String, String> {
@@ -123,6 +131,7 @@ pub async fn run_workflow_from_node(
         workflow,
         commands,
         node_variable_values,
+        node_working_dir_values,
         start_node_id,
         seed_input,
     )

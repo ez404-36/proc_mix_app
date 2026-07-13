@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS commands (
   shell           TEXT,
   args_json       TEXT,
   working_dir     TEXT,
+  -- Whether the runner prompts for a working directory before each run
+  -- (pre-filling `working_dir`). Default 0. Added in v0.13.1; the companion
+  -- idempotent ALTER in db.rs::ensure_commands_columns handles databases
+  -- created before this column existed.
+  prompt_working_dir INTEGER NOT NULL DEFAULT 0,
   env_json        TEXT,
   tags_json       TEXT NOT NULL DEFAULT '[]',
   category_id     TEXT,
@@ -59,6 +64,12 @@ CREATE TABLE IF NOT EXISTS commands (
   -- NULL means local (legacy rows / commands that never set a target). Added
   -- in v0.9.1; see docs/ssh-remote-execution.md and core::executor::ExecutionTarget.
   target          TEXT,
+  -- Whether the runner prompts for an SSH password before each REMOTE run
+  -- (password auth). Only the opt-in flag is stored; the password itself is
+  -- one-shot and never persisted. Default 0. Added in v0.13.1; the companion
+  -- idempotent ALTER in db.rs::ensure_commands_columns handles databases
+  -- created before this column existed.
+  prompt_ssh_password INTEGER NOT NULL DEFAULT 0,
   -- Optional stable slug used to address this command over the built-in HTTP
   -- API (`POST /api/command/{ref}/run`). NULL = no slug (the endpoint can still
   -- address the command by `id` as a fallback). Uniqueness among non-NULL slugs

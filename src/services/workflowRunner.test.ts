@@ -22,6 +22,15 @@ vi.mock("./commandRunner", () => ({
     resolveVariableValuesMock(...args),
 }));
 
+// None of these test workflows set a node `workingDirSource`, so
+// `resolveNodeWorkingDirValues` never calls this — mocked only so the module
+// import doesn't reach the real prompt-modal registry.
+const promptForWorkingDirMock = vi.fn();
+vi.mock("../utils/workingDirPrompt", () => ({
+  promptForWorkingDir: (...args: unknown[]) =>
+    promptForWorkingDirMock(...args),
+}));
+
 const recordMock = vi.fn();
 vi.mock("../utils/historyRepository", () => ({
   recordHistoryEventInDb: (...args: unknown[]) => recordMock(...args),
@@ -52,7 +61,10 @@ function makeCommand(id: string): Command {
   };
 }
 
-function makeWorkflow(commandIds: string[]): Workflow {
+function makeWorkflow(
+  commandIds: string[],
+  workingDirSources: Record<number, "atRun"> = {},
+): Workflow {
   return {
     id: "wf-1",
     name: "Deploy",
@@ -61,6 +73,9 @@ function makeWorkflow(commandIds: string[]): Workflow {
       kind: "command",
       commandId: cid,
       position: { x: i * 100, y: 0 },
+      ...(workingDirSources[i] === "atRun"
+        ? { workingDirSource: { kind: "atRun" as const } }
+        : {}),
     })),
     edges: [],
     tags: [],
@@ -83,6 +98,8 @@ beforeEach(() => {
   resolveVariableValuesMock.mockReset();
   // Default: commands declare no variables → empty resolved map, no prompt.
   resolveVariableValuesMock.mockResolvedValue({});
+  promptForWorkingDirMock.mockReset();
+  promptForWorkingDirMock.mockResolvedValue("");
   messageErrorMock.mockReset();
   useCommandStore.setState({
     commands: [makeCommand("cmd-a"), makeCommand("cmd-b")],
@@ -107,8 +124,8 @@ describe("triggerWorkflowRun - happy path", () => {
     // Both referenced commands re-persisted before the run.
     expect(upsertCommandMock).toHaveBeenCalledTimes(2);
     expect(bridgeReadyMock).toHaveBeenCalledTimes(1);
-    // No-variable commands → empty per-node value map passed to the IPC.
-    expect(executeWorkflowMock).toHaveBeenCalledWith(wf, {});
+    // No-variable commands → empty per-node value maps passed to the IPC.
+    expect(executeWorkflowMock).toHaveBeenCalledWith(wf, {}, {});
 
     // Run registered in the progress store.
     expect(useWorkflowRunStore.getState().runs["run-123"]).toBeDefined();
@@ -163,9 +180,13 @@ describe("triggerWorkflowRun - variable values", () => {
     expect(resolveVariableValuesMock).toHaveBeenCalledTimes(2);
     // Only the node whose command resolved to a non-empty map is included;
     // the node ids come from makeWorkflow (`n0`, `n1`).
-    expect(executeWorkflowMock).toHaveBeenCalledWith(wf, {
-      n0: { token: "secret" },
-    });
+    expect(executeWorkflowMock).toHaveBeenCalledWith(
+      wf,
+      {
+        n0: { token: "secret" },
+      },
+      {},
+    );
   });
 
   it("aborts quietly (no execute, no toast) when the user cancels a prompt", async () => {
@@ -186,10 +207,14 @@ describe("triggerWorkflowRun - variable values", () => {
 
     // Same command id on both nodes → resolved once, reused for both.
     expect(resolveVariableValuesMock).toHaveBeenCalledTimes(1);
-    expect(executeWorkflowMock).toHaveBeenCalledWith(wf, {
-      n0: { token: "v" },
-      n1: { token: "v" },
-    });
+    expect(executeWorkflowMock).toHaveBeenCalledWith(
+      wf,
+      {
+        n0: { token: "v" },
+        n1: { token: "v" },
+      },
+      {},
+    );
   });
 
   it("defaults-only commands run with no prompt and an empty value map", async () => {
@@ -198,6 +223,50 @@ describe("triggerWorkflowRun - variable values", () => {
     const runId = await triggerWorkflowRun(wf);
 
     expect(runId).toBe("run-123");
-    expect(executeWorkflowMock).toHaveBeenCalledWith(wf, {});
+    expect(executeWorkflowMock).toHaveBeenCalledWith(wf, {}, {});
+  });
+});
+
+describe("triggerWorkflowRun - working-dir values", () => {
+  it("prompts for a node whose workingDirSource is atRun and forwards the value", async () => {
+    promptForWorkingDirMock.mockResolvedValueOnce("/srv/app");
+    const wf = makeWorkflow(["cmd-a"], { 0: "atRun" });
+    const runId = await triggerWorkflowRun(wf);
+
+    expect(runId).toBe("run-123");
+    expect(promptForWorkingDirMock).toHaveBeenCalledTimes(1);
+    expect(executeWorkflowMock).toHaveBeenCalledWith(wf, {}, {
+      n0: "/srv/app",
+    });
+  });
+
+  it("aborts quietly when the user cancels the working-dir prompt", async () => {
+    promptForWorkingDirMock.mockResolvedValueOnce(null);
+    const wf = makeWorkflow(["cmd-a"], { 0: "atRun" });
+    const runId = await triggerWorkflowRun(wf);
+
+    expect(runId).toBeNull();
+    expect(executeWorkflowMock).not.toHaveBeenCalled();
+    expect(messageErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("prompts only once for a command referenced by multiple atRun nodes", async () => {
+    promptForWorkingDirMock.mockResolvedValueOnce("/srv/app");
+    const wf = makeWorkflow(["cmd-a", "cmd-a"], { 0: "atRun", 1: "atRun" });
+    await triggerWorkflowRun(wf);
+
+    expect(promptForWorkingDirMock).toHaveBeenCalledTimes(1);
+    expect(executeWorkflowMock).toHaveBeenCalledWith(wf, {}, {
+      n0: "/srv/app",
+      n1: "/srv/app",
+    });
+  });
+
+  it("nodes without an atRun workingDirSource never open the prompt", async () => {
+    const wf = makeWorkflow(["cmd-a"]);
+    await triggerWorkflowRun(wf);
+
+    expect(promptForWorkingDirMock).not.toHaveBeenCalled();
+    expect(executeWorkflowMock).toHaveBeenCalledWith(wf, {}, {});
   });
 });

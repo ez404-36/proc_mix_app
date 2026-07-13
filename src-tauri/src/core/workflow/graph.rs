@@ -216,6 +216,7 @@ mod tests {
             retry: None,
             data: Vec::new(),
             variable_sources: std::collections::BTreeMap::new(),
+            working_dir_source: None,
             parser: None,
             text: None,
             join_node_id: None,

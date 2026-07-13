@@ -231,6 +231,17 @@ export interface WorkflowNode {
    */
   variableSources?: Record<string, DataSource>;
   /**
+   * Where this node's working directory draws its value, when the referenced
+   * command has `promptWorkingDir: true` (the command declares it wants a
+   * working dir supplied at run time). Command-bearing kinds only. Mirrors
+   * `variableSources`' source vocabulary but only `manual` / `atRun` /
+   * `dataVar` are meaningful here (a directory has no predecessor-output
+   * shape). Absent — or the command doesn't have `promptWorkingDir` set —
+   * means the node falls back to the engine's default: no override, so the
+   * command runs in its own persisted `workingDir` (or the home directory).
+   */
+  workingDirSource?: DataSource;
+  /**
    * Output-schema pipeline a `parser` node applies to the previous node's
    * raw output. Present only for `parser` kind; absent elsewhere. Reuses the
    * command `OutputSchema` shape so the editor and runtime share one parser.

@@ -201,6 +201,19 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
             "sound_config",
             "ALTER TABLE commands ADD COLUMN sound_config TEXT",
         ),
+        (
+            // "Prompt for working directory at runtime" opt-in (v0.13.1).
+            // Default 0 → existing commands keep using their stored working_dir.
+            "prompt_working_dir",
+            "ALTER TABLE commands ADD COLUMN prompt_working_dir INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            // "Prompt for SSH password at runtime" opt-in for remote commands
+            // (v0.13.1). Only the flag is stored — never the password. Default
+            // 0 → existing remote commands keep their prior (key-auth) behaviour.
+            "prompt_ssh_password",
+            "ALTER TABLE commands ADD COLUMN prompt_ssh_password INTEGER NOT NULL DEFAULT 0",
+        ),
     ];
 
     apply_column_migrations(pool, "commands", migrations).await?;

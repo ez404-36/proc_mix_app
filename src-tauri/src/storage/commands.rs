@@ -207,6 +207,13 @@ pub struct CommandRecord {
     pub shell: Option<String>,
     pub args: Option<Vec<String>>,
     pub working_dir: Option<String>,
+    /// When true, the runner prompts the user for a working directory before
+    /// each run (pre-filling `working_dir` as the default). Persisted as the
+    /// `prompt_working_dir` INTEGER column. Serialised as `promptWorkingDir` to
+    /// match the TS `Command` type. `#[serde(default)]` keeps legacy payloads —
+    /// which never sent this field — parsing cleanly.
+    #[serde(default)]
+    pub prompt_working_dir: bool,
     pub env: Option<HashMap<String, String>>,
     pub tags: Vec<String>,
     pub category_id: Option<String>,
@@ -266,6 +273,13 @@ pub struct CommandRecord {
     /// field — parsing cleanly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ExecutionTarget>,
+    /// When true, the runner prompts for an SSH password before each REMOTE run
+    /// (password auth, not keys). One-shot — never persisted as a secret; only
+    /// this opt-in flag is stored. Persisted as the `prompt_ssh_password`
+    /// INTEGER column. Serialised as `promptSshPassword`. `#[serde(default)]`
+    /// keeps legacy payloads parsing cleanly.
+    #[serde(default)]
+    pub prompt_ssh_password: bool,
     /// Optional stable slug used to address this command over the built-in HTTP
     /// API. `None` (the default) means no slug — the API can still address the
     /// command by `id`. Persisted as the `api_slug` TEXT column (NULL when
@@ -308,9 +322,9 @@ pub struct CommandRecord {
 pub async fn list_all(pool: &DbPool) -> Result<Vec<CommandRecord>, String> {
     let rows = sqlx::query(
         "SELECT id, name, name_key, description, description_key, icon, script, shell, \
-                args_json, working_dir, env_json, tags_json, category_id, favorite, \
+                args_json, working_dir, prompt_working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-                timeout_seconds, output_schema, scope, workflow_id, target, \
+                timeout_seconds, output_schema, scope, workflow_id, target, prompt_ssh_password, \
                 api_slug, api_enabled, explorer_enabled, explorer_path_variable, sound_config \
          FROM commands \
          ORDER BY created_at ASC",
@@ -401,11 +415,11 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
     sqlx::query(
         "INSERT INTO commands ( \
             id, name, name_key, description, description_key, icon, script, shell, \
-            args_json, working_dir, env_json, tags_json, category_id, favorite, \
+            args_json, working_dir, prompt_working_dir, env_json, tags_json, category_id, favorite, \
             created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-            timeout_seconds, output_schema, scope, workflow_id, target, \
+            timeout_seconds, output_schema, scope, workflow_id, target, prompt_ssh_password, \
             api_slug, api_enabled, explorer_enabled, explorer_path_variable, sound_config \
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \
             name_key = excluded.name_key, \
@@ -416,6 +430,7 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             shell = excluded.shell, \
             args_json = excluded.args_json, \
             working_dir = excluded.working_dir, \
+            prompt_working_dir = excluded.prompt_working_dir, \
             env_json = excluded.env_json, \
             tags_json = excluded.tags_json, \
             category_id = excluded.category_id, \
@@ -430,6 +445,7 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
             scope = excluded.scope, \
             workflow_id = excluded.workflow_id, \
             target = excluded.target, \
+            prompt_ssh_password = excluded.prompt_ssh_password, \
             api_slug = excluded.api_slug, \
             api_enabled = excluded.api_enabled, \
             explorer_enabled = excluded.explorer_enabled, \
@@ -446,6 +462,7 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
     .bind(&cmd.shell)
     .bind(&args_json)
     .bind(&cmd.working_dir)
+    .bind(if cmd.prompt_working_dir { 1_i64 } else { 0_i64 })
     .bind(&env_json)
     .bind(&tags_json)
     .bind(&cmd.category_id)
@@ -464,6 +481,7 @@ pub async fn upsert(pool: &DbPool, cmd: &CommandRecord) -> Result<(), String> {
     .bind(cmd.scope.clone().unwrap_or_else(|| "global".to_string()))
     .bind(&cmd.workflow_id)
     .bind(&target_json)
+    .bind(if cmd.prompt_ssh_password { 1_i64 } else { 0_i64 })
     // An empty slug from the UI is normalised to NULL so "no slug" is a single
     // representation (NULL) — never an empty string that would also collide in
     // the partial unique index if two commands sent "".
@@ -521,6 +539,12 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
     let run_as_admin_i: i64 = row
         .try_get("run_as_admin")
         .map_err(|e| format!("read run_as_admin: {e}"))?;
+    let prompt_working_dir_i: i64 = row
+        .try_get("prompt_working_dir")
+        .map_err(|e| format!("read prompt_working_dir: {e}"))?;
+    let prompt_ssh_password_i: i64 = row
+        .try_get("prompt_ssh_password")
+        .map_err(|e| format!("read prompt_ssh_password: {e}"))?;
     let variables_json: String = row
         .try_get("variables")
         .map_err(|e| format!("read variables: {e}"))?;
@@ -618,6 +642,7 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
         working_dir: row
             .try_get("working_dir")
             .map_err(|e| format!("read working_dir: {e}"))?,
+        prompt_working_dir: prompt_working_dir_i != 0,
         env,
         tags,
         category_id: row
@@ -643,6 +668,7 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow) -> Result<CommandRecord, String> 
         scope,
         workflow_id,
         target,
+        prompt_ssh_password: prompt_ssh_password_i != 0,
         api_slug,
         api_enabled: api_enabled_i != 0,
         explorer_enabled: explorer_enabled_i != 0,
@@ -670,9 +696,9 @@ pub async fn find_by_api_ref(
     // interpolated.
     let row = sqlx::query(
         "SELECT id, name, name_key, description, description_key, icon, script, shell, \
-                args_json, working_dir, env_json, tags_json, category_id, favorite, \
+                args_json, working_dir, prompt_working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-                timeout_seconds, output_schema, scope, workflow_id, target, \
+                timeout_seconds, output_schema, scope, workflow_id, target, prompt_ssh_password, \
                 api_slug, api_enabled, explorer_enabled, explorer_path_variable, sound_config \
          FROM commands \
          WHERE api_enabled = 1 AND (api_slug = ? OR id = ?) \
@@ -698,9 +724,9 @@ pub async fn find_by_api_ref(
 pub async fn find_by_id(pool: &DbPool, id: &str) -> Result<Option<CommandRecord>, String> {
     let row = sqlx::query(
         "SELECT id, name, name_key, description, description_key, icon, script, shell, \
-                args_json, working_dir, env_json, tags_json, category_id, favorite, \
+                args_json, working_dir, prompt_working_dir, env_json, tags_json, category_id, favorite, \
                 created_at, updated_at, last_run_at, run_count, run_as_admin, variables, \
-                timeout_seconds, output_schema, scope, workflow_id, target, \
+                timeout_seconds, output_schema, scope, workflow_id, target, prompt_ssh_password, \
                 api_slug, api_enabled, explorer_enabled, explorer_path_variable, sound_config \
          FROM commands \
          WHERE id = ? \
@@ -733,6 +759,7 @@ mod wire_format_tests {
             shell: Some("bash".into()),
             args: Some(vec!["--flag".into()]),
             working_dir: Some("/tmp".into()),
+            prompt_working_dir: true,
             env: Some({
                 let mut m = HashMap::new();
                 m.insert("FOO".into(), "bar".into());
@@ -776,6 +803,7 @@ mod wire_format_tests {
             scope: Some("local".into()),
             workflow_id: Some("wf-1".into()),
             target: None,
+            prompt_ssh_password: false,
             api_slug: Some("deploy".into()),
             api_enabled: true,
             explorer_enabled: true,
@@ -1023,6 +1051,7 @@ mod sqlite_integration_tests {
             shell: Some("bash".into()),
             args: Some(vec!["a".into(), "b".into()]),
             working_dir: None,
+            prompt_working_dir: false,
             env: None,
             tags: vec!["x".into()],
             category_id: None,
@@ -1042,6 +1071,7 @@ mod sqlite_integration_tests {
             scope: Some("global".into()),
             workflow_id: None,
             target: None,
+            prompt_ssh_password: false,
             // Round-trips: `None`/`false` survive upsert → list unchanged
             // (empty slug normalises to NULL, default disabled).
             api_slug: None,
@@ -1202,6 +1232,42 @@ mod sqlite_integration_tests {
         upsert(&pool, &rec).await.unwrap();
         let listed = list_all(&pool).await.unwrap();
         assert!(!listed[0].run_as_admin);
+    }
+
+    /// The two prompt-at-runtime flags round-trip through SQLite. Regression
+    /// guard for the bug where a re-upsert (a workflow node persisting its
+    /// referenced command) reset the command form's "prompt for working
+    /// directory" toggle because the column did not exist.
+    #[tokio::test]
+    async fn upsert_then_list_preserves_prompt_flags() {
+        let pool = make_pool().await;
+        let mut rec = fixture("prompt-cmd", false);
+        rec.prompt_working_dir = true;
+        rec.prompt_ssh_password = true;
+        upsert(&pool, &rec).await.unwrap();
+        let listed = list_all(&pool).await.unwrap();
+        assert!(listed[0].prompt_working_dir);
+        assert!(listed[0].prompt_ssh_password);
+    }
+
+    /// Toggling a prompt flag back OFF via upsert must persist — verifies the
+    /// `excluded.prompt_working_dir` / `excluded.prompt_ssh_password` entries
+    /// are present in the ON CONFLICT clause (a re-upsert of the same id must
+    /// clear a previously-set flag, exactly the re-upsert path that surfaced
+    /// the original bug).
+    #[tokio::test]
+    async fn upsert_can_clear_prompt_flags() {
+        let pool = make_pool().await;
+        let mut rec = fixture("prompt-cmd", false);
+        rec.prompt_working_dir = true;
+        rec.prompt_ssh_password = true;
+        upsert(&pool, &rec).await.unwrap();
+        rec.prompt_working_dir = false;
+        rec.prompt_ssh_password = false;
+        upsert(&pool, &rec).await.unwrap();
+        let listed = list_all(&pool).await.unwrap();
+        assert!(!listed[0].prompt_working_dir);
+        assert!(!listed[0].prompt_ssh_password);
     }
 
     /// Variables round-trip through SQLite as JSON. Distinguishing

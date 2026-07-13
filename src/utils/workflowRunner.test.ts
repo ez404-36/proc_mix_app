@@ -62,16 +62,25 @@ afterEach(() => {
 describe("executeWorkflow", () => {
   it("invokes execute_workflow with the wire record and returns the run id", async () => {
     invokeMock.mockResolvedValue("run-1");
-    const runId = await executeWorkflow(workflow(), { "node-a": { x: "1" } });
+    const runId = await executeWorkflow(
+      workflow(),
+      { "node-a": { x: "1" } },
+      { "node-b": "/tmp" },
+    );
     expect(runId).toBe("run-1");
     expect(invokeMock).toHaveBeenCalledTimes(1);
     const [cmd, args] = invokeMock.mock.calls[0] as [
       string,
-      { workflow: { id: string }; nodeVariableValues: unknown },
+      {
+        workflow: { id: string };
+        nodeVariableValues: unknown;
+        nodeWorkingDirValues: unknown;
+      },
     ];
     expect(cmd).toBe("execute_workflow");
     expect(args.workflow.id).toBe("w1");
     expect(args.nodeVariableValues).toEqual({ "node-a": { x: "1" } });
+    expect(args.nodeWorkingDirValues).toEqual({ "node-b": "/tmp" });
   });
 });
 
@@ -80,6 +89,7 @@ describe("executeWorkflowFromNode", () => {
     invokeMock.mockResolvedValue("run-2");
     const runId = await executeWorkflowFromNode(
       workflow(),
+      {},
       {},
       "node-start",
       "seed",
@@ -96,7 +106,7 @@ describe("executeWorkflowFromNode", () => {
 
   it("passes a null seed input through", async () => {
     invokeMock.mockResolvedValue("run-3");
-    await executeWorkflowFromNode(workflow(), {}, "node-start", null);
+    await executeWorkflowFromNode(workflow(), {}, {}, "node-start", null);
     const [, args] = invokeMock.mock.calls[0] as [
       string,
       { seedInput: string | null },

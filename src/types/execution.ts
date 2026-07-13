@@ -131,6 +131,15 @@ export interface ExecutionLogLine {
   stream: ExecutionLogStream;
   line: string;
   ts: number;
+  /**
+   * Optional presentation variant for a `meta` line. `"workdir"` marks the
+   * working-directory line of a workflow step header so the OutputPanel can
+   * render it with the accent colour (matching a standalone command run's
+   * highlighted working directory) instead of the muted meta tone. Absent for
+   * every other line. Purely presentational — not persisted to history (the
+   * history output only carries `stream` + `line`).
+   */
+  variant?: "workdir";
 }
 
 /**

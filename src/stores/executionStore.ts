@@ -90,8 +90,14 @@ interface ExecutionState {
    * Append an app-injected `meta` separator line (step header / exit
    * trailer) to the aggregated workflow execution. No-op if the execution
    * does not exist yet — the bridge always starts the run before appending.
+   * `variant` optionally tags the line for special rendering (e.g.
+   * `"workdir"` → the accent-coloured working-directory line).
    */
-  appendWorkflowStepHeader: (runId: string, text: string) => void;
+  appendWorkflowStepHeader: (
+    runId: string,
+    text: string,
+    variant?: ExecutionLogLine["variant"],
+  ) => void;
   appendLog: (id: string, line: ExecutionLogLine) => void;
   /**
    * Attach the structured output extraction to an execution, set when a
@@ -333,7 +339,7 @@ export const useExecutionStore = create<ExecutionState>()(
       };
     }),
 
-  appendWorkflowStepHeader: (runId, text) =>
+  appendWorkflowStepHeader: (runId, text, variant) =>
     set((state) => {
       const existing = state.executions[runId];
       if (!existing) return {};
@@ -341,6 +347,7 @@ export const useExecutionStore = create<ExecutionState>()(
         stream: "meta",
         line: text,
         ts: Date.now(),
+        ...(variant !== undefined ? { variant } : {}),
       };
       const updated: Execution = {
         ...existing,

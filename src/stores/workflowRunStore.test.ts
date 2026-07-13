@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { ExecutionLogLine, ExtractedResult } from "../types";
-import { useWorkflowRunStore } from "./workflowRunStore";
+import {
+  getExecutionWorkingDir,
+  useWorkflowRunStore,
+} from "./workflowRunStore";
 
 function logLine(line: string): ExecutionLogLine {
   return { stream: "stdout", line, ts: 0 };
@@ -194,6 +197,55 @@ describe("workflowRunStore.setNodeOutputResult", () => {
     const output = useWorkflowRunStore.getState().runs["run-1"]?.nodeOutputs["n1"];
     expect(output?.stdout).toBe("hi");
     expect(output?.result).toEqual(result);
+  });
+});
+
+describe("workflowRunStore.setExecutionWorkingDir", () => {
+  it("records a resolved directory even before the run exists (no run guard)", () => {
+    // The `started` event can land before `startRun`; the write must NOT be
+    // dropped (the regression that made every step's directory disappear).
+    useWorkflowRunStore
+      .getState()
+      .setExecutionWorkingDir("missing", "exec-1", "/tmp/build");
+    expect(getExecutionWorkingDir("exec-1")).toBe("/tmp/build");
+  });
+
+  it("records a resolved directory keyed by execution id", () => {
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+    useWorkflowRunStore
+      .getState()
+      .setExecutionWorkingDir("run-1", "exec-1", "/tmp/build");
+    expect(getExecutionWorkingDir("exec-1")).toBe("/tmp/build");
+  });
+
+  it("ignores an empty / whitespace-only directory (home-dir fallback)", () => {
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+    useWorkflowRunStore.getState().setExecutionWorkingDir("run-1", "exec-1", "");
+    useWorkflowRunStore
+      .getState()
+      .setExecutionWorkingDir("run-1", "exec-2", "   ");
+    useWorkflowRunStore
+      .getState()
+      .setExecutionWorkingDir("run-1", "exec-3", undefined);
+    expect(getExecutionWorkingDir("exec-1")).toBeUndefined();
+    expect(getExecutionWorkingDir("exec-2")).toBeUndefined();
+    expect(getExecutionWorkingDir("exec-3")).toBeUndefined();
+  });
+
+  it("trims the recorded directory", () => {
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+    useWorkflowRunStore
+      .getState()
+      .setExecutionWorkingDir("run-1", "exec-1", "  /srv/app  ");
+    expect(getExecutionWorkingDir("exec-1")).toBe("/srv/app");
+  });
+
+  it("clearAll drops recorded working dirs", () => {
+    useWorkflowRunStore
+      .getState()
+      .setExecutionWorkingDir("run-1", "exec-1", "/tmp/x");
+    useWorkflowRunStore.getState().clearAll();
+    expect(getExecutionWorkingDir("exec-1")).toBeUndefined();
   });
 });
 

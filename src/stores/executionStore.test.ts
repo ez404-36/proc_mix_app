@@ -507,6 +507,16 @@ describe("executionStore.startWorkflowExecution (aggregated process)", () => {
     expect(useExecutionStore.getState().executions["ghost"]).toBeUndefined();
   });
 
+  it("appendWorkflowStepHeader stores the variant tag when given", () => {
+    const store = useExecutionStore.getState();
+    store.startWorkflowExecution("run-1", "My Flow");
+    store.appendWorkflowStepHeader("run-1", "▸ Build");
+    store.appendWorkflowStepHeader("run-1", "  (bash) /home/egor", "workdir");
+    const log = useExecutionStore.getState().executions["run-1"].log;
+    expect(log[0].variant).toBeUndefined();
+    expect(log[1].variant).toBe("workdir");
+  });
+
   it("finishExecution mirrors the workflow's terminal status onto the aggregate", () => {
     const store = useExecutionStore.getState();
     store.startWorkflowExecution("run-1", "My Flow");

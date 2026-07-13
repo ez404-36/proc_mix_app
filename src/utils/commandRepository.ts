@@ -11,6 +11,7 @@ import type {
   Command,
   CommandScope,
   EntitySoundConfig,
+  ExecutionTarget,
   OutputSchema,
   Shell,
   VariableSpec,
@@ -57,6 +58,12 @@ export interface CommandRecord {
   shell: string | null;
   args: string[] | null;
   workingDir: string | null;
+  /**
+   * Mirror of the Rust `prompt_working_dir` column. Optional/absent on the
+   * wire for legacy records (the Rust side deserialises with `#[serde(default)]`
+   * to `false`); {@link recordToCommand} normalises a missing value to `false`.
+   */
+  promptWorkingDir?: boolean;
   env: Record<string, string> | null;
   tags: string[];
   categoryId: string | null;
@@ -103,6 +110,25 @@ export interface CommandRecord {
    * `"local"` command. `null` / absent for global commands.
    */
   workflowId?: string | null;
+  /**
+   * Mirror of the Rust `prompt_ssh_password` column. Optional/absent on the
+   * wire for legacy records (`#[serde(default)]` → `false`);
+   * {@link recordToCommand} normalises a missing value to `false`. Only
+   * meaningful for a remote command; ignored for local runs.
+   */
+  promptSshPassword?: boolean;
+  /**
+   * Mirror of the Rust `target` field — where the command runs. `null` /
+   * absent means local. {@link commandToRecord} omits it when the UI has no
+   * explicit target so the wire stays byte-identical to legacy payloads.
+   */
+  target?: ExecutionTarget | null;
+  /**
+   * Mirror of the Rust `timeout_seconds` field — the optional per-run timeout.
+   * `null` / absent means no limit. {@link commandToRecord} omits it when the
+   * UI has no timeout so the wire stays byte-identical to legacy payloads.
+   */
+  timeoutSeconds?: number | null;
   /**
    * Mirror of the Rust `api_slug` field — the optional HTTP-API slug. `null` /
    * absent when the command has no slug. {@link commandToRecord} omits it when
@@ -156,6 +182,11 @@ export function commandToRecord(c: Command): CommandRecord {
     shell: undefToNull(c.shell),
     args: undefToNull(c.args),
     workingDir: undefToNull(c.workingDir),
+    // Prompt-at-runtime opt-ins. Always send (like apiEnabled) so toggling one
+    // OFF persists — a `?? false` collapse would otherwise leave a stale `true`
+    // in SQLite because an absent field is ignored by the Rust upsert.
+    promptWorkingDir: c.promptWorkingDir ?? false,
+    promptSshPassword: c.promptSshPassword ?? false,
     env: undefToNull(c.env),
     tags: c.tags,
     categoryId: undefToNull(c.categoryId),
@@ -181,6 +212,12 @@ export function commandToRecord(c: Command): CommandRecord {
     ...omitWhenUndefined("scope", c.scope),
     // Owning workflow id for a local command. Omitted entirely for globals.
     ...omitWhenUndefined("workflowId", c.workflowId),
+    // Execution target: omit when absent so the wire stays byte-identical to
+    // legacy payloads. The Rust side decodes a missing/NULL target as local.
+    ...omitWhenUndefined("target", c.target),
+    // Per-run timeout: omit when absent (no limit). Sent through verbatim when
+    // set so the executor's kill-after-N-seconds behaviour persists.
+    ...omitWhenUndefined("timeoutSeconds", c.timeoutSeconds),
     // HTTP-API slug: omit when absent so the wire stays byte-identical to
     // legacy payloads. An empty string is normalised to `null` (no slug) so the
     // backend's partial unique index never sees a "" collision.
@@ -221,6 +258,10 @@ export function recordToCommand(r: CommandRecord): Command {
     shell: shellValue,
     args: nullToUndef(r.args),
     workingDir: nullToUndef(r.workingDir),
+    // Default to `false` so commands loaded from old DBs (no column) don't
+    // inherit `undefined`.
+    promptWorkingDir: r.promptWorkingDir ?? false,
+    promptSshPassword: r.promptSshPassword ?? false,
     env: nullToUndef(r.env),
     tags: r.tags,
     categoryId: nullToUndef(r.categoryId),
@@ -255,6 +296,10 @@ export function recordToCommand(r: CommandRecord): Command {
       : "global",
     // A local command's owning workflow id; `undefined` for globals.
     workflowId: nullToUndef(r.workflowId),
+    // Execution target; `undefined` (local) when the record carries no value.
+    target: nullToUndef(r.target),
+    // Per-run timeout; `undefined` (no limit) when absent.
+    timeoutSeconds: nullToUndef(r.timeoutSeconds),
     // HTTP-API slug; `undefined` when the command has none.
     apiSlug: nullToUndef(r.apiSlug),
     // Default to `false` so commands loaded from old DBs (no column) are not

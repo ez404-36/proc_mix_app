@@ -41,7 +41,10 @@ export function TryNode({ data }: NodeProps<Node<WorkflowNodeData>>): ReactEleme
       <Handle type="target" position={Position.Left} />
       <div className="wf-node__kind">{t("editor.nodes.try")}</div>
       <div className="wf-node__title">{title}</div>
-      <VariableSourceList variableSources={data.variableSources} />
+      <VariableSourceList
+        variableSources={data.variableSources}
+        workingDirSource={data.workingDirSource}
+      />
       <div className="wf-node__branches">
         <span className="wf-branch-label wf-branch-label--ok">
           {t("editor.nodes.ok")}

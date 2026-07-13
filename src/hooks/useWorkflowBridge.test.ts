@@ -42,6 +42,9 @@ import type { Command, Workflow } from "../types";
 type Handler = (e: WorkflowEvent) => void;
 
 function resetRuns(): void {
+  // clearAll() also empties the module-level executionWorkingDirs map so a
+  // resolved dir from a prior case never leaks into the next's step header.
+  useWorkflowRunStore.getState().clearAll();
   useWorkflowRunStore.setState({ runs: {}, recentRunIds: [] });
   // The bridge reads the aggregate workflow execution from the execution store
   // to capture output; reset it so each test starts with no captured output.
@@ -635,6 +638,69 @@ describe("useWorkflowBridge - step header from a resolved command", () => {
       ["meta", "  $ make deploy"],
       ["meta", "  exit 0"],
     ]);
+  });
+
+  it("prefers the resolved run-time working directory over the command's static one", () => {
+    const { handler } = mountBridge();
+    // The command's saved workingDir is /srv/app, but this node overrode it (a
+    // workingDirSource / prompt / ${var}), so the started event reports a
+    // different resolved directory. The header must show the resolved one.
+    seedCommand({
+      id: "c1",
+      name: "Deploy",
+      shell: "bash",
+      workingDir: "/srv/app",
+      script: "make deploy",
+    });
+    const wf = {
+      id: "wf-1",
+      name: "Flow",
+      nodes: [
+        { id: "A", kind: "command", position: { x: 0, y: 0 }, commandId: "c1" },
+      ],
+      edges: [],
+    } as unknown as Workflow;
+    useWorkflowStore.setState({ workflows: [wf] });
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1", { A: "c1" });
+
+    handler({
+      kind: "nodeStarted",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      executionId: "ea",
+    });
+    // The execution bridge records this from the node's `started` event; call
+    // the store action directly (that bridge is exercised by its own suite).
+    useWorkflowRunStore
+      .getState()
+      .setExecutionWorkingDir("run-1", "ea", "/tmp/build-42");
+    handler({
+      kind: "nodeFinished",
+      runId: "run-1",
+      workflowId: "wf-1",
+      nodeId: "A",
+      exitCode: 0,
+    });
+
+    expect(aggregateLog("run-1")).toEqual([
+      ["meta", "▸ Deploy"],
+      ["meta", "  (bash) /tmp/build-42"],
+      ["meta", "  $ make deploy"],
+      ["meta", "  exit 0"],
+    ]);
+    // The shell + working-dir line carries the `workdir` variant so the
+    // OutputPanel renders the whole line (shell and dir) in the accent colour;
+    // every other header line is plain meta.
+    const log = useExecutionStore.getState().executions["run-1"].log;
+    const dirLine = log.find((l) => l.line === "  (bash) /tmp/build-42");
+    expect(dirLine?.variant).toBe("workdir");
+    expect(
+      log
+        .filter((l) => l.line !== "  (bash) /tmp/build-42")
+        .every((l) => l.variant === undefined),
+    ).toBe(true);
   });
 
   it("uses the default shell label and omits script line when the command has no workingDir and an empty script", () => {

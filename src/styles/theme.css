@@ -1687,6 +1687,22 @@ body.is-editor-fullscreen .output-panel {
   border-top: none;
 }
 
+/* Shell + working-directory line of a workflow step header, e.g.
+   `(bash) /home/egor`. Rendered in the accent colour + italic to match a
+   standalone command run's header exactly (shell and dir together, both blue),
+   so it stands out from the muted title/script/exit lines. Keep the meta
+   divider/spacing off — it belongs to the step header block above it, not a
+   new step. */
+.output-line--workdir {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  color: var(--color-accent);
+  font-style: italic;
+  opacity: 1;
+  word-break: break-all;
+}
+
 /* App-injected "timed out" notice. Visually distinct from a plain
  * stderr line (amber, bold, with a left accent bar) so it reads as a
  * deliberate explanation of WHY the run stopped rather than program
@@ -5288,6 +5304,23 @@ body.is-editor-fullscreen .output-panel {
 
 .wf-inspector__field {
   margin-bottom: 12px;
+}
+
+/* A standalone `.input` in an inspector field (e.g. the manual value of a
+   variable/working-dir source) is a block-level child, not a flex item, so the
+   base `.input { flex: 1 }` never stretches it. Make it fill the field so it
+   lines up with the full-width `.dropdown` above it. Inputs inside a
+   `.wf-inspector__row` keep their flex sizing (that row is a flex container). */
+.wf-inspector__field > .input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Vertical gap when a manual `.input` follows the source `.dropdown` in the
+   same field, so the two stacked controls don't touch. */
+.wf-inspector__field > .dropdown + .input {
+  margin-top: 8px;
 }
 
 .wf-inspector__label {

@@ -20,7 +20,10 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 import { useExecutionBridge } from "./useExecutionBridge";
 import { useExecutionStore } from "../stores/executionStore";
 import { useCommandStore } from "../stores/commandStore";
-import { useWorkflowRunStore } from "../stores/workflowRunStore";
+import {
+  getExecutionWorkingDir,
+  useWorkflowRunStore,
+} from "../stores/workflowRunStore";
 
 type Handler = (e: ExecutionEvent) => void;
 
@@ -36,6 +39,9 @@ function resetExec() {
 beforeEach(() => {
   subscribeMock.mockReset();
   resetExec();
+  // Also clears the module-level executionWorkingDirs map so a recorded dir
+  // from a prior case never leaks into the next.
+  useWorkflowRunStore.getState().clearAll();
   __resetTransientRegistryForTests();
 });
 
@@ -378,6 +384,25 @@ describe("useExecutionBridge - workflow node routing", () => {
     // The aggregate's terminal status is owned by the workflow bridge, so
     // the node's finished event must NOT flip it.
     expect(state.executions["run-1"].status).toBe("running");
+  });
+
+  it("records a workflow node's resolved workingDir from its started event", () => {
+    const { handler } = mountBridge();
+    useExecutionStore.getState().startWorkflowExecution("run-1", "Flow");
+    useWorkflowRunStore.getState().clearAll();
+    useWorkflowRunStore.getState().startRun("run-1", "wf-1");
+    handler({
+      kind: "started",
+      executionId: "node-exec-1",
+      commandId: "c1",
+      workflowRunId: "run-1",
+      workingDir: "/tmp/build-99",
+    });
+    // Stashed keyed by execution id so the step-header builder can show the
+    // REAL directory the process launched in (not the command's static one).
+    expect(getExecutionWorkingDir("node-exec-1")).toBe("/tmp/build-99");
+    // Still no standalone execution created for the node.
+    expect(useExecutionStore.getState().executions["node-exec-1"]).toBeUndefined();
   });
 
   it("captures a workflow node's stdout + result into per-node nodeOutputs", () => {

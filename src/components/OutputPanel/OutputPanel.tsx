@@ -180,7 +180,9 @@ function OutputBody({ execution }: OutputBodyProps): ReactElement {
       {execution.log.map((line, idx) => (
         <div
           key={`${execution.id}-${idx}`}
-          className={`output-line output-line--${line.stream}`}
+          className={`output-line output-line--${line.stream}${
+            line.variant === "workdir" ? " output-line--workdir" : ""
+          }`}
         >
           {line.line}
         </div>

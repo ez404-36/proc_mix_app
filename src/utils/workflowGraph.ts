@@ -59,6 +59,8 @@ export type WorkflowNodeData = {
   data?: DataAssignment[];
   /** Per-variable value sources for the node's command (see WorkflowNode). */
   variableSources?: Record<string, DataSource>;
+  /** Where this node's working directory draws its value (see WorkflowNode). */
+  workingDirSource?: DataSource;
   /** Output-schema pipeline a `parser` node applies (see WorkflowNode). */
   parser?: OutputSchema;
   /** Template text a `text` node composes (see WorkflowNode). */
@@ -122,6 +124,7 @@ function nodeToFlowNode(node: WorkflowNode): WorkflowFlowNode {
       retry: node.retry,
       data: node.data,
       variableSources: node.variableSources,
+      workingDirSource: node.workingDirSource,
       parser: node.parser,
       text: node.text,
       joinNodeId: node.joinNodeId,
@@ -213,6 +216,7 @@ function flowNodeToNode(node: WorkflowFlowNode): WorkflowNode {
     retry: node.data.retry,
     data: node.data.data,
     variableSources: node.data.variableSources,
+    workingDirSource: node.data.workingDirSource,
     parser: node.data.parser,
     text: node.data.text,
     joinNodeId: node.data.joinNodeId,

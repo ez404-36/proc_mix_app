@@ -28,6 +28,7 @@ const fullCommand: Command = {
   shell: "bash",
   args: ["a", "b"],
   workingDir: "/tmp",
+  promptWorkingDir: true,
   env: { FOO: "bar" },
   tags: ["t1"],
   categoryId: "cat-1",
@@ -37,7 +38,10 @@ const fullCommand: Command = {
   lastRunAt: "2026-05-28T00:00:02Z",
   runCount: 3,
   runAsAdmin: true,
+  timeoutSeconds: 30,
   scope: "global",
+  target: { kind: "remote", alias: "prod-web" },
+  promptSshPassword: true,
   apiSlug: "deploy",
   apiEnabled: true,
   explorerEnabled: true,
@@ -59,6 +63,7 @@ const fullRecord: CommandRecord = {
   shell: "bash",
   args: ["a", "b"],
   workingDir: "/tmp",
+  promptWorkingDir: true,
   env: { FOO: "bar" },
   tags: ["t1"],
   categoryId: "cat-1",
@@ -68,7 +73,10 @@ const fullRecord: CommandRecord = {
   lastRunAt: "2026-05-28T00:00:02Z",
   runCount: 3,
   runAsAdmin: true,
+  timeoutSeconds: 30,
   scope: "global",
+  target: { kind: "remote", alias: "prod-web" },
+  promptSshPassword: true,
   apiSlug: "deploy",
   apiEnabled: true,
   explorerEnabled: true,
@@ -89,6 +97,8 @@ const minimalCommand: Command = {
   updatedAt: "2026-05-28T00:00:00Z",
   runCount: 0,
   runAsAdmin: false,
+  promptWorkingDir: false,
+  promptSshPassword: false,
   scope: "global",
   apiEnabled: false,
   explorerEnabled: false,
@@ -105,6 +115,7 @@ const minimalRecord: CommandRecord = {
   shell: null,
   args: null,
   workingDir: null,
+  promptWorkingDir: false,
   env: null,
   tags: [],
   categoryId: null,
@@ -115,6 +126,7 @@ const minimalRecord: CommandRecord = {
   runCount: 0,
   runAsAdmin: false,
   scope: "global",
+  promptSshPassword: false,
   apiEnabled: false,
   explorerEnabled: false,
 };
@@ -217,6 +229,50 @@ describe("commandToRecord / recordToCommand", () => {
     expect(record.scope).toBe("local");
     expect(record.workflowId).toBe("wf-9");
     expect(recordToCommand(record)).toEqual(local);
+  });
+
+  // Regression: promptWorkingDir was silently dropped by this boundary, so a
+  // workflow node's `ensureReferencedCommandsPersisted` re-upsert reset the
+  // command form's "prompt for working directory" toggle. It must ALWAYS be
+  // sent (like apiEnabled) so a `true` survives a re-upsert AND a `false`
+  // persists.
+  it("always sends promptWorkingDir so it survives a re-upsert", () => {
+    expect(commandToRecord(minimalCommand).promptWorkingDir).toBe(false);
+    const on: Command = { ...minimalCommand, promptWorkingDir: true };
+    expect(commandToRecord(on).promptWorkingDir).toBe(true);
+  });
+
+  it("always sends promptSshPassword so it survives a re-upsert", () => {
+    expect(commandToRecord(minimalCommand).promptSshPassword).toBe(false);
+    const on: Command = { ...minimalCommand, promptSshPassword: true };
+    expect(commandToRecord(on).promptSshPassword).toBe(true);
+  });
+
+  it("defaults the prompt flags to false when the record predates them", () => {
+    const legacy = { ...minimalRecord };
+    delete (legacy as Partial<CommandRecord>).promptWorkingDir;
+    delete (legacy as Partial<CommandRecord>).promptSshPassword;
+    const cmd = recordToCommand(legacy);
+    expect(cmd.promptWorkingDir).toBe(false);
+    expect(cmd.promptSshPassword).toBe(false);
+  });
+
+  it("round-trips a remote command's target + timeout without loss", () => {
+    const remote: Command = {
+      ...minimalCommand,
+      target: { kind: "remote", alias: "prod-web" },
+      timeoutSeconds: 45,
+    };
+    const record = commandToRecord(remote);
+    expect(record.target).toEqual({ kind: "remote", alias: "prod-web" });
+    expect(record.timeoutSeconds).toBe(45);
+    expect(recordToCommand(record)).toEqual(remote);
+  });
+
+  it("omits target + timeoutSeconds from the wire when absent", () => {
+    const record = commandToRecord(minimalCommand);
+    expect("target" in record).toBe(false);
+    expect("timeoutSeconds" in record).toBe(false);
   });
 });
 

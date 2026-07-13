@@ -7,6 +7,7 @@ import { useWorkflowStore } from "../stores/workflowStore";
 import type { HistoryEvent, Workflow } from "../types";
 import { recordHistoryEventInDb } from "../utils/historyRepository";
 import { upsertCommandInDb } from "../utils/commandRepository";
+import { promptForWorkingDir } from "../utils/workingDirPrompt";
 import { resolveVariableValues } from "./commandRunner";
 import {
   awaitWorkflowBridgeReady,
@@ -179,6 +180,60 @@ async function resolveNodeVariableValues(
 }
 
 /**
+ * Sentinel result for {@link resolveNodeWorkingDirValues}: `null` means the
+ * user cancelled a working-dir prompt, so the whole run must be aborted.
+ */
+type NodeWorkingDirValues = Record<string, string>;
+
+/**
+ * Resolve the working-directory value for every command-bearing node whose
+ * `workingDirSource` is `{ kind: "atRun" }` — the workflow-node equivalent of
+ * `Command.promptWorkingDir`'s single-command prompt. REUSES
+ * `promptForWorkingDir` (the same modal `triggerCommandRun` opens), pre-filled
+ * with the referenced command's own `workingDir`.
+ *
+ * Returns a map keyed by node id (only `atRun` nodes are included; every
+ * other source — `manual` / `dataVar` / no override — is resolved entirely
+ * backend-side and needs no frontend value). Returns `null` if the user
+ * cancels ANY prompt, mirroring {@link resolveNodeVariableValues}'s cancel
+ * semantics.
+ *
+ * Two nodes referencing the SAME command are resolved once and reused
+ * (cached by command id) so the user is not prompted twice for an identical
+ * command's directory within a single run.
+ */
+async function resolveNodeWorkingDirValues(
+  workflow: Workflow,
+): Promise<NodeWorkingDirValues | null> {
+  const commandsById = new Map(
+    useCommandStore.getState().commands.map((c) => [c.id, c]),
+  );
+  const cache = new Map<string, string>();
+  const result: NodeWorkingDirValues = {};
+  for (const node of workflow.nodes) {
+    if (node.commandId === undefined) continue;
+    if (node.workingDirSource?.kind !== "atRun") continue;
+    const cmd = commandsById.get(node.commandId);
+    if (cmd === undefined) continue;
+
+    let value = cache.get(node.commandId);
+    if (value === undefined) {
+      const prompted = await promptForWorkingDir(cmd.workingDir ?? "");
+      if (prompted === null) {
+        // User cancelled the prompt — abort the entire run.
+        return null;
+      }
+      value = prompted;
+      cache.set(node.commandId, value);
+    }
+    if (value !== "") {
+      result[node.id] = value;
+    }
+  }
+  return result;
+}
+
+/**
  * Trigger a workflow run. Ordering is load-bearing:
  *   1. Persist (re-upsert) every referenced command and AWAIT it, so the
  *      engine can resolve each node against SQLite. Abort with a toast if a
@@ -187,17 +242,22 @@ async function resolveNodeVariableValues(
  *      for no-default specs), reusing `resolveVariableValues`. This MAY
  *      open modals, so it runs BEFORE any IPC — exactly like
  *      `triggerCommandRun`. Cancelling a prompt aborts the run quietly.
- *   3. AWAIT the workflow-event bridge so the Tauri-side listener is live
+ *   3. Resolve each node's `atRun` working-directory value the same way
+ *      (reusing `promptForWorkingDir`). Also runs before any IPC; a cancel
+ *      aborts the run quietly just like the variable-prompt cancel.
+ *   4. AWAIT the workflow-event bridge so the Tauri-side listener is live
  *      before Rust emits the first `nodeStarted` — same gate rationale as
  *      `awaitBridgeReady` in `triggerCommandRun`.
- *   4. Invoke `execute_workflow` (passing the per-node variable values),
- *      then register the run in the progress store and bump the run count.
- *   5. Record the `workflowRun(running)` history row and AWAIT the insert
+ *   5. Invoke `execute_workflow` (passing the per-node variable AND
+ *      working-dir values), then register the run in the progress store and
+ *      bump the run count.
+ *   6. Record the `workflowRun(running)` history row and AWAIT the insert
  *      so the terminal-event update in `useWorkflowBridge` cannot lose the
  *      race.
  *
  * Returns the run id, or `null` when the run could not be started (missing
- * command or IPC error → toast; cancelled variable prompt → quiet abort).
+ * command or IPC error → toast; cancelled variable/working-dir prompt →
+ * quiet abort).
  */
 export async function triggerWorkflowRun(
   workflow: Workflow,
@@ -215,9 +275,18 @@ export async function triggerWorkflowRun(
     return null;
   }
 
+  const nodeWorkingDirValues = await resolveNodeWorkingDirValues(workflow);
+  if (nodeWorkingDirValues === null) {
+    return null;
+  }
+
   try {
     await awaitWorkflowBridgeReady();
-    const runId = await invokeExecuteWorkflow(workflow, nodeVariableValues);
+    const runId = await invokeExecuteWorkflow(
+      workflow,
+      nodeVariableValues,
+      nodeWorkingDirValues,
+    );
     await registerStartedRun(workflow, runId);
     return runId;
   } catch (err: unknown) {
@@ -287,11 +356,17 @@ export async function triggerWorkflowRunFromNode(
     return null;
   }
 
+  const nodeWorkingDirValues = await resolveNodeWorkingDirValues(workflow);
+  if (nodeWorkingDirValues === null) {
+    return null;
+  }
+
   try {
     await awaitWorkflowBridgeReady();
     const runId = await invokeExecuteWorkflowFromNode(
       workflow,
       nodeVariableValues,
+      nodeWorkingDirValues,
       startNodeId,
       seedInput,
     );

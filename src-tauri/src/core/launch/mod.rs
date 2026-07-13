@@ -1096,6 +1096,8 @@ mod tests {
             shell: None,
             args: None,
             working_dir: None,
+            prompt_working_dir: false,
+            prompt_ssh_password: false,
             env: None,
             tags: vec![],
             category_id: None,

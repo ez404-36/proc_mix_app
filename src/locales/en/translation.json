@@ -198,7 +198,8 @@
       "retryProgress": "retry {{n}}",
       "dataEmpty": "No assignments",
       "parserSummary": "{{count}} parser step(s)",
-      "unboundCommand": "Pick a command…"
+      "unboundCommand": "Pick a command…",
+      "workingDir": "working directory"
     },
     "nodeDesc": {
       "command": "Runs the selected command.",
@@ -290,6 +291,17 @@
         "valueLabel": "Value for variable {{name}}",
         "valuePlaceholder": "Value",
         "source": {
+          "manual": "Enter manually",
+          "atRun": "Prompt at run time",
+          "dataVar": "Variable: ${{field}}"
+        }
+      },
+      "workingDir": {
+        "title": "Working directory",
+        "valueLabel": "Working directory value",
+        "valuePlaceholder": "Path",
+        "source": {
+          "none": "Use the command's own setting",
           "manual": "Enter manually",
           "atRun": "Prompt at run time",
           "dataVar": "Variable: ${{field}}"

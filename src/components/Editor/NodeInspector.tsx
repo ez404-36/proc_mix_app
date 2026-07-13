@@ -26,6 +26,8 @@ import {
   dominatingDataNodeVariableNames,
   variableSourceId,
   variableSourceOptions,
+  workingDirSourceId,
+  workingDirSourceOptions,
 } from "../../utils/variableSourceOptions";
 import type { NodeRunOutput } from "../../utils/nodePreviewData";
 import {
@@ -326,6 +328,83 @@ function VariableSourcesEditor({
   );
 }
 
+interface WorkingDirSourceEditorProps {
+  /** Current working-dir source on the node, or `undefined` (no override). */
+  workingDirSource: DataSource | undefined;
+  /** The node whose working directory is being edited (for dominance analysis). */
+  nodeId: string;
+  allNodes: ReadonlyArray<WorkflowFlowNode>;
+  edges: ReadonlyArray<WorkflowFlowEdge>;
+  onChange: (next: DataSource | undefined) => void;
+}
+
+/**
+ * Value-source editor for a command-bearing node's working directory,
+ * mirroring {@link VariableSourcesEditor}'s dropdown + conditional
+ * manual-value pattern. Only rendered when the node's selected command has
+ * `promptWorkingDir: true` (see `NodeConfigForm`).
+ */
+function WorkingDirSourceEditor({
+  workingDirSource,
+  nodeId,
+  allNodes,
+  edges,
+  onChange,
+}: WorkingDirSourceEditorProps): ReactElement {
+  const { t } = useTranslation();
+  const options = workingDirSourceOptions(allNodes, edges, nodeId);
+  const dropdownOptions: DropdownOption[] = options.map((o) => ({
+    value: o.id,
+    label:
+      o.field === undefined ? t(o.labelKey) : t(o.labelKey, { field: o.field }),
+  }));
+
+  return (
+    <div className="wf-inspector__field">
+      <label className="wf-inspector__label">
+        {t("editor.inspector.workingDir.title")}
+      </label>
+      <Dropdown
+        value={workingDirSourceId(workingDirSource)}
+        options={dropdownOptions}
+        ariaLabel={t("editor.inspector.workingDir.title")}
+        onChange={(id) => {
+          const picked = options.find((o) => o.id === id);
+          if (picked === undefined) return;
+          if (picked.id === "none") {
+            onChange(undefined);
+            return;
+          }
+          // Switching to manual keeps any literal already typed.
+          const next: DataSource =
+            picked.source.kind === "manual"
+              ? {
+                  kind: "manual",
+                  value:
+                    workingDirSource?.kind === "manual"
+                      ? workingDirSource.value
+                      : "",
+                }
+              : picked.source;
+          onChange(next);
+        }}
+      />
+      {workingDirSource?.kind === "manual" ? (
+        <input
+          className="input"
+          type="text"
+          value={workingDirSource.value}
+          placeholder={t("editor.inspector.workingDir.valuePlaceholder")}
+          aria-label={t("editor.inspector.workingDir.valueLabel")}
+          onChange={(event) =>
+            onChange({ kind: "manual", value: event.target.value })
+          }
+        />
+      ) : null}
+    </div>
+  );
+}
+
 interface NodeConfigFormProps {
   node: WorkflowFlowNode;
   predecessor: WorkflowFlowNode | null;
@@ -529,6 +608,18 @@ function NodeConfigForm({
           edges={edges}
           onChange={(next) =>
             onNodeDataChange(node.id, { variableSources: next })
+          }
+        />
+      ) : null}
+
+      {needsCommand && selectedCommand?.promptWorkingDir ? (
+        <WorkingDirSourceEditor
+          workingDirSource={node.data.workingDirSource}
+          nodeId={node.id}
+          allNodes={allNodes}
+          edges={edges}
+          onChange={(next) =>
+            onNodeDataChange(node.id, { workingDirSource: next })
           }
         />
       ) : null}

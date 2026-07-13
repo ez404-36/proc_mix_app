@@ -97,6 +97,9 @@ export interface WorkflowNodeRecord {
   /** Per-variable value sources, keyed by variable name. Omitted/empty when
    * the node has no overrides (Rust `#[serde(default)]`). */
   variableSources?: Record<string, DataSource>;
+  /** Where this node's working directory draws its value; absent when the
+   * node has no override (Rust `Option`, serialised `null`/omitted). */
+  workingDirSource?: DataSource | null;
   /** Output-schema pipeline for a `parser` node; absent for other kinds
    * (Rust `Option`, serialised `null`/omitted). */
   parser?: OutputSchema | null;
@@ -173,6 +176,7 @@ function nodeToRecord(n: WorkflowNode): WorkflowNodeRecord {
     // Empty object collapses to omitted on the wire (Rust drops a default
     // map); keep it minimal so nodes without overrides stay clean.
     variableSources: n.variableSources ?? {},
+    workingDirSource: undefToNull(n.workingDirSource),
     parser: undefToNull(n.parser),
     text: undefToNull(n.text),
     joinNodeId: undefToNull(n.joinNodeId),
@@ -198,6 +202,7 @@ function recordToNode(r: WorkflowNodeRecord): WorkflowNode {
       r.variableSources && Object.keys(r.variableSources).length > 0
         ? r.variableSources
         : undefined,
+    workingDirSource: nullToUndef(r.workingDirSource),
     parser: nullToUndef(r.parser),
     text: nullToUndef(r.text),
     joinNodeId: nullToUndef(r.joinNodeId),

@@ -49,7 +49,10 @@ export function ConditionNode({
       <Handle type="target" position={Position.Left} />
       <div className="wf-node__kind">{t("editor.nodes.condition")}</div>
       <div className="wf-node__title">{label}</div>
-      <VariableSourceList variableSources={data.variableSources} />
+      <VariableSourceList
+        variableSources={data.variableSources}
+        workingDirSource={data.workingDirSource}
+      />
       <div className="wf-node__branches-row">
         {summary !== null ? (
           <span className="wf-node__predicate" title={summary}>

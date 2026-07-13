@@ -28,26 +28,42 @@ function sourceDisplayValue(
 interface VariableSourceListProps {
   /** Per-variable value sources keyed by the command's variable name. */
   variableSources: Record<string, DataSource> | undefined;
+  /** The node's working-directory source, if it overrides the command's own. */
+  workingDirSource?: DataSource;
 }
 
 /**
  * Lists a command-bearing node's explicitly-bound command variables as
- * `$name = <source>` rows, mirroring the `data` node's assignment list.
- * Variables left at their implicit "prompt at run time" default (absent from
- * `variableSources`) are NOT shown, so the card stays compact. Renders nothing
- * when no variable has a bound source.
+ * `$name = <source>` rows, mirroring the `data` node's assignment list, plus
+ * an optional leading working-directory row (`рабочая директория = <source>`)
+ * when the node overrides its command's working dir. Variables left at their
+ * implicit "prompt at run time" default (absent from `variableSources`) are
+ * NOT shown, so the card stays compact. Renders nothing when neither a
+ * working-dir source nor any bound variable is present.
  */
 export function VariableSourceList({
   variableSources,
+  workingDirSource,
 }: VariableSourceListProps): ReactElement | null {
   const { t } = useTranslation();
   const rows = Object.entries(variableSources ?? {}).filter(
     ([name]) => name.trim() !== "",
   );
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && workingDirSource === undefined) return null;
 
   return (
     <dl className="wf-node__assignments">
+      {workingDirSource !== undefined ? (
+        <div className="wf-node__assignment">
+          <span className="wf-node__assignment-key">
+            {t("editor.nodes.workingDir")}
+          </span>
+          <span className="wf-node__assignment-eq">=</span>
+          <span className="wf-node__assignment-val">
+            {sourceDisplayValue(workingDirSource, t)}
+          </span>
+        </div>
+      ) : null}
       {rows.map(([name, source]) => (
         <div key={name} className="wf-node__assignment">
           <span className="wf-node__assignment-key">${name}</span>

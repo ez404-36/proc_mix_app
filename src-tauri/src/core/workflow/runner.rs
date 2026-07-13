@@ -26,7 +26,7 @@ use crate::storage::workflows::{RetryConfigRecord, WorkflowNodeRecord, WorkflowR
 
 use super::dataflow::{
     apply_data_assignments, apply_parser_node, apply_text_node, extracted_to_values,
-    resolve_variable_values, PrevOutcome,
+    resolve_variable_values, resolve_working_dir_override, PrevOutcome,
 };
 use super::eval::{
     build_eval_context, loop_should_continue, select_condition_branch, select_switch_branch,
@@ -113,6 +113,7 @@ struct RunContext<'a> {
 /// fast — kills this node's child too. The runner never holds a shared
 /// lock across an await; it observes the token and calls `cancel_execution`
 /// (which takes the executor lock briefly and releases it) as a normal call.
+#[allow(clippy::too_many_arguments)]
 async fn run_command_node<R: Runtime>(
     app: &AppHandle<R>,
     executor_state: Arc<ExecutorState>,
@@ -120,6 +121,7 @@ async fn run_command_node<R: Runtime>(
     node_id: &str,
     ctx: RunContext<'_>,
     variable_values: BTreeMap<String, String>,
+    working_dir_override: Option<String>,
     cancel: &CancellationToken,
 ) -> Result<NodeOutcome, WorkflowError> {
     let execution_id = uuid::Uuid::new_v4().to_string();
@@ -151,7 +153,7 @@ async fn run_command_node<R: Runtime>(
             variable_values,
             workflow_run_id: Some(ctx.run_id.to_string()),
             timeout_override: None,
-            working_dir_override: None,
+            working_dir_override,
             capture_output: ctx.capture_output,
             silent: ctx.silent,
         },
@@ -261,6 +263,7 @@ async fn run_command_bearing_node<R: Runtime>(
     commands: &HashMap<String, CommandRecord>,
     node: &WorkflowNodeRecord,
     node_variable_values: &HashMap<String, BTreeMap<String, String>>,
+    node_working_dir_values: &HashMap<String, String>,
     data_flow: &mut BTreeMap<String, String>,
     vars: &BTreeMap<String, String>,
     prev: Option<&PrevOutcome>,
@@ -282,6 +285,18 @@ async fn run_command_bearing_node<R: Runtime>(
     let max_retries = retry.map(|r| r.retries).unwrap_or(0);
     let backoff_ms = retry.and_then(|r| r.backoff_ms);
 
+    // Resolved ONCE per node run (not per retry attempt — a directory doesn't
+    // change across a retry). `None` unless the node declares a
+    // `working_dir_source`, so a node without one is byte-identical to
+    // pre-feature behaviour (the command's own persisted `working_dir`).
+    let working_dir_override = resolve_working_dir_override(
+        node.working_dir_source.as_ref(),
+        node_working_dir_values.get(&node.id),
+        prev,
+        data_flow,
+        vars,
+    );
+
     let mut attempt: u32 = 1;
     loop {
         let values = resolve_variable_values(
@@ -298,6 +313,7 @@ async fn run_command_bearing_node<R: Runtime>(
             &node.id,
             ctx,
             values,
+            working_dir_override.clone(),
             cancel,
         )
         .await?;
@@ -383,6 +399,12 @@ struct TraverseCtx<R: Runtime> {
     workflow: Arc<WorkflowRecord>,
     commands: Arc<HashMap<String, CommandRecord>>,
     node_variable_values: Arc<HashMap<String, BTreeMap<String, String>>>,
+    /// node id → the working-directory value the frontend collected for that
+    /// node's `atRun` working-dir prompt (mirrors `node_variable_values`, but
+    /// for the single working-dir override rather than a per-variable map).
+    /// A node absent from this map, or whose `working_dir_source` is not
+    /// `atRun`, ignores it entirely.
+    node_working_dir_values: Arc<HashMap<String, String>>,
     /// node id → index into `workflow.nodes`, precomputed once.
     node_index: Arc<HashMap<String, usize>>,
     run_id: String,
@@ -403,6 +425,7 @@ impl<R: Runtime> Clone for TraverseCtx<R> {
             workflow: self.workflow.clone(),
             commands: self.commands.clone(),
             node_variable_values: self.node_variable_values.clone(),
+            node_working_dir_values: self.node_working_dir_values.clone(),
             node_index: self.node_index.clone(),
             run_id: self.run_id.clone(),
             silent: self.silent,
@@ -455,6 +478,7 @@ async fn traverse<R: Runtime>(
     workflow: &WorkflowRecord,
     commands: &HashMap<String, CommandRecord>,
     node_variable_values: &HashMap<String, BTreeMap<String, String>>,
+    node_working_dir_values: &HashMap<String, String>,
     run_id: &str,
     silent: bool,
     start: TraverseStart,
@@ -504,6 +528,7 @@ async fn traverse<R: Runtime>(
         workflow: Arc::new(workflow.clone()),
         commands: Arc::new(commands.clone()),
         node_variable_values: Arc::new(node_variable_values.clone()),
+        node_working_dir_values: Arc::new(node_working_dir_values.clone()),
         node_index: Arc::new(node_index),
         run_id: run_id.to_string(),
         silent,
@@ -637,6 +662,7 @@ fn traverse_path<'a, R: Runtime>(
                         &ctx.commands,
                         node,
                         &ctx.node_variable_values,
+                        &ctx.node_working_dir_values,
                         &mut state.data_flow,
                         &state.vars,
                         state.prev.as_ref(),
@@ -660,6 +686,7 @@ fn traverse_path<'a, R: Runtime>(
                         &ctx.commands,
                         node,
                         &ctx.node_variable_values,
+                        &ctx.node_working_dir_values,
                         &mut state.data_flow,
                         &state.vars,
                         state.prev.as_ref(),
@@ -687,6 +714,7 @@ fn traverse_path<'a, R: Runtime>(
                         &ctx.commands,
                         node,
                         &ctx.node_variable_values,
+                        &ctx.node_working_dir_values,
                         &mut state.data_flow,
                         &state.vars,
                         state.prev.as_ref(),
@@ -761,6 +789,7 @@ fn traverse_path<'a, R: Runtime>(
                         &ctx.commands,
                         node,
                         &ctx.node_variable_values,
+                        &ctx.node_working_dir_values,
                         &mut state.data_flow,
                         &state.vars,
                         state.prev.as_ref(),
@@ -1068,12 +1097,19 @@ pub async fn execute_workflow_blocking<R: Runtime>(
     let started = Instant::now();
     // Capturing accumulator: its `Some`-ness turns on per-node buffering.
     let mut capture: Option<Vec<CapturedLine>> = Some(Vec::new());
+    // Every caller of the blocking runner (scheduler, HTTP API, shell-integration
+    // quick-launch) is headless — there is no UI to open an `atRun` working-dir
+    // prompt — so this path always resolves with an empty map. A node whose
+    // `working_dir_source` is `atRun` simply falls back to no override, exactly
+    // like a variable with no caller-supplied value falls back to its default.
+    let node_working_dir_values: HashMap<String, String> = HashMap::new();
     let result = traverse(
         &app,
         executor_state,
         &workflow,
         &commands,
         &node_variable_values,
+        &node_working_dir_values,
         &run_id,
         silent,
         TraverseStart::Start,
@@ -1153,6 +1189,10 @@ pub async fn execute_workflow_blocking<R: Runtime>(
 /// command layer collected for it on the frontend (defaults merged with
 /// prompt results). A node absent from the map runs with an empty value
 /// set, so the executor falls back to each spec's `default_value`.
+/// `node_working_dir_values` mirrors it for the single working-directory
+/// value a node's `atRun` `working_dir_source` prompt collected; a node
+/// absent from the map (or not sourced from `atRun`) falls back to no
+/// override.
 /// `silent`, when `true` (a planned cron fire via the scheduler), suppresses
 /// EVERY `workflow-event` AND every per-node `execution-event` so a background
 /// run does not stream to the live console. The run still executes to
@@ -1166,6 +1206,7 @@ pub async fn execute_workflow<R: Runtime>(
     workflow: WorkflowRecord,
     commands: HashMap<String, CommandRecord>,
     node_variable_values: HashMap<String, BTreeMap<String, String>>,
+    node_working_dir_values: HashMap<String, String>,
     silent: bool,
 ) -> Result<String, String> {
     spawn_traversal(
@@ -1175,6 +1216,7 @@ pub async fn execute_workflow<R: Runtime>(
         workflow,
         commands,
         node_variable_values,
+        node_working_dir_values,
         silent,
         TraverseStart::Start,
     )
@@ -1198,6 +1240,7 @@ pub async fn execute_workflow_from<R: Runtime>(
     workflow: WorkflowRecord,
     commands: HashMap<String, CommandRecord>,
     node_variable_values: HashMap<String, BTreeMap<String, String>>,
+    node_working_dir_values: HashMap<String, String>,
     start_node_id: String,
     seed_input: Option<String>,
 ) -> Result<String, String> {
@@ -1208,6 +1251,7 @@ pub async fn execute_workflow_from<R: Runtime>(
         workflow,
         commands,
         node_variable_values,
+        node_working_dir_values,
         // A node-scoped run is always a manual editor action → streams live.
         false,
         TraverseStart::Node {
@@ -1230,6 +1274,7 @@ async fn spawn_traversal<R: Runtime>(
     workflow: WorkflowRecord,
     commands: HashMap<String, CommandRecord>,
     node_variable_values: HashMap<String, BTreeMap<String, String>>,
+    node_working_dir_values: HashMap<String, String>,
     silent: bool,
     start: TraverseStart,
 ) -> Result<String, String> {
@@ -1260,6 +1305,7 @@ async fn spawn_traversal<R: Runtime>(
             &workflow,
             &commands,
             &node_variable_values,
+            &node_working_dir_values,
             &run_id_task,
             silent,
             start,

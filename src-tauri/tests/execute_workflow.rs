@@ -104,6 +104,8 @@ fn command(id: &str, script: &str) -> CommandRecord {
         shell: Some("bash".into()),
         args: None,
         working_dir: None,
+        prompt_working_dir: false,
+        prompt_ssh_password: false,
         env: None,
         tags: Vec::new(),
         category_id: None,
@@ -156,6 +158,7 @@ fn node(id: &str, kind: &str, command_id: Option<&str>) -> WorkflowNodeRecord {
         retry: None,
         data: Vec::new(),
         variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -252,6 +255,7 @@ async fn cancel_mid_run_emits_workflow_cancelled() {
         linear_workflow("slow"),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -307,6 +311,7 @@ async fn condition_exit_zero_takes_then_branch() {
         branching_workflow("test-cmd"),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -348,6 +353,7 @@ async fn condition_non_zero_takes_else_branch() {
         wf_state,
         branching_workflow("test-cmd"),
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -394,6 +400,7 @@ async fn unknown_command_emits_workflow_error() {
         branching_workflow("missing-cmd"),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -427,6 +434,7 @@ async fn no_start_node_emits_workflow_error() {
         wf_state,
         wf,
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -465,6 +473,7 @@ async fn node_substitutes_supplied_variable_value() {
         linear_workflow("var-cmd"),
         commands,
         node_values,
+        HashMap::new(),
         false,
     )
     .await
@@ -508,6 +517,7 @@ async fn node_falls_back_to_variable_default_when_no_value_supplied() {
         wf_state,
         linear_workflow("var-cmd"),
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -710,6 +720,7 @@ async fn extracted_field_flows_into_next_node_variable() {
         workflow,
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -821,6 +832,7 @@ async fn node_variable_value_overrides_data_flow_field() {
         workflow,
         commands,
         node_values,
+        HashMap::new(),
         false,
     )
     .await
@@ -880,6 +892,7 @@ fn switch_workflow(test_command_id: &str) -> WorkflowRecord {
         retry: None,
         data: Vec::new(),
         variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -932,6 +945,7 @@ async fn run_switch_with_exit(code: i32) -> (String, String) {
         wf_state,
         switch_workflow("test-cmd"),
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -1005,6 +1019,7 @@ fn counted_loop_workflow(body_command_id: &str, count: u32, max: u32) -> Workflo
         retry: None,
         data: Vec::new(),
         variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -1052,6 +1067,7 @@ async fn loop_runs_body_exactly_count_times() {
         wf_state,
         counted_loop_workflow("body", 3, 100),
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -1104,6 +1120,7 @@ async fn loop_aborts_with_error_when_max_iterations_exceeded() {
         wf_state,
         counted_loop_workflow("body", 10, 3),
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -1160,6 +1177,7 @@ fn try_workflow(test_command_id: &str, retries: u32) -> WorkflowRecord {
         }),
         data: Vec::new(),
         variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -1207,6 +1225,7 @@ async fn try_takes_ok_branch_on_first_success() {
         try_workflow("cmd", 3),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -1242,6 +1261,7 @@ async fn try_takes_catch_branch_after_exhausting_retries() {
         wf_state,
         try_workflow("cmd", 2),
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -1298,6 +1318,7 @@ async fn try_succeeds_on_a_later_retry() {
         try_workflow("cmd", 5),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -1348,6 +1369,7 @@ async fn data_node_pulls_exit_code_from_previous_command() {
             source: Some(DataSourceRecord::ExitCode),
         }],
         variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -1389,6 +1411,7 @@ async fn data_node_pulls_exit_code_from_previous_command() {
         wf_state,
         workflow,
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -1446,6 +1469,7 @@ fn predicated_condition_workflow(test_command_id: &str, predicate: Condition) ->
         retry: None,
         data: Vec::new(),
         variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -1501,6 +1525,7 @@ async fn condition_predicate_branches_on_stdout_not_exit_code() {
         predicated_condition_workflow("cmd", predicate),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -1546,6 +1571,7 @@ async fn data_node_assignment_flows_into_downstream_command() {
             source: None,
         }],
         variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -1585,6 +1611,7 @@ async fn data_node_assignment_flows_into_downstream_command() {
         wf_state,
         workflow,
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -1640,6 +1667,7 @@ async fn data_node_variable_survives_an_intermediate_command_node() {
             source: None,
         }],
         variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -1660,6 +1688,7 @@ async fn data_node_variable_survives_an_intermediate_command_node() {
             "who".to_string(),
             DataSourceRecord::DataVar { name: "who".into() },
         )]),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -1701,6 +1730,7 @@ async fn data_node_variable_survives_an_intermediate_command_node() {
         wf_state,
         workflow,
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -1768,6 +1798,7 @@ async fn run_from_node_executes_chosen_node_and_downstream_only() {
         two_step_workflow("ok-cmd"),
         commands,
         HashMap::new(),
+        HashMap::new(),
         "step2".to_string(),
         Some("seeded input".to_string()),
     )
@@ -1816,6 +1847,7 @@ async fn run_from_node_with_unknown_node_emits_error() {
         two_step_workflow("ok-cmd"),
         commands,
         HashMap::new(),
+        HashMap::new(),
         "does-not-exist".to_string(),
         None,
     )
@@ -1847,6 +1879,7 @@ async fn run_from_final_command_node_runs_only_it() {
         wf_state,
         two_step_workflow("ok-cmd"),
         commands,
+        HashMap::new(),
         HashMap::new(),
         "step2".to_string(), // the final command node before `end`
         None,
@@ -1889,6 +1922,7 @@ async fn run_from_end_node_is_a_clean_noop() {
         two_step_workflow("ok-cmd"),
         commands,
         HashMap::new(),
+        HashMap::new(),
         "end".to_string(),
         Some("ignored".to_string()),
     )
@@ -1925,6 +1959,7 @@ async fn run_from_node_with_no_seed_input_still_runs() {
         wf_state,
         two_step_workflow("ok-cmd"),
         commands,
+        HashMap::new(),
         HashMap::new(),
         "step1".to_string(),
         None, // no input data
@@ -1976,6 +2011,7 @@ async fn run_from_data_node_consumes_the_seed_as_raw_output() {
             source: Some(DataSourceRecord::RawOutput),
         }],
         variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
         parser: None,
         text: None,
         join_node_id: None,
@@ -2015,6 +2051,7 @@ async fn run_from_data_node_consumes_the_seed_as_raw_output() {
         wf_state,
         workflow,
         commands,
+        HashMap::new(),
         HashMap::new(),
         "set".to_string(),
         Some("world".to_string()), // the seed becomes `${who}`
@@ -2124,6 +2161,7 @@ async fn fork_three_branches_join_then_end_finishes_once() {
         fork_workflow(&["b0", "b1", "b2"], true),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -2172,6 +2210,7 @@ async fn fork_without_join_each_branch_runs_to_its_own_end() {
         fork_workflow(&["b0", "b1"], false),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -2211,6 +2250,7 @@ async fn fork_single_branch_fast_path_behaves_sequentially() {
         fork_workflow(&["b0"], true),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -2249,6 +2289,7 @@ async fn fork_error_in_one_branch_aborts_others_and_errors() {
         fork_workflow(&["slow", "boom"], true),
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -2285,6 +2326,7 @@ async fn fork_cancel_mid_flight_cancels_all_branches() {
         wf_state.clone(),
         fork_workflow(&["s0", "s1"], true),
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )
@@ -2350,6 +2392,7 @@ async fn fork_post_join_continuation_runs_a_following_command_once() {
         wf,
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -2403,6 +2446,7 @@ async fn bound_join_branch_ending_before_join_errors_and_skips_post_join() {
         wf,
         commands,
         HashMap::new(),
+        HashMap::new(),
         false,
     )
     .await
@@ -2446,6 +2490,7 @@ async fn unbound_fork_branch_ending_at_own_end_still_finishes_ok() {
         wf_state,
         fork_workflow(&["b0", "b1"], false),
         commands,
+        HashMap::new(),
         HashMap::new(),
         false,
     )

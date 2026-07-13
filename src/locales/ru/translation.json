@@ -200,7 +200,8 @@
       "retryProgress": "повтор {{n}}",
       "dataEmpty": "Нет присваиваний",
       "parserSummary": "Шагов парсера: {{count}}",
-      "unboundCommand": "Выберите команду…"
+      "unboundCommand": "Выберите команду…",
+      "workingDir": "рабочая директория"
     },
     "nodeDesc": {
       "command": "Запускает выбранную команду.",
@@ -292,6 +293,17 @@
         "valueLabel": "Значение переменной {{name}}",
         "valuePlaceholder": "Значение",
         "source": {
+          "manual": "Ввести вручную",
+          "atRun": "Ввести при запуске",
+          "dataVar": "Переменная: ${{field}}"
+        }
+      },
+      "workingDir": {
+        "title": "Рабочая директория",
+        "valueLabel": "Значение рабочей директории",
+        "valuePlaceholder": "Путь",
+        "source": {
+          "none": "Использовать настройку команды",
           "manual": "Ввести вручную",
           "atRun": "Ввести при запуске",
           "dataVar": "Переменная: ${{field}}"

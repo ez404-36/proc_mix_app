@@ -33,6 +33,10 @@ const sampleCommand: Command = {
   updatedAt: "2026-05-28T00:00:00Z",
   runCount: 0,
   runAsAdmin: false,
+  // `recordToCommand` always materialises the prompt flags (default false), so
+  // a round-tripped command comes back with them set explicitly.
+  promptWorkingDir: false,
+  promptSshPassword: false,
   // `recordToCommand` always materialises a scope, so a command that
   // round-trips through the wire mappers comes back as `"global"`.
   scope: "global",

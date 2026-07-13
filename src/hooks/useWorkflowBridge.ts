@@ -3,7 +3,10 @@ import i18n from "../i18n";
 import { useCommandStore } from "../stores/commandStore";
 import { useExecutionStore } from "../stores/executionStore";
 import { useHistoryStore } from "../stores/historyStore";
-import { useWorkflowRunStore } from "../stores/workflowRunStore";
+import {
+  getExecutionWorkingDir,
+  useWorkflowRunStore,
+} from "../stores/workflowRunStore";
 import { useWorkflowStore } from "../stores/workflowStore";
 import type { RunStatus, WorkflowEvent } from "../types";
 import { getCommandName } from "../utils/commandLabels";
@@ -123,6 +126,34 @@ function resolveStepCommandId(
 }
 
 /**
+ * The RESOLVED working directory a node's command launched in, captured from
+ * its `started` execution-event and stashed on the run by the execution
+ * bridge (keyed by execution id). Resolves the node's execution id from its
+ * run-state, then looks up the recorded dir. Returns `undefined` when the node
+ * never started, or its dir was empty (home-dir fallback) — the caller then
+ * falls back to the command's static `workingDir`.
+ */
+/**
+ * One line of a step header for the aggregated workflow console, plus an
+ * optional presentation `variant` (see {@link ExecutionLogLine}). Only the
+ * working-directory line carries `variant: "workdir"` (accent-coloured).
+ */
+interface StepHeaderLine {
+  text: string;
+  variant?: "workdir";
+}
+
+function resolveStepWorkingDir(
+  runId: string,
+  nodeId: string,
+): string | undefined {
+  const run = useWorkflowRunStore.getState().runs[runId];
+  const executionId = run?.nodes[nodeId]?.executionId;
+  if (executionId === undefined) return undefined;
+  return getExecutionWorkingDir(executionId);
+}
+
+/**
  * Render a step's TITLE line: `▸ <name>`, or `▸ (ветка N) <name>` when the
  * node runs inside a parallel fork (so the user can tell which branch the
  * following block belongs to). Centralises the branch-vs-plain choice.
@@ -145,7 +176,7 @@ function buildStepHeaderLines(
   runId: string,
   workflowId: string,
   nodeId: string,
-): string[] {
+): StepHeaderLine[] {
   const branchSlot = branchSlotForNode(runId, workflowId, nodeId);
   const commandId = resolveStepCommandId(runId, workflowId, nodeId);
   if (commandId !== undefined) {
@@ -154,17 +185,35 @@ function buildStepHeaderLines(
       .commands.find((c) => c.id === commandId);
     if (cmd) {
       const name = getCommandName(cmd, i18n.t);
-      const lines = [stepTitleLine(name, branchSlot)];
+      const lines: StepHeaderLine[] = [
+        { text: stepTitleLine(name, branchSlot) },
+      ];
       const shell = cmd.shell ?? i18n.t("outputPanel.defaultShell");
-      const dir = cmd.workingDir?.trim();
+      // Prefer the RESOLVED directory the process actually launched in
+      // (captured from the node's `started` event — reflects a node-level
+      // `workingDirSource` override, an expanded `${var}`, a run-time prompt
+      // answer, or the home-dir fallback). Fall back to the command's static
+      // `workingDir` only when the resolved value isn't available yet (e.g. a
+      // header flushed for a node that never emitted `started`).
+      const dir = resolveStepWorkingDir(runId, nodeId) ?? cmd.workingDir?.trim();
+      // Shell + working directory on ONE line, e.g. `(bash) /home/egor`, tagged
+      // `workdir` so the OutputPanel renders the whole line in the accent
+      // colour — matching a standalone command run's header exactly (shell and
+      // dir together, both blue). Without a directory the plain `(bash)` line
+      // stays muted like the other step headers.
       lines.push(
         dir !== undefined && dir !== ""
-          ? i18n.t("outputPanel.workflowStepShellDir", { shell, dir })
-          : i18n.t("outputPanel.workflowStepShell", { shell }),
+          ? {
+              text: i18n.t("outputPanel.workflowStepShellDir", { shell, dir }),
+              variant: "workdir",
+            }
+          : { text: i18n.t("outputPanel.workflowStepShell", { shell }) },
       );
       const script = cmd.script.trim();
       if (script !== "") {
-        lines.push(i18n.t("outputPanel.workflowStepScript", { script }));
+        lines.push({
+          text: i18n.t("outputPanel.workflowStepScript", { script }),
+        });
       }
       return lines;
     }
@@ -175,7 +224,7 @@ function buildStepHeaderLines(
   const node = workflow?.nodes.find((n) => n.id === nodeId);
   const fallback =
     node?.label !== undefined && node.label.trim() !== "" ? node.label : nodeId;
-  return [stepTitleLine(fallback, branchSlot)];
+  return [{ text: stepTitleLine(fallback, branchSlot) }];
 }
 
 /**
@@ -200,7 +249,7 @@ function flushNodeOutput(
   const buffered = runStore.takeNodeBuffer(runId, nodeId);
   const exec = useExecutionStore.getState();
   for (const headerLine of buildStepHeaderLines(runId, workflowId, nodeId)) {
-    exec.appendWorkflowStepHeader(runId, headerLine);
+    exec.appendWorkflowStepHeader(runId, headerLine.text, headerLine.variant);
   }
   for (const line of buffered) {
     exec.appendLog(runId, line);
@@ -220,7 +269,7 @@ function flushRemainingBuffers(runId: string, workflowId: string): void {
   const exec = useExecutionStore.getState();
   for (const [nodeId, lines] of runStore.takeAllBuffers(runId)) {
     for (const headerLine of buildStepHeaderLines(runId, workflowId, nodeId)) {
-      exec.appendWorkflowStepHeader(runId, headerLine);
+      exec.appendWorkflowStepHeader(runId, headerLine.text, headerLine.variant);
     }
     for (const line of lines) {
       exec.appendLog(runId, line);

@@ -150,8 +150,21 @@ function routeWorkflowNodeEvent(
     });
     return;
   }
-  // started / finished / error / cancelled: no-op for the aggregate. The
-  // workflow bridge handles run lifecycle + step headers.
+  if (event.kind === "started") {
+    // Record the RESOLVED working directory this node's command launched in
+    // (an override / expanded `${var}` / prompt answer / home fallback — the
+    // static `command.workingDir` can't show any of these). Keyed by execution
+    // id; the step-header builder reads it at flush time. The aggregate's run
+    // lifecycle stays owned by `useWorkflowBridge` — this only stashes data.
+    runStore.setExecutionWorkingDir(
+      workflowRunId,
+      event.executionId,
+      event.workingDir,
+    );
+    return;
+  }
+  // finished / error / cancelled: no-op for the aggregate. The workflow bridge
+  // handles run lifecycle + step headers.
 }
 
 function handleEvent(event: ExecutionEvent): void {

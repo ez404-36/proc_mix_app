@@ -186,6 +186,12 @@ pub struct WorkflowNodeRecord {
     /// the TS `WorkflowNode.variableSources`.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub variable_sources: std::collections::BTreeMap<String, DataSourceRecord>,
+    /// Where this node's working directory draws its value, meaningful only
+    /// when the referenced command has `prompt_working_dir: true`. `None`
+    /// (the default) means no override — the command runs with its own
+    /// persisted `working_dir`. Mirrors the TS `WorkflowNode.workingDirSource`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_dir_source: Option<DataSourceRecord>,
     /// Output-schema pipeline a `parser` node applies to the previous node's
     /// raw output. `None` for every other kind. Mirrors the TS
     /// `WorkflowNode.parser`. Reuses the command `OutputSchemaRecord` so the
@@ -485,6 +491,7 @@ mod wire_format_tests {
                     retry: None,
                     data: Vec::new(),
                     variable_sources: std::collections::BTreeMap::new(),
+                    working_dir_source: None,
                     parser: None,
                     text: None,
                     join_node_id: None,
@@ -501,6 +508,7 @@ mod wire_format_tests {
                     retry: None,
                     data: Vec::new(),
                     variable_sources: std::collections::BTreeMap::new(),
+                    working_dir_source: None,
                     parser: None,
                     text: None,
                     join_node_id: None,
@@ -571,6 +579,7 @@ mod wire_format_tests {
             retry: None,
             data: Vec::new(),
             variable_sources: std::collections::BTreeMap::new(),
+            working_dir_source: None,
             parser: None,
             text: None,
             join_node_id: None,
@@ -598,6 +607,7 @@ mod wire_format_tests {
             retry: None,
             data: Vec::new(),
             variable_sources: std::collections::BTreeMap::new(),
+            working_dir_source: None,
             parser: None,
             text: None,
             join_node_id: None,
@@ -629,6 +639,7 @@ mod wire_format_tests {
             retry: None,
             data: Vec::new(),
             variable_sources: std::collections::BTreeMap::new(),
+            working_dir_source: None,
             parser: None,
             text: None,
             join_node_id: None,
@@ -786,6 +797,7 @@ mod sqlite_integration_tests {
                     retry: None,
                     data: Vec::new(),
                     variable_sources: std::collections::BTreeMap::new(),
+                    working_dir_source: None,
                     parser: None,
                     text: None,
                     join_node_id: None,
@@ -802,6 +814,7 @@ mod sqlite_integration_tests {
                     retry: None,
                     data: Vec::new(),
                     variable_sources: std::collections::BTreeMap::new(),
+                    working_dir_source: None,
                     parser: None,
                     text: None,
                     join_node_id: None,

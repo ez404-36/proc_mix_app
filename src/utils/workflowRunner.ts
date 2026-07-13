@@ -15,6 +15,11 @@ import { workflowToRecord } from "./workflowRepository";
  * answers — see `triggerWorkflowRun`). The engine substitutes these
  * per-node and falls back to each spec's default for any unset variable.
  *
+ * `nodeWorkingDirValues` mirrors it for the single working-directory value a
+ * node's `atRun` `workingDirSource` prompt collected — see
+ * `resolveNodeWorkingDirValues`. A node absent from the map falls back to no
+ * override.
+ *
  * IMPORTANT: the referenced commands must already be persisted to SQLite
  * before calling this — the engine resolves each node's `commandId` against
  * the `commands` table. `triggerWorkflowRun` owns that ordering guarantee
@@ -23,10 +28,12 @@ import { workflowToRecord } from "./workflowRepository";
 export async function executeWorkflow(
   workflow: Workflow,
   nodeVariableValues: Record<string, Record<string, string>>,
+  nodeWorkingDirValues: Record<string, string>,
 ): Promise<string> {
   return invoke<string>("execute_workflow", {
     workflow: workflowToRecord(workflow),
     nodeVariableValues,
+    nodeWorkingDirValues,
   });
 }
 
@@ -44,12 +51,14 @@ export async function executeWorkflow(
 export async function executeWorkflowFromNode(
   workflow: Workflow,
   nodeVariableValues: Record<string, Record<string, string>>,
+  nodeWorkingDirValues: Record<string, string>,
   startNodeId: string,
   seedInput: string | null,
 ): Promise<string> {
   return invoke<string>("run_workflow_from_node", {
     workflow: workflowToRecord(workflow),
     nodeVariableValues,
+    nodeWorkingDirValues,
     startNodeId,
     seedInput,
   });

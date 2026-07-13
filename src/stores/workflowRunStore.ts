@@ -94,6 +94,48 @@ export interface WorkflowRun {
   error?: string;
 }
 
+/**
+ * The RESOLVED working directory each node's command actually launched in,
+ * keyed by the node's `executionId`. Captured from the backend `started`
+ * execution-event — authoritative: it reflects a per-node `workingDirSource`
+ * override, a `${var}` expansion, a run-time prompt answer, or the home-dir
+ * fallback, none of which the static `command.workingDir` shows.
+ *
+ * Kept as a MODULE-LEVEL map rather than per-run state on purpose: the
+ * `started` execution-event can arrive on its own channel BEFORE the run is
+ * registered in the store (a frontend Run only calls `startRun` after the
+ * `execute_workflow` invoke resolves, and the runner streams events from a
+ * background task). A per-run field would drop those early writes; this map
+ * accepts them unconditionally. Entries are cleared per-run by `clearRun` /
+ * `clearAll` via `dropExecutionWorkingDirs`.
+ */
+const executionWorkingDirs = new Map<string, string>();
+
+/**
+ * The resolved working directory recorded for `executionId`, or `undefined`
+ * when none was captured (never started, or a home-dir/remote run reported an
+ * empty dir). Read by the console step-header builder.
+ */
+export function getExecutionWorkingDir(
+  executionId: string,
+): string | undefined {
+  return executionWorkingDirs.get(executionId);
+}
+
+/**
+ * Drop the recorded working dirs for a run's executions. Called on
+ * `clearRun` / `clearAll` so the module map does not grow unbounded across
+ * many runs. Takes the run's node execution ids (the only keys it owns).
+ */
+function dropExecutionWorkingDirs(run: WorkflowRun | undefined): void {
+  if (run === undefined) return;
+  for (const node of Object.values(run.nodes)) {
+    if (node.executionId !== undefined) {
+      executionWorkingDirs.delete(node.executionId);
+    }
+  }
+}
+
 interface WorkflowRunState {
   runs: Record<string, WorkflowRun>;
   recentRunIds: string[];
@@ -135,6 +177,18 @@ interface WorkflowRunState {
     runId: string,
     executionId: string,
     result: ExtractedResult,
+  ) => void;
+  /**
+   * Record the resolved working directory a node's command launched in,
+   * keyed by `executionId`. Called from the execution bridge on the node's
+   * `started` event so the console step header can show the REAL directory
+   * (override / expanded var / prompt answer / home fallback), not the
+   * command's static `workingDir`. No-op with an empty/absent dir.
+   */
+  setExecutionWorkingDir: (
+    runId: string,
+    executionId: string,
+    workingDir: string | undefined,
   ) => void;
   /**
    * Buffer a console log line against the node owning `executionId`, awaiting
@@ -343,6 +397,17 @@ export const useWorkflowRunStore = create<WorkflowRunState>()((set, get) => ({
       };
     }),
 
+  setExecutionWorkingDir: (_runId, executionId, workingDir) => {
+    // Write UNCONDITIONALLY into the module map — no run-existence guard. The
+    // `started` event can land before the run is registered (cross-channel /
+    // pre-`startRun` timing); a run-gated write would silently drop it, which
+    // is exactly why every step's directory failed to appear. `runId` is
+    // unused (the map is global, keyed by the globally-unique execution id).
+    const dir = workingDir?.trim();
+    if (dir === undefined || dir === "") return;
+    executionWorkingDirs.set(executionId, dir);
+  },
+
   bufferNodeLine: (runId, executionId, line) =>
     set((state) => {
       const run = state.runs[runId];
@@ -420,6 +485,7 @@ export const useWorkflowRunStore = create<WorkflowRunState>()((set, get) => ({
 
   clearRun: (runId) =>
     set((state) => {
+      dropExecutionWorkingDirs(state.runs[runId]);
       const next = { ...state.runs };
       delete next[runId];
       return {
@@ -428,5 +494,8 @@ export const useWorkflowRunStore = create<WorkflowRunState>()((set, get) => ({
       };
     }),
 
-  clearAll: () => set({ runs: {}, recentRunIds: [] }),
+  clearAll: () => {
+    executionWorkingDirs.clear();
+    set({ runs: {}, recentRunIds: [] });
+  },
 }));

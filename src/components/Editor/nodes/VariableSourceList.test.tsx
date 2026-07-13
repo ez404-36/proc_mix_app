@@ -33,6 +33,50 @@ describe("VariableSourceList", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("shows a working-directory row for a manual source", () => {
+    render(
+      <VariableSourceList
+        variableSources={undefined}
+        workingDirSource={{ kind: "manual", value: "/srv/app" }}
+      />,
+    );
+    expect(
+      screen.getByText(i18n.t("editor.nodes.workingDir")),
+    ).toBeTruthy();
+    expect(screen.getByText("/srv/app")).toBeTruthy();
+  });
+
+  it("shows a working-directory row with a placeholder for an atRun source", () => {
+    render(
+      <VariableSourceList
+        variableSources={undefined}
+        workingDirSource={{ kind: "atRun" }}
+      />,
+    );
+    expect(
+      screen.getByText(i18n.t("editor.nodes.workingDir")),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        i18n.t("editor.inspector.preview.dataVarSource.atRun"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("renders the working-dir row before the variable rows", () => {
+    render(
+      <VariableSourceList
+        variableSources={{ host: { kind: "manual", value: "h" } }}
+        workingDirSource={{ kind: "dataVar", name: "dir" }}
+      />,
+    );
+    const keys = screen
+      .getAllByText(/./, { selector: ".wf-node__assignment-key" })
+      .map((el) => el.textContent);
+    expect(keys[0]).toBe(i18n.t("editor.nodes.workingDir"));
+    expect(keys[1]).toBe("$host");
+  });
+
   it("ignores entries with an empty name", () => {
     const { container } = render(
       <VariableSourceList

@@ -153,3 +153,71 @@ export function variableSourceId(source: DataSource): string {
   if (source.kind === "dataVar") return `dataVar:${source.name}`;
   return source.kind;
 }
+
+/**
+ * Build the value-source options offered for a command-bearing node's
+ * WORKING DIRECTORY (`WorkflowNode.workingDirSource`), meaningful only when
+ * the referenced command has `promptWorkingDir: true`.
+ *
+ * A directory has no predecessor-output shape (unlike a variable, which can
+ * read a prior node's exit code / schema field / etc.), so the vocabulary is
+ * deliberately narrower than {@link variableSourceOptions}:
+ *   - `none`    → no override; the node inherits the command's own persisted
+ *     `workingDir` (or the runtime prompt, if the caller still wants one).
+ *     This is the implicit default (`workingDirSource === undefined`).
+ *   - `manual`  → a literal path typed on the node (may itself reference
+ *     `${var}` — resolved the same way a `data`-node manual value is).
+ *   - `atRun`   → prompt the user for a directory when the workflow runs
+ *     (reuses the same working-dir prompt modal a direct command run opens).
+ *   - `dataVar` → one option per distinct variable from a `data` node
+ *     guaranteed to run before this node (same dominance analysis as
+ *     {@link variableSourceOptions}).
+ */
+export function workingDirSourceOptions(
+  allNodes: ReadonlyArray<WorkflowFlowNode>,
+  edges: ReadonlyArray<WorkflowFlowEdge>,
+  currentNodeId: string,
+): DataSourceOption[] {
+  const options: DataSourceOption[] = [
+    {
+      id: "none",
+      source: { kind: "manual", value: "" },
+      labelKey: "editor.inspector.workingDir.source.none",
+    },
+    {
+      id: "manual",
+      source: { kind: "manual", value: "" },
+      labelKey: "editor.inspector.workingDir.source.manual",
+    },
+    {
+      id: "atRun",
+      source: { kind: "atRun" },
+      labelKey: "editor.inspector.workingDir.source.atRun",
+    },
+  ];
+
+  for (const name of dominatingDataNodeVariableNames(
+    allNodes,
+    edges,
+    currentNodeId,
+  )) {
+    options.push({
+      id: `dataVar:${name}`,
+      source: { kind: "dataVar", name },
+      labelKey: "editor.inspector.workingDir.source.dataVar",
+      field: name,
+    });
+  }
+
+  return options;
+}
+
+/**
+ * The dropdown option id for a node's stored `workingDirSource` — `"none"`
+ * when absent (the implicit default), else the same encoding
+ * {@link variableSourceId} uses for `manual` / `atRun` / `dataVar`.
+ */
+export function workingDirSourceId(source: DataSource | undefined): string {
+  if (source === undefined) return "none";
+  return variableSourceId(source);
+}

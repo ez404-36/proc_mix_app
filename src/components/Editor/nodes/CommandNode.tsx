@@ -37,7 +37,10 @@ export function CommandNode({
       <Handle type="target" position={Position.Left} />
       <div className="wf-node__kind">{t("editor.nodes.command")}</div>
       <div className="wf-node__title">{label}</div>
-      <VariableSourceList variableSources={data.variableSources} />
+      <VariableSourceList
+        variableSources={data.variableSources}
+        workingDirSource={data.workingDirSource}
+      />
       <Handle type="source" position={Position.Right} id="out" />
     </div>
   );

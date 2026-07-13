@@ -84,6 +84,37 @@ pub(super) fn resolve_variable_values(
     merged
 }
 
+/// Resolve a command-bearing node's working-directory OVERRIDE from its
+/// optional `working_dir_source`, honouring the same source vocabulary as
+/// [`resolve_variable_values`]:
+///   - `None` (no source configured) → `None`: no override, the command runs
+///     with its own persisted `working_dir` (unchanged pre-feature behaviour).
+///   - `AtRun` → the value the frontend collected via its working-dir prompt,
+///     supplied in `node_value` (mirrors `node_values` for variables). Absent
+///     or empty means "use the default", so it resolves to `None`.
+///   - every other source (`manual`, `dataVar`, or a predecessor-derived one)
+///     → resolved via [`resolve_data_source`] exactly like a `data` node
+///     assignment. An empty resolution (inapplicable source, missing field,
+///     …) degrades to `None` rather than overriding with an empty path.
+pub(super) fn resolve_working_dir_override(
+    source: Option<&DataSourceRecord>,
+    node_value: Option<&String>,
+    prev: Option<&PrevOutcome>,
+    data_flow: &BTreeMap<String, String>,
+    vars: &BTreeMap<String, String>,
+) -> Option<String> {
+    let source = source?;
+    let resolved = match source {
+        DataSourceRecord::AtRun => node_value.cloned().unwrap_or_default(),
+        other => resolve_data_source(other, prev, data_flow, vars),
+    };
+    if resolved.is_empty() {
+        None
+    } else {
+        Some(resolved)
+    }
+}
+
 /// Expand `${name}` references in `template` against `vars`. A reference to a
 /// name not present in `vars` resolves to the EMPTY string — the same lenient
 /// rule a `Variable`-subject condition uses for a missing data-flow field, so
