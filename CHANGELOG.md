@@ -5,6 +5,35 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-07-14
+
+**Per-node working directory + a persistence fix.** A workflow node can now
+override the working directory of the command it runs, the same way it
+already overrides individual variables. Also fixes a bug where a command's
+"prompt for working directory" toggle silently reset after a scenario run.
+
+### Added
+
+- **Per-node working directory source.** When a command has "prompt for
+  working directory" enabled, a node running it in a scenario can choose
+  where that directory comes from — manual value, prompt at run time, or a
+  data-flow variable from a predecessor — mirroring the existing per-variable
+  source selector (`NodeInspector`). The resolved directory threads through
+  `execute_workflow` into `RunOptions.working_dir_override`.
+- **Working directory shown in the run console.** Each step in the scenario
+  console now displays its resolved working directory next to the shell,
+  matching how a standalone command run already shows it.
+
+### Fixed
+
+- **"Prompt for working directory" no longer resets.** `promptWorkingDir` /
+  `promptSshPassword` (along with `target` and `timeoutSeconds`) were never
+  persisted to SQLite — they only lived in the frontend store until a
+  workflow run's `ensureReferencedCommandsPersisted` re-upsert silently
+  overwrote them. Both flags are now stored end-to-end (new `CommandRecord`
+  fields, schema columns + migration, and the missing `commandRepository`
+  mappings), so the toggle survives a scenario run.
+
 ## [0.13.1] - 2026-07-06
 
 **Test-coverage hardening.** A maintenance release with no user-facing changes.
