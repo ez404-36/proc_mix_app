@@ -176,6 +176,161 @@ describe("NodeInspector modal", () => {
     ).toBeNull();
   });
 
+  it("loop node: enabling 'pass data' creates a manual item list sized to count", () => {
+    const node: WorkflowFlowNode = {
+      id: "l1",
+      type: "loop",
+      position: { x: 0, y: 0 },
+      data: { kind: "loop", loop: { count: 3, maxIterations: 3 } },
+    };
+    const { onNodeDataChange } = renderModal(node);
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: i18n.t("editor.inspector.loop.passItems"),
+      }),
+    );
+    expect(onNodeDataChange).toHaveBeenCalledWith("l1", {
+      loop: {
+        count: 3,
+        maxIterations: 3,
+        items: ["", "", ""],
+      },
+    });
+  });
+
+  it("loop node: enabling 'pass data' works on a brand-new node with no loop config yet", () => {
+    const node: WorkflowFlowNode = {
+      id: "l1",
+      type: "loop",
+      position: { x: 0, y: 0 },
+      data: { kind: "loop" },
+    };
+    const { onNodeDataChange } = renderModal(node);
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: i18n.t("editor.inspector.loop.passItems"),
+      }),
+    );
+    expect(onNodeDataChange).toHaveBeenCalledWith("l1", {
+      loop: { count: 1, maxIterations: 1, items: [""] },
+    });
+  });
+
+  it("loop node: changing count while items are enabled resizes the manual list", () => {
+    const node: WorkflowFlowNode = {
+      id: "l1",
+      type: "loop",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "loop",
+        loop: {
+          count: 2,
+          maxIterations: 2,
+          items: ["a", "b"],
+        },
+      },
+    };
+    const { onNodeDataChange } = renderModal(node);
+    const countInput = screen.getByLabelText(
+      i18n.t("editor.inspector.loop.count"),
+    );
+    // Grow: 2 -> 3 pads with an empty string, keeping existing values.
+    fireEvent.change(countInput, { target: { value: "3" } });
+    expect(onNodeDataChange).toHaveBeenLastCalledWith("l1", {
+      loop: {
+        count: 3,
+        maxIterations: 3,
+        items: ["a", "b", ""],
+      },
+    });
+  });
+
+  it("loop node: shrinking count truncates the manual item list", () => {
+    const node: WorkflowFlowNode = {
+      id: "l1",
+      type: "loop",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "loop",
+        loop: {
+          count: 3,
+          maxIterations: 3,
+          items: ["a", "b", "c"],
+        },
+      },
+    };
+    const { onNodeDataChange } = renderModal(node);
+    const countInput = screen.getByLabelText(
+      i18n.t("editor.inspector.loop.count"),
+    );
+    fireEvent.change(countInput, { target: { value: "1" } });
+    expect(onNodeDataChange).toHaveBeenLastCalledWith("l1", {
+      loop: {
+        count: 1,
+        maxIterations: 1,
+        items: ["a"],
+      },
+    });
+  });
+
+  it("loop node: disabling 'pass data' clears items", () => {
+    const node: WorkflowFlowNode = {
+      id: "l1",
+      type: "loop",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "loop",
+        loop: {
+          count: 2,
+          maxIterations: 2,
+          items: ["a", "b"],
+        },
+      },
+    };
+    const { onNodeDataChange } = renderModal(node);
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: i18n.t("editor.inspector.loop.passItems"),
+      }),
+    );
+    expect(onNodeDataChange).toHaveBeenCalledWith("l1", {
+      loop: { count: 2, maxIterations: 2, items: undefined },
+    });
+  });
+
+  it("loop node: items block is hidden while 'pass data' is off", () => {
+    const node: WorkflowFlowNode = {
+      id: "l1",
+      type: "loop",
+      position: { x: 0, y: 0 },
+      data: { kind: "loop", loop: { count: 2, maxIterations: 2 } },
+    };
+    renderModal(node);
+    expect(
+      screen.queryByText(i18n.t("editor.inspector.loop.items")),
+    ).toBeNull();
+  });
+
+  it("loop node: shows a 1-based iteration number next to each item input", () => {
+    const node: WorkflowFlowNode = {
+      id: "l1",
+      type: "loop",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "loop",
+        loop: {
+          count: 3,
+          maxIterations: 3,
+          items: ["a", "b", "c"],
+        },
+      },
+    };
+    renderModal(node);
+    expect(screen.getByText("1")).toBeTruthy();
+    expect(screen.getByText("2")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
+  });
+
   it("shows a data node's saved variables as a key=value block (not a textarea)", () => {
     const node: WorkflowFlowNode = {
       id: "d1",

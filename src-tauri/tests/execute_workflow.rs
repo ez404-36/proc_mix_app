@@ -1015,6 +1015,7 @@ fn counted_loop_workflow(body_command_id: &str, count: u32, max: u32) -> Workflo
             count: Some(count),
             while_condition: None,
             max_iterations: max,
+            items: None,
         }),
         retry: None,
         data: Vec::new(),
@@ -1106,6 +1107,179 @@ async fn loop_runs_body_exactly_count_times() {
         .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })));
 }
 
+/// Regression test for a real-world bug report: the `count`-mode editor UI
+/// keeps `maxIterations` in lock-step with `count` (see
+/// `NodeInspector.tsx`), so a normal 2-iteration loop is ALWAYS saved with
+/// `count == max_iterations`. The runner must treat reaching that count as
+/// an ordinary, successful finish — not report it as exceeding the safety
+/// cap (`WorkflowError::LoopLimit`).
+#[tokio::test]
+async fn loop_finishes_cleanly_when_count_equals_max_iterations() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("body".to_string(), command("body", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        counted_loop_workflow("body", 2, 2),
+        commands,
+        HashMap::new(),
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    let body_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "step"))
+        .count();
+    assert_eq!(
+        body_runs, 2,
+        "body should run exactly 2 times, events: {collected:?}"
+    );
+
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "count == max_iterations must finish cleanly, not error, events: {collected:?}"
+    );
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "count == max_iterations must not raise LoopLimit, events: {collected:?}"
+    );
+}
+
+/// Same shape as `counted_loop_workflow`, but the loop configures a manual
+/// `items` list and the body command declares a `${item}` variable bound to
+/// `DataSourceRecord::LoopItem` — so each iteration substitutes a different
+/// value into the SAME command.
+///
+/// start → loop ──body→ step(cmd, ${item} <- loopItem) ──out→ loop
+///              └─done→ end
+fn counted_loop_workflow_with_items(
+    body_command_id: &str,
+    items: Vec<String>,
+) -> WorkflowRecord {
+    let count = u32::try_from(items.len()).expect("test items list fits in u32");
+    let loop_node = WorkflowNodeRecord {
+        id: "lp".into(),
+        kind: "loop".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: Some(LoopConfigRecord {
+            count: Some(count),
+            while_condition: None,
+            // `max_iterations == count` would also finish cleanly (the mode
+            // decision runs before the cap check), but `count + 1` here
+            // keeps this fixture's intent obviously distinct from the
+            // `count == max_iterations` edge case covered by
+            // `loop_finishes_cleanly_when_count_equals_max_iterations`.
+            max_iterations: count + 1,
+            items: Some(items),
+        }),
+        retry: None,
+        data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
+        parser: None,
+        text: None,
+        join_node_id: None,
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    let mut step = node("step", "command", Some(body_command_id));
+    step.variable_sources
+        .insert("item".to_string(), DataSourceRecord::LoopItem);
+    WorkflowRecord {
+        id: "wf-loop-items".into(),
+        name: "loop-items".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            loop_node,
+            step,
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "lp", "out"),
+            edge("e_body", "lp", "step", "body"),
+            edge("e_back", "step", "lp", "out"),
+            edge("e_done", "lp", "end", "done"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+        api_slug: None,
+        api_enabled: false,
+        sound: None,
+    }
+}
+
+#[tokio::test]
+async fn loop_exposes_a_different_item_to_the_body_each_iteration() {
+    // The body command appends `${item}` to a shared marker file on every run;
+    // since the SAME command node runs 3 times, the only way the file ends up
+    // with "a,b,c," is if `loopItem` resolved to a different value each pass.
+    let (app, exec_state, wf_state, events) = make_app();
+    let marker = std::env::temp_dir().join(format!("procmix-loop-items-{}", uuid_like()));
+    let script = format!("echo -n \"${{item}}\" >> '{m}'", m = marker.display());
+
+    let mut cmd = command("body", &script);
+    cmd.variables = vec![VariableSpec {
+        name: "item".into(),
+        default_value: None,
+        prompt_at_runtime: false,
+        description: None,
+        sensitive: false,
+    }];
+    let mut commands = HashMap::new();
+    commands.insert("body".to_string(), cmd);
+
+    let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        counted_loop_workflow_with_items("body", items),
+        commands,
+        HashMap::new(),
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+    let written = std::fs::read_to_string(&marker).unwrap_or_default();
+    let _ = std::fs::remove_file(&marker);
+
+    assert_eq!(
+        written, "abc",
+        "each iteration must substitute a different loopItem value, events: {collected:?}"
+    );
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "expected a clean finish, events: {collected:?}"
+    );
+}
+
 #[tokio::test]
 async fn loop_aborts_with_error_when_max_iterations_exceeded() {
     // count (10) exceeds max_iterations (3): the hard cap must stop the run
@@ -1151,6 +1325,510 @@ async fn loop_aborts_with_error_when_max_iterations_exceeded() {
             .iter()
             .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
         "a LoopLimit run must not also finish cleanly"
+    );
+}
+
+/// Reproduces the reported bug: the author wires the body's tail edge
+/// straight to the SAME node the loop's `done` branch also targets, instead
+/// of an explicit back-edge to the loop node itself:
+///
+/// start → loop ──body→ step(cmd) ──out→ converge(cmd) ──out→ end
+///              └─done───────────────────────^
+///
+/// With `count` iterations requested, `step` must run `count` times and
+/// `converge` must run EXACTLY ONCE (not once per iteration) — the implicit
+/// re-entry redirects every iteration's arrival at `converge` back to the
+/// loop node until the count is exhausted, then lets the FINAL `done` pass
+/// through to `converge` for real.
+fn loop_with_join_point_convergence_workflow(
+    step_command_id: &str,
+    converge_command_id: &str,
+    count: u32,
+) -> WorkflowRecord {
+    let loop_node = WorkflowNodeRecord {
+        id: "lp".into(),
+        kind: "loop".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: Some(LoopConfigRecord {
+            count: Some(count),
+            while_condition: None,
+            max_iterations: count + 1,
+            items: None,
+        }),
+        retry: None,
+        data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
+        parser: None,
+        text: None,
+        join_node_id: None,
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    WorkflowRecord {
+        id: "wf-loop-join-point".into(),
+        name: "loop-join-point".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            loop_node,
+            node("step", "command", Some(step_command_id)),
+            node("converge", "command", Some(converge_command_id)),
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "lp", "out"),
+            edge("e_body", "lp", "step", "body"),
+            // No explicit back-edge to "lp" — the body's tail just flows
+            // into the SAME node "done" targets.
+            edge("e_step_converge", "step", "converge", "out"),
+            edge("e_done", "lp", "converge", "done"),
+            edge("e_converge_end", "converge", "end", "out"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+        api_slug: None,
+        api_enabled: false,
+        sound: None,
+    }
+}
+
+#[tokio::test]
+async fn loop_body_reaching_join_point_implicitly_repeats_without_a_back_edge() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("body".to_string(), command("body", "true"));
+    commands.insert("converge".to_string(), command("converge", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        loop_with_join_point_convergence_workflow("body", "converge", 2),
+        commands,
+        HashMap::new(),
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    let step_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "step"))
+        .count();
+    assert_eq!(
+        step_runs, 2,
+        "body must run once per iteration, events: {collected:?}"
+    );
+
+    let converge_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "converge"))
+        .count();
+    assert_eq!(
+        converge_runs, 1,
+        "the join-point node must run exactly once, not once per iteration, events: {collected:?}"
+    );
+
+    let end_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "end"))
+        .count();
+    assert_eq!(
+        end_runs, 0,
+        "\"end\" is a plain end node and emits no NodeFinished, sanity-checking it exists in the run"
+    );
+
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "expected a clean finish past the join point, events: {collected:?}"
+    );
+}
+
+/// The body dead-ends: `step` has NO outgoing edge at all (not even to a
+/// join point) — just an authoring oversight, not a deliberate end/join.
+///
+/// start → loop ──body→ step(cmd)  [no outgoing edge]
+///              └─done→ end
+///
+/// Each iteration's dead end must be treated as an implicit iteration
+/// boundary (redirect back to the loop node) rather than a `NoOutgoingEdge`
+/// error.
+fn loop_with_dead_end_body_workflow(body_command_id: &str, count: u32) -> WorkflowRecord {
+    let loop_node = WorkflowNodeRecord {
+        id: "lp".into(),
+        kind: "loop".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: Some(LoopConfigRecord {
+            count: Some(count),
+            while_condition: None,
+            max_iterations: count + 1,
+            items: None,
+        }),
+        retry: None,
+        data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
+        parser: None,
+        text: None,
+        join_node_id: None,
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    WorkflowRecord {
+        id: "wf-loop-dead-end".into(),
+        name: "loop-dead-end".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            loop_node,
+            node("step", "command", Some(body_command_id)),
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "lp", "out"),
+            edge("e_body", "lp", "step", "body"),
+            // Deliberately no outgoing edge from "step" at all.
+            edge("e_done", "lp", "end", "done"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+        api_slug: None,
+        api_enabled: false,
+        sound: None,
+    }
+}
+
+#[tokio::test]
+async fn loop_body_dead_end_implicitly_repeats_instead_of_erroring() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("body".to_string(), command("body", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        loop_with_dead_end_body_workflow("body", 3),
+        commands,
+        HashMap::new(),
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    let body_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "step"))
+        .count();
+    assert_eq!(
+        body_runs, 3,
+        "a dead-ending body must still repeat count times, events: {collected:?}"
+    );
+
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "a dead-ending body inside an open loop must not raise NoOutgoingEdge, events: {collected:?}"
+    );
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "expected a clean finish via the loop's done branch, events: {collected:?}"
+    );
+}
+
+/// The body's tail connects to an EXPLICIT `end` node instead of dead-ending
+/// with no edge at all. This is what a real saved workflow actually looks
+/// like: the editor's `appendImplicitEnds` (workflowGraph.ts) auto-wires any
+/// node with zero outgoing edges — including a loop body left unwired — to a
+/// synthesized `end` node before persisting. So the "no outgoing edge"
+/// scenario above (`loop_with_dead_end_body_workflow`) never actually reaches
+/// the engine from the UI; this is the shape it always saves instead.
+///
+/// start → loop ──body→ step(cmd) ──out→ end
+///              └─done→ end2
+fn loop_with_body_reaching_explicit_end_workflow(
+    body_command_id: &str,
+    count: u32,
+) -> WorkflowRecord {
+    let loop_node = WorkflowNodeRecord {
+        id: "lp".into(),
+        kind: "loop".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: Some(LoopConfigRecord {
+            count: Some(count),
+            while_condition: None,
+            max_iterations: count + 1,
+            items: None,
+        }),
+        retry: None,
+        data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
+        parser: None,
+        text: None,
+        join_node_id: None,
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    WorkflowRecord {
+        id: "wf-loop-explicit-end-body".into(),
+        name: "loop-explicit-end-body".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            loop_node,
+            node("step", "command", Some(body_command_id)),
+            node("end", "end", None),
+            node("end2", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "lp", "out"),
+            edge("e_body", "lp", "step", "body"),
+            edge("e_step_end", "step", "end", "out"),
+            edge("e_done", "lp", "end2", "done"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+        api_slug: None,
+        api_enabled: false,
+        sound: None,
+    }
+}
+
+#[tokio::test]
+async fn loop_body_reaching_explicit_end_node_implicitly_repeats_instead_of_finishing() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("body".to_string(), command("body", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        loop_with_body_reaching_explicit_end_workflow("body", 3),
+        commands,
+        HashMap::new(),
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    let body_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "step"))
+        .count();
+    assert_eq!(
+        body_runs, 3,
+        "a body dead-ending at an explicit end node must still repeat count times, events: {collected:?}"
+    );
+
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "a body dead-ending at an explicit end node inside an open loop must not fault, events: {collected:?}"
+    );
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "expected a clean finish via the loop's done branch, events: {collected:?}"
+    );
+}
+
+/// Nested loops mixing BOTH re-entry mechanisms: the OUTER loop uses the new
+/// implicit join-point convergence (no back-edge — its body's tail flows into
+/// the same node its `done` targets), while the INNER loop uses the original
+/// explicit back-edge. Confirms `loop_stack` disambiguates nesting correctly
+/// — the inner loop's dead body reaches the inner loop's OWN convergence
+/// point (not the outer's), and the outer loop's body (which contains the
+/// whole inner loop) only converges once the inner loop is fully done.
+///
+/// start → outer ──body→ inner ──body→ leaf(cmd) ──out→ inner   (back-edge)
+///                            └─done→ after_inner(cmd) ──out→ outer  (converges w/ outer's done)
+///               └─done────────────────────────────────────────^
+fn nested_loops_mixed_mechanisms_workflow(
+    leaf_command_id: &str,
+    after_inner_command_id: &str,
+    outer_count: u32,
+    inner_count: u32,
+) -> WorkflowRecord {
+    let outer = WorkflowNodeRecord {
+        id: "outer".into(),
+        kind: "loop".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: Some(LoopConfigRecord {
+            count: Some(outer_count),
+            while_condition: None,
+            max_iterations: outer_count + 1,
+            items: None,
+        }),
+        retry: None,
+        data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
+        parser: None,
+        text: None,
+        join_node_id: None,
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    let inner = WorkflowNodeRecord {
+        id: "inner".into(),
+        kind: "loop".into(),
+        command_id: None,
+        label: None,
+        condition: None,
+        cases: Vec::new(),
+        loop_config: Some(LoopConfigRecord {
+            count: Some(inner_count),
+            while_condition: None,
+            max_iterations: inner_count + 1,
+            items: None,
+        }),
+        retry: None,
+        data: Vec::new(),
+        variable_sources: std::collections::BTreeMap::new(),
+        working_dir_source: None,
+        parser: None,
+        text: None,
+        join_node_id: None,
+        position: NodePosition { x: 0.0, y: 0.0 },
+    };
+    WorkflowRecord {
+        id: "wf-nested-loops-mixed".into(),
+        name: "nested-loops-mixed".into(),
+        description: None,
+        icon: None,
+        nodes: vec![
+            node("start", "start", None),
+            outer,
+            inner,
+            node("leaf", "command", Some(leaf_command_id)),
+            node("after_inner", "command", Some(after_inner_command_id)),
+            node("end", "end", None),
+        ],
+        edges: vec![
+            edge("e_start", "start", "outer", "out"),
+            edge("e_outer_body", "outer", "inner", "body"),
+            edge("e_inner_body", "inner", "leaf", "body"),
+            // Inner loop: explicit back-edge.
+            edge("e_leaf_back", "leaf", "inner", "out"),
+            edge("e_inner_done", "inner", "after_inner", "done"),
+            // Outer loop: implicit join-point convergence — "after_inner"'s
+            // tail flows into the SAME node "outer"'s `done` targets, with no
+            // back-edge to "outer" itself.
+            edge("e_after_inner_end", "after_inner", "end", "out"),
+            edge("e_outer_done", "outer", "end", "done"),
+        ],
+        tags: Vec::new(),
+        category_id: None,
+        favorite: false,
+        created_at: "2026-05-29T00:00:00Z".into(),
+        updated_at: "2026-05-29T00:00:00Z".into(),
+        last_run_at: None,
+        run_count: 0,
+        api_slug: None,
+        api_enabled: false,
+        sound: None,
+    }
+}
+
+#[tokio::test]
+async fn nested_loops_disambiguate_stack_across_mixed_reentry_mechanisms() {
+    let (app, exec_state, wf_state, events) = make_app();
+    let mut commands = HashMap::new();
+    commands.insert("leaf".to_string(), command("leaf", "true"));
+    commands.insert("after_inner".to_string(), command("after_inner", "true"));
+
+    execute_workflow(
+        app,
+        exec_state,
+        wf_state,
+        nested_loops_mixed_mechanisms_workflow("leaf", "after_inner", 2, 2),
+        commands,
+        HashMap::new(),
+        HashMap::new(),
+        false,
+    )
+    .await
+    .expect("execute_workflow kicks off");
+
+    let collected = wait_workflow_terminal(events, Duration::from_secs(10)).await;
+
+    // The innermost body ("leaf") runs outer_count * inner_count times.
+    let leaf_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "leaf"))
+        .count();
+    assert_eq!(
+        leaf_runs, 4,
+        "leaf must run outer_count*inner_count times, events: {collected:?}"
+    );
+
+    // "after_inner" runs once per OUTER iteration (once the inner loop
+    // finishes), so outer_count times — never more, never skipped.
+    let after_inner_runs = collected
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "after_inner"))
+        .count();
+    assert_eq!(
+        after_inner_runs, 2,
+        "after_inner must run exactly once per outer iteration, events: {collected:?}"
+    );
+
+    assert!(
+        collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowFinished { .. })),
+        "expected a clean finish, events: {collected:?}"
+    );
+    assert!(
+        !collected
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowError { .. })),
+        "nested loops must not raise a graph error, events: {collected:?}"
     );
 }
 

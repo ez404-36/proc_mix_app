@@ -22,11 +22,13 @@ use crate::core::executor::{
 };
 use crate::core::workflow_condition::EvalContext;
 use crate::storage::commands::CommandRecord;
-use crate::storage::workflows::{RetryConfigRecord, WorkflowNodeRecord, WorkflowRecord};
+use crate::storage::workflows::{
+    RetryConfigRecord, WorkflowEdgeRecord, WorkflowNodeRecord, WorkflowRecord,
+};
 
 use super::dataflow::{
     apply_data_assignments, apply_parser_node, apply_text_node, extracted_to_values,
-    resolve_variable_values, resolve_working_dir_override, PrevOutcome,
+    resolve_loop_item, resolve_variable_values, resolve_working_dir_override, PrevOutcome,
 };
 use super::eval::{
     build_eval_context, loop_should_continue, select_condition_branch, select_switch_branch,
@@ -271,6 +273,7 @@ async fn run_command_bearing_node<R: Runtime>(
     retry: Option<&RetryConfigRecord>,
     cancel: &CancellationToken,
     capture: &mut Option<Vec<CapturedLine>>,
+    loop_item: Option<&str>,
 ) -> Result<(NodeOutcome, u32), WorkflowError> {
     let command_id = node
         .command_id
@@ -295,6 +298,7 @@ async fn run_command_bearing_node<R: Runtime>(
         prev,
         data_flow,
         vars,
+        loop_item,
     );
 
     let mut attempt: u32 = 1;
@@ -305,6 +309,7 @@ async fn run_command_bearing_node<R: Runtime>(
             prev,
             data_flow,
             vars,
+            loop_item,
         );
         let outcome = run_command_node(
             app,
@@ -466,6 +471,36 @@ struct PathState {
     /// Per-`loop`-node completed-iteration counts on THIS path. A loop nested
     /// inside a fork branch keeps its own counter (R3).
     loop_iterations: HashMap<String, u32>,
+    /// IDs of `loop` nodes currently "open" (entered `Branch::Body`, not yet
+    /// `Branch::Done`) on THIS path, in entry order — the last element is the
+    /// innermost active loop. Backs the IMPLICIT loop re-entry mechanism: a
+    /// node inside a loop's body no longer needs an explicit back-edge to the
+    /// loop node. Instead, whenever the next edge lookup for a node on this
+    /// path would either (a) dead-end (no outgoing edge at all) or (b) land on
+    /// the SAME node the innermost open loop's `done` branch targets (the
+    /// body's "convergence point"), traversal redirects to that loop node
+    /// instead — letting `loop_should_continue` decide whether to repeat the
+    /// body or finally fall through `done`. An explicit back-edge (an edge
+    /// whose target IS the loop node id) still works exactly as before and is
+    /// unaffected by this stack, since that case is resolved by the normal
+    /// edge lookup before this stack is ever consulted.
+    loop_stack: Vec<String>,
+    /// The CURRENT item of the nearest-enclosing loop on this path, exposed to
+    /// the body via a `loopItem` source. Set on entering a loop's body
+    /// (`Branch::Body`) to the resolved element for this iteration (`None`
+    /// when the loop has no `items` configured, or the index is out of
+    /// range); cleared to `None` when that loop finishes (`Branch::Done`).
+    ///
+    /// Nesting is NOT disambiguated by node id (matching the editor, which
+    /// only offers `loopItem` for a single nearest-enclosing loop, never a
+    /// specific one): whichever loop most recently entered its body — and
+    /// hasn't yet finished — naturally IS the nearest enclosing one for
+    /// whatever runs next, since traversal is sequential. The one accepted
+    /// gap: a node between an inner loop's `done` and the outer loop's own
+    /// next iteration sees `None` rather than the outer loop's item (the
+    /// outer's value is not restored) — acceptable since nested loops are out
+    /// of scope for this feature.
+    loop_item: Option<String>,
     /// The immediately-preceding node's outcome, or `None` before the first
     /// node / after a pure node that produces no outcome.
     prev: Option<PrevOutcome>,
@@ -543,6 +578,8 @@ async fn traverse<R: Runtime>(
         data_flow: BTreeMap::new(),
         vars: BTreeMap::new(),
         loop_iterations: HashMap::new(),
+        loop_item: None,
+        loop_stack: Vec::new(),
         prev: seeded_prev,
     };
 
@@ -609,6 +646,23 @@ fn traverse_path<'a, R: Runtime>(
                     if let Some(join_id) = stop_at {
                         return Err(WorkflowError::BranchEndedBeforeJoin(join_id.to_string()));
                     }
+                    // Same "implicit iteration boundary" rule as the true
+                    // dead-end case below: the editor auto-appends an explicit
+                    // `End` node (see `appendImplicitEnds` in
+                    // `workflowGraph.ts`) onto ANY node with zero outgoing
+                    // edges before persisting — including a loop body's tail
+                    // the author left unwired. A saved workflow therefore
+                    // reaches a real `End` node here in the exact situation
+                    // the raw-fixture "dead end, no edge at all" case covers.
+                    // If we're inside an OPEN loop's body, this is still not a
+                    // legitimate finish: redirect to the innermost open loop so
+                    // `loop_should_continue` decides whether to repeat the body
+                    // or fall through `done`, instead of ending the whole run
+                    // after a single iteration.
+                    if let Some(loop_id) = state.loop_stack.last() {
+                        current = loop_id.clone();
+                        continue;
+                    }
                     return Ok(());
                 }
                 NodeKind::Start => {
@@ -625,6 +679,7 @@ fn traverse_path<'a, R: Runtime>(
                         state.prev.as_ref(),
                         &state.data_flow,
                         &mut state.vars,
+                        state.loop_item.as_deref(),
                     );
                     // A `data` node produces no result of its own — `prev` stays
                     // as the PREVIOUS node's outcome (it is transparent to the
@@ -670,6 +725,7 @@ fn traverse_path<'a, R: Runtime>(
                         None,
                         cancel,
                         capture,
+                        state.loop_item.as_deref(),
                     )
                     .await?;
                     state.prev = Some(PrevOutcome::from_outcome(&outcome));
@@ -694,6 +750,7 @@ fn traverse_path<'a, R: Runtime>(
                         None,
                         cancel,
                         capture,
+                        state.loop_item.as_deref(),
                     )
                     .await?;
                     let eval_ctx = build_eval_context(&outcome);
@@ -722,6 +779,7 @@ fn traverse_path<'a, R: Runtime>(
                         None,
                         cancel,
                         capture,
+                        state.loop_item.as_deref(),
                     )
                     .await?;
                     let eval_ctx = build_eval_context(&outcome);
@@ -756,6 +814,20 @@ fn traverse_path<'a, R: Runtime>(
                         // and announce it. The loop node produces no outcome.
                         let iteration = completed + 1;
                         state.loop_iterations.insert(node.id.clone(), iteration);
+                        // Track this loop as "open" on the path so the implicit
+                        // re-entry check (after the big match, below) knows to
+                        // redirect a dead-ending or convergence-reaching body
+                        // node back here instead of erroring or falling through.
+                        // Not re-pushed on a repeat iteration of the SAME loop.
+                        if state.loop_stack.last() != Some(&node.id) {
+                            state.loop_stack.push(node.id.clone());
+                        }
+                        // Resolve this iteration's item (0-based index =
+                        // `completed`, the number already finished) for the body
+                        // to read via a `loopItem` source. `None` (no `items`
+                        // configured, or the index ran off a shorter list)
+                        // clears any stale value from a previous iteration.
+                        state.loop_item = resolve_loop_item(cfg.items.as_deref(), completed);
                         emit_unless_silent(
                             &ctx.app,
                             ctx.silent,
@@ -769,13 +841,16 @@ fn traverse_path<'a, R: Runtime>(
                         state.prev = None;
                     } else {
                         // Leaving the loop: expose the completed-iteration count
-                        // to a downstream `data` node, then clear the counter so
-                        // a later re-entry (an outer loop) starts fresh.
+                        // to a downstream `data` node, then clear the counter and
+                        // the current item so a later re-entry (an outer loop)
+                        // starts fresh.
                         state.prev = Some(PrevOutcome {
                             loop_iterations: Some(completed),
                             ..Default::default()
                         });
                         state.loop_iterations.remove(&node.id);
+                        state.loop_item = None;
+                        state.loop_stack.retain(|id| id != &node.id);
                     }
                     branch
                 }
@@ -797,6 +872,7 @@ fn traverse_path<'a, R: Runtime>(
                         node.retry.as_ref(),
                         cancel,
                         capture,
+                        state.loop_item.as_deref(),
                     )
                     .await?;
                     let branch = if outcome.exit_code == Some(0) {
@@ -844,6 +920,17 @@ fn traverse_path<'a, R: Runtime>(
                 None if is_branching => {
                     return Err(WorkflowError::MissingBranch(node.id.clone(), branch_label));
                 }
+                // A true dead end (no declared edge at all, on a non-branching
+                // node). If we're inside an OPEN loop's body, this is not an
+                // authoring error — it IMPLICITLY finishes the iteration: the
+                // author only wired the body's tail to trail off rather than
+                // routing it anywhere, so control returns to the innermost
+                // open loop, which decides (via `loop_should_continue`)
+                // whether to repeat the body or fall through `done`.
+                None if !state.loop_stack.is_empty() => {
+                    current = state.loop_stack[state.loop_stack.len() - 1].clone();
+                    continue;
+                }
                 None => {
                     return Err(WorkflowError::NoOutgoingEdge(node.id.clone()));
                 }
@@ -863,9 +950,50 @@ fn traverse_path<'a, R: Runtime>(
                 );
             }
 
+            // IMPLICIT loop re-entry via convergence point: if we're inside
+            // one or more open loops' bodies and the edge we just took leads
+            // to the SAME node the innermost-first matching open loop's
+            // `done` branch also targets, that node is the body's designed
+            // "join point" with the code that runs after the loop — the
+            // author never wired an explicit back-edge to the loop node
+            // itself. Redirect to that loop node instead of the convergence
+            // target; `loop_should_continue` decides whether to repeat the
+            // body (never truly running the convergence node early) or take
+            // `done` (running it for real, exactly once). An explicit
+            // back-edge (target IS the loop node id) is unaffected — it's
+            // resolved above by the normal edge lookup, never reaching here.
+            if !state.loop_stack.is_empty() {
+                let mut redirected = false;
+                for loop_id in state.loop_stack.iter().rev() {
+                    let done_target =
+                        loop_done_target(&workflow.edges, &ctx.node_index, loop_id)?;
+                    if done_target.as_deref() == Some(target.as_str()) {
+                        current = loop_id.clone();
+                        redirected = true;
+                        break;
+                    }
+                }
+                if redirected {
+                    continue;
+                }
+            }
+
             current = target;
         }
     })
+}
+
+/// The node a `loop` node's `done` branch targets, or `None` if it has no
+/// `done` edge at all. A thin wrapper over [`edge_for_branch`] that discards
+/// the edge id — used by the implicit loop re-entry check in `traverse_path`
+/// to detect when a body path has reached the loop's post-`done` convergence
+/// point without an explicit back-edge to the loop node.
+fn loop_done_target(
+    edges: &[WorkflowEdgeRecord],
+    node_index: &HashMap<String, usize>,
+    loop_id: &str,
+) -> Result<Option<String>, WorkflowError> {
+    Ok(edge_for_branch(edges, node_index, loop_id, &Branch::Done)?.map(|(_, target)| target))
 }
 
 /// Execute a `parallel` (fork) node: fan out to its `branch:<n>` exits and run
@@ -934,6 +1062,11 @@ async fn run_parallel<R: Runtime>(
             data_flow: state.data_flow.clone(),
             vars: vars_snapshot.clone(),
             loop_iterations: HashMap::new(),
+            loop_item: state.loop_item.clone(),
+            // Fresh, like `loop_iterations` (R3): a loop nested inside a fork
+            // branch tracks its own open-loop stack, independent of whatever
+            // loop(s) are open on the parent path outside the fork.
+            loop_stack: Vec::new(),
             prev: state.prev.clone(),
         };
         let branch_cancel = child_cancel.clone();
@@ -1030,6 +1163,8 @@ async fn continue_after_join<R: Runtime>(
         data_flow: BTreeMap::new(),
         vars: BTreeMap::new(),
         loop_iterations: HashMap::new(),
+        loop_item: None,
+        loop_stack: Vec::new(),
         prev: None,
     };
     traverse_path(ctx, join_id.to_string(), state, None, cancel, capture).await

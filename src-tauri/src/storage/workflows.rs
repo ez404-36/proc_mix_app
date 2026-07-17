@@ -68,6 +68,12 @@ pub struct LoopConfigRecord {
     /// Hard upper bound on iterations; the runner aborts past this with
     /// `LoopLimit`.
     pub max_iterations: u32,
+    /// Optional per-iteration item list (`count` mode only): a literal list
+    /// of strings typed by the author, one per iteration, indexed by the
+    /// (0-based) completed-iterations count. `None` (the default) exposes no
+    /// `loopItem` value to the body. Mirrors the TS `LoopConfig.items`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<String>>,
 }
 
 /// Retry config for a `try` (or retrying `command`) node. `retries` is the
@@ -110,6 +116,11 @@ pub enum DataSourceRecord {
     MatchedCase,
     /// Completed iterations of a `loop` predecessor (count).
     LoopIterations,
+    /// The current element of the NEAREST ENCLOSING `loop` node's (count
+    /// mode) `items` list for THIS iteration. Meaningful only for a node
+    /// inside a `loop` node's `body` subgraph; resolves to empty when no
+    /// enclosing loop configured `items`, or the index is out of range.
+    LoopItem,
     /// Prompt the user for this value when the workflow runs (the value is
     /// supplied through `node_variable_values`, exactly like a no-default
     /// command variable). Meaningful only as a per-variable source on a
@@ -673,6 +684,7 @@ mod wire_format_tests {
                 value: "0".into(),
             }),
             max_iterations: 50,
+            items: None,
         };
         let json = serde_json::to_value(&cfg).unwrap();
         assert!(
@@ -682,7 +694,26 @@ mod wire_format_tests {
         assert!(json.get("whileCondition").is_none());
         assert_eq!(json["maxIterations"], 50);
         assert!(json.get("count").is_none(), "absent count is omitted");
+        assert!(json.get("items").is_none(), "absent items is omitted");
 
+        let back: LoopConfigRecord = serde_json::from_value(json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    /// A `loop` config with a manual `items` list round-trips as a plain
+    /// array of strings and serialises camelCase.
+    #[test]
+    fn loop_config_items_round_trips() {
+        let cfg = LoopConfigRecord {
+            count: Some(3),
+            while_condition: None,
+            max_iterations: 3,
+            items: Some(vec!["a".into(), "b".into(), "c".into()]),
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["items"][0], "a");
+        assert_eq!(json["items"][1], "b");
+        assert_eq!(json["items"][2], "c");
         let back: LoopConfigRecord = serde_json::from_value(json).unwrap();
         assert_eq!(back, cfg);
     }

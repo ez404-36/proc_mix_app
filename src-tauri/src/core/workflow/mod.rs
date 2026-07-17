@@ -63,6 +63,12 @@ pub enum WorkflowError {
     MissingBranch(String, String),
     #[error("node {0} has more than one outgoing edge on the {1} branch")]
     AmbiguousBranch(String, String),
+    /// A non-branching node (e.g. `command`) has no declared outgoing edge
+    /// AND the path is not currently inside any open `loop` body. When it IS
+    /// inside an open loop's body, this dead end is instead treated as an
+    /// implicit iteration boundary — traversal silently redirects back to the
+    /// innermost open loop node instead of erroring (see
+    /// `runner::traverse_path`'s implicit loop re-entry check).
     #[error("command node {0} has no outgoing edge")]
     NoOutgoingEdge(String),
     #[error("parallel node {0} has no branch edges")]

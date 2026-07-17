@@ -5344,6 +5344,18 @@ body.is-editor-fullscreen .output-panel {
   gap: 8px;
 }
 
+/* The 1-based iteration number shown left of a loop's per-iteration item
+   input (see `NodeInspector.tsx`'s `kind === "loop"` manual items list).
+   Fixed width so the inputs it precedes stay column-aligned regardless of
+   digit count. */
+.wf-inspector__row-index {
+  flex: 0 0 auto;
+  min-width: 20px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
 /* A grouped block inside an editable list (e.g. one switch case: its id row
    plus its condition editor), separated from the next item. */
 .wf-inspector__list-item {

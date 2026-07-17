@@ -73,46 +73,45 @@ pub(super) fn select_switch_branch(
 /// against. Pure — no executor, fully unit-testable.
 ///
 /// Rules, in order:
-///  1. **Hard cap first.** If `completed >= max_iterations`, return `LoopLimit`
-///     — the safety bound is checked BEFORE the mode logic so a runaway
-///     `while` loop (or a `count` larger than the cap) can never spin past it.
-///  2. **Exactly one mode.** Exactly one of `count` / `while` must be set;
+///  1. **Exactly one mode.** Exactly one of `count` / `while` must be set;
 ///     neither or both is a `LoopMisconfigured` authoring error.
-///  3. **count mode:** continue while `completed < count`.
-///  4. **while mode:** continue while the predicate holds (a bad regex
-///     surfaces as `ConditionEval`, not a silent stop).
+///  2. **Mode decides FIRST.** `count` mode wants another iteration while
+///     `completed < count`; `while` mode wants one while the predicate holds
+///     (a bad regex surfaces as `ConditionEval`, not a silent stop). If the
+///     mode says "done", return `Branch::Done` immediately — a legitimate,
+///     on-time finish is never reported as exceeding a limit.
+///  3. **Hard cap only guards an ADDITIONAL iteration.** The safety bound is
+///     checked ONLY when the mode wants to enter the body again — i.e. once
+///     the count/while logic has already asked for iteration `completed + 1`.
+///     This ordering matters because the `count` UI keeps `maxIterations` in
+///     lock-step with `count` (so `completed == count == max_iterations` is
+///     the ordinary end of a `count`-mode loop, not a runaway one): checking
+///     the cap before the mode decision would misreport that legitimate
+///     finish as `LoopLimit`. A `while` loop that never turns false, or a
+///     `count` larger than the cap, still can't spin past `max_iterations`.
 pub(super) fn loop_should_continue(
     node_id: &str,
     cfg: &LoopConfigRecord,
     completed: u32,
     ctx: &EvalContext,
 ) -> Result<Branch, WorkflowError> {
+    let wants_body = match (cfg.count, cfg.while_condition.as_ref()) {
+        (Some(count), None) => completed < count,
+        (None, Some(cond)) => workflow_condition::evaluate(cond, ctx)
+            .map_err(|e| WorkflowError::ConditionEval(node_id.to_string(), e.to_string()))?,
+        // Neither or both set → an authoring error, not a guess.
+        _ => return Err(WorkflowError::LoopMisconfigured(node_id.to_string())),
+    };
+    if !wants_body {
+        return Ok(Branch::Done);
+    }
     if completed >= cfg.max_iterations {
         return Err(WorkflowError::LoopLimit(
             node_id.to_string(),
             cfg.max_iterations,
         ));
     }
-    match (cfg.count, cfg.while_condition.as_ref()) {
-        (Some(count), None) => {
-            if completed < count {
-                Ok(Branch::Body)
-            } else {
-                Ok(Branch::Done)
-            }
-        }
-        (None, Some(cond)) => {
-            let keep_going = workflow_condition::evaluate(cond, ctx)
-                .map_err(|e| WorkflowError::ConditionEval(node_id.to_string(), e.to_string()))?;
-            if keep_going {
-                Ok(Branch::Body)
-            } else {
-                Ok(Branch::Done)
-            }
-        }
-        // Neither or both set → an authoring error, not a guess.
-        _ => Err(WorkflowError::LoopMisconfigured(node_id.to_string())),
-    }
+    Ok(Branch::Body)
 }
 
 #[cfg(test)]
@@ -204,6 +203,7 @@ mod tests {
             count: Some(count),
             while_condition: None,
             max_iterations: max,
+            items: None,
         }
     }
 
@@ -212,6 +212,7 @@ mod tests {
             count: None,
             while_condition: Some(cond),
             max_iterations: max,
+            items: None,
         }
     }
 
@@ -275,12 +276,29 @@ mod tests {
     }
 
     #[test]
+    fn loop_count_equal_to_max_iterations_finishes_without_error() {
+        // The `count`-mode UI keeps `maxIterations` in lock-step with `count`
+        // (see NodeInspector.tsx), so `completed == count == max_iterations`
+        // is the ORDINARY end of a normal 2-iteration loop, not a runaway
+        // one — it must resolve to `Done`, never `LoopLimit`. Regression test
+        // for a real-world bug report: a `count: 2` loop threw
+        // "exceeded its maximum of 2 iterations" right after its 2nd (final,
+        // legitimate) iteration completed.
+        let cfg = loop_count(2, 2);
+        let ctx = EvalContext::default();
+        assert_eq!(loop_should_continue("lp", &cfg, 0, &ctx), Ok(Branch::Body));
+        assert_eq!(loop_should_continue("lp", &cfg, 1, &ctx), Ok(Branch::Body));
+        assert_eq!(loop_should_continue("lp", &cfg, 2, &ctx), Ok(Branch::Done));
+    }
+
+    #[test]
     fn loop_misconfigured_when_neither_or_both_modes_set() {
         let ctx = EvalContext::default();
         let neither = LoopConfigRecord {
             count: None,
             while_condition: None,
             max_iterations: 10,
+            items: None,
         };
         assert_eq!(
             loop_should_continue("lp", &neither, 0, &ctx),
@@ -294,6 +312,7 @@ mod tests {
                 value: "0".into(),
             }),
             max_iterations: 10,
+            items: None,
         };
         assert_eq!(
             loop_should_continue("lp", &both, 0, &ctx),

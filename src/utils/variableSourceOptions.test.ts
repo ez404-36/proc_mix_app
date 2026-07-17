@@ -3,6 +3,7 @@ import type { Command } from "../types";
 import type { WorkflowFlowEdge, WorkflowFlowNode } from "./workflowGraph";
 import {
   dominatingDataNodeVariableNames,
+  enclosingLoopNodeId,
   variableSourceId,
   variableSourceOptions,
 } from "./variableSourceOptions";
@@ -32,6 +33,14 @@ function dataNode(id: string, varNames: string[]): WorkflowFlowNode {
 
 function edge(source: string, target: string): WorkflowFlowEdge {
   return { id: `${source}-${target}`, source, target };
+}
+
+function branchEdge(
+  source: string,
+  target: string,
+  sourceHandle: string,
+): WorkflowFlowEdge {
+  return { id: `${source}-${target}`, source, target, sourceHandle };
 }
 
 function command(id: string, withSchema: boolean): Command {
@@ -236,5 +245,84 @@ describe("variableSourceOptions", () => {
     );
     expect(got).toContain("dataVar:token");
     expect(got).not.toContain("dataVar:late");
+  });
+
+  it("offers loopItem only for a node inside a loop's body", () => {
+    // start → lp --body--> step --out--> lp (back edge)
+    //            --done--> after
+    const lp = node("lp", "loop");
+    const step = node("step", "command");
+    const after = node("after", "command");
+    const nodes = [node("start", "start"), lp, step, after];
+    const edges = [
+      edge("start", "lp"),
+      branchEdge("lp", "step", "body"),
+      edge("step", "lp"),
+      branchEdge("lp", "after", "done"),
+    ];
+    expect(ids(null, [], nodes, edges, "step")).toContain("loopItem");
+    // `after` runs post-loop, outside the body — not offered.
+    expect(ids(null, [], nodes, edges, "after")).not.toContain("loopItem");
+  });
+});
+
+describe("enclosingLoopNodeId", () => {
+  it("finds the loop whose body reaches the current node", () => {
+    const lp = node("lp", "loop");
+    const step = node("step", "command");
+    const nodes = [node("start", "start"), lp, step];
+    const edges = [
+      edge("start", "lp"),
+      branchEdge("lp", "step", "body"),
+      edge("step", "lp"),
+    ];
+    expect(enclosingLoopNodeId(nodes, edges, "step")).toBe("lp");
+  });
+
+  it("returns undefined for a node outside any loop's body", () => {
+    const lp = node("lp", "loop");
+    const after = node("after", "command");
+    const nodes = [node("start", "start"), lp, after];
+    const edges = [edge("start", "lp"), branchEdge("lp", "after", "done")];
+    expect(enclosingLoopNodeId(nodes, edges, "after")).toBeUndefined();
+  });
+
+  it("does not consider a loop with no wired body edge", () => {
+    const lp = node("lp", "loop");
+    const step = node("step", "command");
+    const nodes = [node("start", "start"), lp, step];
+    // `step` is reachable from `lp`, but NOT via a `body`-labelled edge.
+    const edges = [edge("start", "lp"), edge("lp", "step")];
+    expect(enclosingLoopNodeId(nodes, edges, "step")).toBeUndefined();
+  });
+
+  it("picks the nearer loop when bodies of nested loops both reach the node", () => {
+    // start → outer --body--> inner --body--> step --out--> inner (back)
+    //                                 --done--> outerBack --out--> outer (back)
+    //         outer --done--> end
+    const outer = node("outer", "loop");
+    const inner = node("inner", "loop");
+    const step = node("step", "command");
+    const outerBack = node("outerBack", "command");
+    const end = node("end", "end");
+    const nodes = [
+      node("start", "start"),
+      outer,
+      inner,
+      step,
+      outerBack,
+      end,
+    ];
+    const edges = [
+      edge("start", "outer"),
+      branchEdge("outer", "inner", "body"),
+      branchEdge("inner", "step", "body"),
+      edge("step", "inner"),
+      branchEdge("inner", "outerBack", "done"),
+      edge("outerBack", "outer"),
+      branchEdge("outer", "end", "done"),
+    ];
+    // `step` is enclosed by BOTH loops, but `inner` is nearer.
+    expect(enclosingLoopNodeId(nodes, edges, "step")).toBe("inner");
   });
 });

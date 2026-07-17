@@ -92,6 +92,71 @@ export function dominatingDataNodeVariableNames(
 }
 
 /**
+ * The nearest LOOP node (count mode) whose `body` subgraph encloses
+ * `currentNodeId` — i.e. `currentNodeId` is reachable by following edges
+ * forward from the loop's `body` edge, without re-entering the loop node
+ * itself (which would mean crossing back out via its `done`/re-entry point).
+ *
+ * When several loops' bodies both reach `currentNodeId` (nested loops), the
+ * one whose `body` edge is FEWEST hops away wins — nesting is not otherwise
+ * disambiguated (there is no per-loop id carried on the `loopItem` source),
+ * so only a single "nearest enclosing loop" is ever offered.
+ *
+ * Returns `undefined` when no loop node's body reaches `currentNodeId` (the
+ * node is not inside any loop), so a `loopItem` option is simply not offered.
+ */
+export function enclosingLoopNodeId(
+  nodes: ReadonlyArray<WorkflowFlowNode>,
+  edges: ReadonlyArray<WorkflowFlowEdge>,
+  currentNodeId: string,
+): string | undefined {
+  const outgoing = new Map<string, WorkflowFlowEdge[]>();
+  for (const edge of edges) {
+    const list = outgoing.get(edge.source);
+    if (list === undefined) outgoing.set(edge.source, [edge]);
+    else list.push(edge);
+  }
+
+  let bestLoopId: string | undefined;
+  let bestDistance = Infinity;
+
+  for (const node of nodes) {
+    if (node.data.kind !== "loop") continue;
+    const bodyEdge = (outgoing.get(node.id) ?? []).find(
+      (e) => e.sourceHandle === "body",
+    );
+    if (bodyEdge === undefined) continue;
+
+    // BFS forward from the body's entry node, stopping the moment we would
+    // re-enter the loop node itself (its outgoing edges — `body` re-entry or
+    // `done` exit — are never followed here, since both lie OUTSIDE this
+    // traversal of "what the body reaches").
+    const distances = new Map<string, number>([[bodyEdge.target, 0]]);
+    const queue: string[] = [bodyEdge.target];
+    let head = 0;
+    while (head < queue.length) {
+      const current = queue[head];
+      head += 1;
+      if (current === node.id) continue; // do not expand past the loop node
+      const currentDistance = distances.get(current) ?? 0;
+      for (const edge of outgoing.get(current) ?? []) {
+        if (distances.has(edge.target)) continue;
+        distances.set(edge.target, currentDistance + 1);
+        queue.push(edge.target);
+      }
+    }
+
+    const distance = distances.get(currentNodeId);
+    if (distance !== undefined && distance < bestDistance) {
+      bestDistance = distance;
+      bestLoopId = node.id;
+    }
+  }
+
+  return bestLoopId;
+}
+
+/**
  * Build the value-source options offered for ONE command variable on a
  * command-bearing node, given the node's single resolved predecessor (or null),
  * every node + edge in the graph, and the current node's id.
@@ -99,7 +164,9 @@ export function dominatingDataNodeVariableNames(
  * Order: manual entry, run-time prompt, then the predecessor-derived sources
  * (raw output / schema fields / exit code / specials — `schemaOutput` only when
  * the predecessor command declares a schema), then one `dataVar` option per
- * distinct variable from a `data` node guaranteed to run before this node.
+ * distinct variable from a `data` node guaranteed to run before this node,
+ * then — only when this node lies inside a `loop` node's body (see
+ * {@link enclosingLoopNodeId}) — the `loopItem` option.
  */
 export function variableSourceOptions(
   predecessor: WorkflowFlowNode | null,
@@ -140,6 +207,14 @@ export function variableSourceOptions(
       source: { kind: "dataVar", name },
       labelKey: "editor.inspector.variables.source.dataVar",
       field: name,
+    });
+  }
+
+  if (enclosingLoopNodeId(allNodes, edges, currentNodeId) !== undefined) {
+    options.push({
+      id: "loopItem",
+      source: { kind: "loopItem" },
+      labelKey: "editor.inspector.variables.source.loopItem",
     });
   }
 
@@ -206,6 +281,14 @@ export function workingDirSourceOptions(
       source: { kind: "dataVar", name },
       labelKey: "editor.inspector.workingDir.source.dataVar",
       field: name,
+    });
+  }
+
+  if (enclosingLoopNodeId(allNodes, edges, currentNodeId) !== undefined) {
+    options.push({
+      id: "loopItem",
+      source: { kind: "loopItem" },
+      labelKey: "editor.inspector.workingDir.source.loopItem",
     });
   }
 

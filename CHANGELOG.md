@@ -5,6 +5,67 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-07-17
+
+**Loop iteration fixes and per-iteration data.** Fixes three loop-execution
+bugs found while dogfooding a real "clean up disk space" scenario, plus a new
+way to pass a different value into a loop's body on every iteration.
+
+### Added
+
+- **Per-iteration loop items (`loopItem`).** A `loop` node in count mode can
+  now carry an optional list of per-iteration values (`LoopConfig.items:
+  string[]`). The inspector gates the list behind a "Передавать данные в
+  итерацию" toggle; the list length always tracks `count` (auto-resized on
+  change, each row numbered 1-based). A new `DataSource` variant,
+  `{ kind: "loopItem" }`, lets any command variable or working-directory
+  source inside the loop's body read the current iteration's value. The
+  editor only offers it when a node has an enclosing loop (nearest one wins;
+  nesting disambiguation is out of scope for this release). Resolved
+  server-side via a new transient `PathState.loop_item: Option<String>`,
+  populated on body entry (indexed by the completed-iteration count) and
+  cleared on loop exit or when the index runs off a shorter list.
+
+### Fixed
+
+- **A loop no longer requires an explicit back-edge to iterate more than
+  once.** Previously the loop node was only re-entered if the graph had an
+  edge routed explicitly back to the loop node's id. Now `traverse_path`
+  tracks the stack of open loops on the current path (`PathState.loop_stack`)
+  and implicitly redirects back to the innermost open loop whenever the body
+  path dead-ends (no outgoing edge) or reaches the same node the loop's
+  `done` branch targets (a join-point convergence, with no back-edge drawn).
+  The classic explicit back-edge keeps working unchanged.
+- **A loop body ending at an editor-generated `end` node no longer terminates
+  the whole run early.** The editor's `appendImplicitEnds()` auto-wires any
+  zero-outgoing-edge node — including an unwired loop-body tail — to a
+  synthesized `end` node before saving, so a real saved workflow's "dead end"
+  is almost always an explicit `end` node, not a truly edge-less one. The
+  `NodeKind::End` arm in `traverse_path` previously always finished the run
+  unconditionally; it now also consults `state.loop_stack` and redirects back
+  to the loop when reached inside an open loop body (unless it's a
+  fork-branch join barrier). This was the actual bug behind reports of "the
+  loop only ran once" even after the back-edge fix above.
+- **A loop with `count == max_iterations` no longer errors out on its last
+  iteration.** `loop_should_continue`'s safety-cap check ran before the
+  continue/stop decision, so `completed == count == max_iterations` (the
+  normal case now that the UI keeps `maxIterations` in sync with `count`) was
+  misreported as `LoopLimit` instead of a clean `Done`. The cap is now
+  checked only when the loop is about to attempt another iteration, never on
+  a legitimate finish.
+
+### Changed
+
+- **"Max iterations" is hidden in count mode.** The inspector now shows only
+  "Количество итераций"; `maxIterations` silently tracks `count` under the
+  hood on every change (including mode switches), so the safety cap can never
+  fire early. It remains a separate, independently-editable field in `while`
+  mode, where it's the only guard against a runaway loop.
+- **The "Передавать данные в итерацию" toggle is now clickable on a
+  freshly-added loop node.** Previously it silently no-op'd until the user
+  first touched `count` (which materializes `node.data.loop`); it now
+  materializes a default `LoopConfig` on first use.
+
 ## [0.13.2] - 2026-07-14
 
 **Per-node working directory + a persistence fix.** A workflow node can now

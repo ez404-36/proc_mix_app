@@ -120,6 +120,17 @@ export interface LoopConfig {
   while?: WorkflowCondition;
   /** Hard upper bound on iterations; the runner aborts past this. */
   maxIterations: number;
+  /**
+   * Optional per-iteration item list, meaningful only in `count` mode: a
+   * literal array of strings, one per iteration, 0-based indexed by
+   * completed iterations. On entering the body for the Nth (0-based)
+   * iteration, `items[N]` is exposed to any node inside the body via a
+   * `loopItem` variable/working-dir source. `undefined` (the default)
+   * exposes no item. Absent from `while` mode's UI, but the runner does not
+   * itself require `count` to be set. Mirrors the Rust
+   * `LoopConfigRecord.items`.
+   */
+  items?: string[];
 }
 
 /**
@@ -147,6 +158,13 @@ export interface RetryConfig {
  *   - `matchedCase`     → the case id a `switch` predecessor took ("default"
  *      when none matched).
  *   - `loopIterations`  → completed iterations of a `loop` predecessor (count).
+ *   - `loopItem`        → the current element of the NEAREST ENCLOSING loop's
+ *      (count mode) `items` list for THIS iteration. Meaningful only for a
+ *      node that lies inside a `loop` node's `body` subgraph; the editor only
+ *      offers it when such an enclosing loop is found (nesting is not
+ *      disambiguated — the nearest one wins). Resolves to the empty string
+ *      when no enclosing loop configured `items`, or the index is out of
+ *      range for the current iteration.
  * Every non-`manual` source reads from the node executed immediately before
  * this data node on the path that reached it (resolved at run time).
  */
@@ -160,6 +178,7 @@ export type DataSource =
   | { kind: "conditionResult" }
   | { kind: "matchedCase" }
   | { kind: "loopIterations" }
+  | { kind: "loopItem" }
   // Prompt the user for this value when the workflow runs (reuses the same
   // variable-prompt modal a no-default command variable opens). Meaningful
   // only as a `variableSources` entry on a command-bearing node — never on a

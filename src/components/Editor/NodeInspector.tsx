@@ -51,6 +51,7 @@ import { NumberStepper } from "../NumberStepper";
 import { OutputSchemaEditor } from "../CommandForm/OutputSchemaEditor";
 import { TargetBadge } from "../TargetBadge";
 import { TextNodeEditor } from "./TextNodeEditor";
+import { ToggleSwitch } from "../ToggleSwitch";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -505,12 +506,58 @@ function NodeConfigForm({
     onNodeDataChange(node.id, { loop: next });
   };
   const setLoopMode = (mode: "count" | "while"): void => {
-    const maxIterations = loop?.maxIterations ?? 1000;
     if (mode === "while") {
-      updateLoop({ while: { ...DEFAULT_CONDITION }, maxIterations });
+      // `items` is meaningful only in count mode; dropped on switching away.
+      updateLoop({
+        while: { ...DEFAULT_CONDITION },
+        maxIterations: loop?.maxIterations ?? 1000,
+      });
     } else {
-      updateLoop({ count: loop?.count ?? 1, maxIterations });
+      // `count` mode has no separate "max iterations" field in the UI —
+      // maxIterations tracks count so the safety cap never fires early.
+      const count = loop?.count ?? 1;
+      updateLoop({ count, maxIterations: count, items: loop?.items });
     }
+  };
+
+  // Per-iteration items (count mode only): a plain list of strings, always
+  // exactly `count` long. Default to an empty list when unset.
+  const loopItems: string[] = loop?.items ?? [];
+  // Whether "pass data into each iteration" is on — gates the entire items
+  // block. Its state is simply the presence/absence of `loop.items`.
+  const passItems = loop?.items !== undefined;
+  const togglePassItems = (next: boolean): void => {
+    // On first open of a fresh "loop" node, `node.data.loop` is `undefined`
+    // until the user touches `count`/mode via `updateLoop` — this toggle must
+    // still work from that state instead of silently no-op'ing, so it
+    // materializes the same `count: 1` default `NumberStepper` shows.
+    if (loop === undefined) {
+      if (!next) return;
+      onNodeDataChange(node.id, {
+        loop: { count: 1, maxIterations: 1, items: Array(1).fill("") },
+      });
+      return;
+    }
+    if (!next) {
+      onNodeDataChange(node.id, { loop: { ...loop, items: undefined } });
+      return;
+    }
+    if (loop.items !== undefined) return;
+    const count = loop.count ?? 1;
+    onNodeDataChange(node.id, {
+      loop: { ...loop, items: Array(count).fill("") },
+    });
+  };
+  const updateLoopItems = (values: string[]): void => {
+    if (loop === undefined) return;
+    onNodeDataChange(node.id, { loop: { ...loop, items: values } });
+  };
+  // Manual item values always track `count` in length — no add/remove UI;
+  // truncate or pad with empty strings when `count` changes.
+  const resizeManualItems = (values: string[], count: number): string[] => {
+    if (values.length === count) return values;
+    if (values.length > count) return values.slice(0, count);
+    return [...values, ...Array(count - values.length).fill("")];
   };
 
   // --- try ---------------------------------------------------------------
@@ -716,51 +763,96 @@ function NodeConfigForm({
             onChange={(mode) => setLoopMode(mode === "while" ? "while" : "count")}
           />
           {loopMode === "count" ? (
-            <NumberStepper
-              value={loop?.count ?? 1}
-              min={1}
-              max={1_000_000}
-              ariaLabel={t("editor.inspector.loop.count")}
-              decrementLabel={t("common.decrement")}
-              incrementLabel={t("common.increment")}
-              onChange={(count) =>
-                updateLoop({
-                  count,
-                  maxIterations: loop?.maxIterations ?? 1000,
-                })
-              }
-            />
+            <>
+              <NumberStepper
+                value={loop?.count ?? 1}
+                min={1}
+                max={1_000_000}
+                ariaLabel={t("editor.inspector.loop.count")}
+                decrementLabel={t("common.decrement")}
+                incrementLabel={t("common.increment")}
+                onChange={(count) => {
+                  // `maxIterations` tracks `count` under the hood — there is
+                  // no separate "max iterations" field in this mode.
+                  const items =
+                    loop?.items !== undefined
+                      ? resizeManualItems(loop.items, count)
+                      : undefined;
+                  updateLoop({ count, maxIterations: count, items });
+                }}
+              />
+              <div className="wf-inspector__field wf-inspector__row">
+                <ToggleSwitch
+                  checked={passItems}
+                  onChange={togglePassItems}
+                  ariaLabel={t("editor.inspector.loop.passItems")}
+                />
+                <span>{t("editor.inspector.loop.passItems")}</span>
+              </div>
+              {passItems ? (
+                <>
+                  <label className="wf-inspector__label">
+                    {t("editor.inspector.loop.items")}
+                  </label>
+                  {loopItems.map((value, index) => (
+                    <div key={index} className="wf-inspector__row">
+                      <span className="wf-inspector__row-index">
+                        {index + 1}
+                      </span>
+                      <input
+                        className="input"
+                        type="text"
+                        value={value}
+                        placeholder={t(
+                          "editor.inspector.loop.itemsValuePlaceholder",
+                        )}
+                        aria-label={t(
+                          "editor.inspector.loop.itemsValuePlaceholder",
+                        )}
+                        onChange={(event) =>
+                          updateLoopItems(
+                            loopItems.map((v, i) =>
+                              i === index ? event.target.value : v,
+                            ),
+                          )
+                        }
+                      />
+                    </div>
+                  ))}
+                </>
+              ) : null}
+            </>
           ) : (
-            <ConditionEditor
-              condition={loop?.while ?? { ...DEFAULT_CONDITION }}
-              label={t("editor.inspector.loop.while")}
-              onChange={(whileCondition) =>
-                updateLoop({
-                  while: whileCondition,
-                  maxIterations: loop?.maxIterations ?? 1000,
-                })
-              }
-            />
+            <>
+              <ConditionEditor
+                condition={loop?.while ?? { ...DEFAULT_CONDITION }}
+                label={t("editor.inspector.loop.while")}
+                onChange={(whileCondition) =>
+                  updateLoop({
+                    while: whileCondition,
+                    maxIterations: loop?.maxIterations ?? 1000,
+                  })
+                }
+              />
+              <label className="wf-inspector__label">
+                {t("editor.inspector.loop.maxIterations")}
+              </label>
+              <NumberStepper
+                value={loop?.maxIterations ?? 1000}
+                min={1}
+                max={1_000_000}
+                ariaLabel={t("editor.inspector.loop.maxIterations")}
+                decrementLabel={t("common.decrement")}
+                incrementLabel={t("common.increment")}
+                onChange={(maxIterations) =>
+                  updateLoop({
+                    while: loop?.while ?? { ...DEFAULT_CONDITION },
+                    maxIterations,
+                  })
+                }
+              />
+            </>
           )}
-          <label className="wf-inspector__label">
-            {t("editor.inspector.loop.maxIterations")}
-          </label>
-          <NumberStepper
-            value={loop?.maxIterations ?? 1000}
-            min={1}
-            max={1_000_000}
-            ariaLabel={t("editor.inspector.loop.maxIterations")}
-            decrementLabel={t("common.decrement")}
-            incrementLabel={t("common.increment")}
-            onChange={(maxIterations) =>
-              updateLoop({
-                ...(loopMode === "while"
-                  ? { while: loop?.while ?? { ...DEFAULT_CONDITION } }
-                  : { count: loop?.count ?? 1 }),
-                maxIterations,
-              })
-            }
-          />
         </div>
       ) : null}
 

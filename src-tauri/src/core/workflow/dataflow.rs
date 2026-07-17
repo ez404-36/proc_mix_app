@@ -47,12 +47,18 @@ pub(super) fn extracted_to_values(outcome: &NodeOutcome) -> BTreeMap<String, Str
 /// The executor still applies each `VariableSpec.default_value` for any name
 /// absent from the returned map, so the net priority stays
 /// "explicit-source / prompt > data-flow > spec default".
+///
+/// `loop_item` is the current element of the NEAREST enclosing `loop` node on
+/// this path (see [`PathState::loop_items`] in `runner.rs`), read by a
+/// `LoopItem` source; `None` when this node is not inside any loop's body (or
+/// the enclosing loop has no `items` / the index is out of range).
 pub(super) fn resolve_variable_values(
     variable_sources: &BTreeMap<String, DataSourceRecord>,
     node_values: Option<&BTreeMap<String, String>>,
     prev: Option<&PrevOutcome>,
     data_flow: &BTreeMap<String, String>,
     vars: &BTreeMap<String, String>,
+    loop_item: Option<&str>,
 ) -> BTreeMap<String, String> {
     // Base layering (lowest → highest): persistent `data`-node vars, then the
     // predecessor's transient data_flow, then the node's prompt/user values.
@@ -76,7 +82,7 @@ pub(super) fn resolve_variable_values(
             other => {
                 merged.insert(
                     name.clone(),
-                    resolve_data_source(other, prev, data_flow, vars),
+                    resolve_data_source(other, prev, data_flow, vars, loop_item),
                 );
             }
         }
@@ -102,11 +108,12 @@ pub(super) fn resolve_working_dir_override(
     prev: Option<&PrevOutcome>,
     data_flow: &BTreeMap<String, String>,
     vars: &BTreeMap<String, String>,
+    loop_item: Option<&str>,
 ) -> Option<String> {
     let source = source?;
     let resolved = match source {
         DataSourceRecord::AtRun => node_value.cloned().unwrap_or_default(),
-        other => resolve_data_source(other, prev, data_flow, vars),
+        other => resolve_data_source(other, prev, data_flow, vars, loop_item),
     };
     if resolved.is_empty() {
         None
@@ -209,12 +216,17 @@ impl PrevOutcome {
 /// lenient "missing → empty" rule the rest of the engine uses, so a graph
 /// edited into an inapplicable state degrades gracefully instead of aborting.
 /// `Manual` is `${ref}`-expanded against the current data-flow (unchanged
-/// legacy behaviour). Pure — fully unit-testable.
+/// legacy behaviour). `loop_item` is the current element of the NEAREST
+/// enclosing `loop` node on this path (see `PathState::loop_items` in
+/// `runner.rs`), read by `LoopItem`; `None` when not inside a loop's body (or
+/// the loop has no `items` / the index is out of range for this iteration).
+/// Pure — fully unit-testable.
 pub(super) fn resolve_data_source(
     source: &DataSourceRecord,
     prev: Option<&PrevOutcome>,
     data_flow: &BTreeMap<String, String>,
     vars: &BTreeMap<String, String>,
+    loop_item: Option<&str>,
 ) -> String {
     match source {
         DataSourceRecord::Manual { value } => expand_refs(value, data_flow),
@@ -248,6 +260,11 @@ pub(super) fn resolve_data_source(
             .and_then(|p| p.loop_iterations)
             .map(|n| n.to_string())
             .unwrap_or_default(),
+        // The nearest enclosing loop's current item for THIS iteration.
+        // Missing (not inside a loop's body, no `items` configured, or the
+        // index is out of range) → empty, the same lenient rule as every
+        // other inapplicable source.
+        DataSourceRecord::LoopItem => loop_item.map(str::to_string).unwrap_or_default(),
         // A named variable assigned by ANY upstream `data` node, looked up in
         // the persistent `vars` map (which survives the whole run, unlike the
         // transient `data_flow` a command node replaces). Missing → empty.
@@ -262,6 +279,17 @@ pub(super) fn resolve_data_source(
     }
 }
 
+/// Resolve a `loop` node's `items` list to the element for the given
+/// (0-based) iteration index, for exposure to the body via a `LoopItem`
+/// source. `None` when `items` is absent or `index` is out of range — the
+/// runner then clears any previous `loop_item` entry for this node, so a
+/// stale value from an earlier iteration never leaks into a shorter list's
+/// tail.
+pub(super) fn resolve_loop_item(items: Option<&[String]>, index: u32) -> Option<String> {
+    let index = usize::try_from(index).ok()?;
+    items?.get(index).cloned()
+}
+
 /// Apply a `data` node's assignments to the PERSISTENT `vars` map, in order,
 /// pulling each value from its source (see [`resolve_data_source`]). A `data`
 /// node does NOT produce a node result — it only records named variables that
@@ -271,12 +299,15 @@ pub(super) fn resolve_data_source(
 ///
 /// Resolution reads against a scope = `vars` overlaid with the predecessor's
 /// `data_flow`, so `${ref}` / `dataVar` see both earlier assignments in this
-/// same node AND the immediate predecessor's fields. Pure — unit-testable.
+/// same node AND the immediate predecessor's fields. `loop_item` is the
+/// current element of the NEAREST enclosing `loop` node on this path (see
+/// [`resolve_data_source`]). Pure — unit-testable.
 pub(super) fn apply_data_assignments(
     assignments: &[DataAssignmentRecord],
     prev: Option<&PrevOutcome>,
     data_flow: &BTreeMap<String, String>,
     vars: &mut BTreeMap<String, String>,
+    loop_item: Option<&str>,
 ) {
     for a in assignments {
         // Scope for `${ref}` / dataVar: persistent vars (incl. earlier
@@ -285,7 +316,7 @@ pub(super) fn apply_data_assignments(
         for (k, v) in data_flow {
             scope.insert(k.clone(), v.clone());
         }
-        let value = resolve_data_source(&a.effective_source(), prev, &scope, vars);
+        let value = resolve_data_source(&a.effective_source(), prev, &scope, vars, loop_item);
         vars.insert(a.name.clone(), value);
     }
 }
@@ -444,7 +475,7 @@ mod tests {
             // A later assignment sees an earlier one in the same node.
             manual_assign("loud", "${greeting}!"),
         ];
-        apply_data_assignments(&assigns, None, &df, &mut vars);
+        apply_data_assignments(&assigns, None, &df, &mut vars, None);
         assert_eq!(vars.get("greeting").map(String::as_str), Some("hello abc"));
         assert_eq!(vars.get("loud").map(String::as_str), Some("hello abc!"));
         // The predecessor's data_flow is left untouched (not consumed/cleared).
@@ -466,7 +497,7 @@ mod tests {
         };
         let df = BTreeMap::new();
         let vars = BTreeMap::new();
-        let r = |s: DataSourceRecord| resolve_data_source(&s, Some(&prev), &df, &vars);
+        let r = |s: DataSourceRecord| resolve_data_source(&s, Some(&prev), &df, &vars, None);
         assert_eq!(r(DataSourceRecord::RawOutput), "the output\n");
         assert_eq!(r(DataSourceRecord::ExitCode), "3");
         assert_eq!(
@@ -482,6 +513,21 @@ mod tests {
     }
 
     #[test]
+    fn resolve_data_source_loop_item_reads_the_passed_value() {
+        let df = BTreeMap::new();
+        let vars = BTreeMap::new();
+        assert_eq!(
+            resolve_data_source(&DataSourceRecord::LoopItem, None, &df, &vars, Some("b")),
+            "b"
+        );
+        // No enclosing loop item passed → empty (lenient).
+        assert_eq!(
+            resolve_data_source(&DataSourceRecord::LoopItem, None, &df, &vars, None),
+            ""
+        );
+    }
+
+    #[test]
     fn resolve_data_source_schema_output_is_json_of_all_fields() {
         let prev = PrevOutcome {
             fields: BTreeMap::from([
@@ -494,7 +540,7 @@ mod tests {
         let vars = BTreeMap::new();
         // BTreeMap → deterministic, key-sorted compact JSON object.
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&prev), &df, &vars),
+            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&prev), &df, &vars, None),
             r#"{"count":"42","name":"build"}"#
         );
         // No extracted fields (schema-less command) → empty, not "{}".
@@ -503,7 +549,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&empty), &df, &vars),
+            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&empty), &df, &vars, None),
             ""
         );
     }
@@ -514,7 +560,7 @@ mod tests {
         let df = BTreeMap::new();
         let vars = BTreeMap::new();
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::ExitCode, None, &df, &vars),
+            resolve_data_source(&DataSourceRecord::ExitCode, None, &df, &vars, None),
             ""
         );
         let prev = PrevOutcome {
@@ -523,7 +569,7 @@ mod tests {
         };
         // A plain command has no retry count → empty, not a crash.
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::RetryCount, Some(&prev), &df, &vars),
+            resolve_data_source(&DataSourceRecord::RetryCount, Some(&prev), &df, &vars, None),
             ""
         );
         // A missing field → empty.
@@ -534,7 +580,8 @@ mod tests {
                 },
                 Some(&prev),
                 &df,
-                &vars
+                &vars,
+                None
             ),
             ""
         );
@@ -554,7 +601,7 @@ mod tests {
             sourced_assign("out", DataSourceRecord::RawOutput),
             manual_assign("greeting", "code=${code}"),
         ];
-        apply_data_assignments(&assigns, Some(&prev), &df, &mut vars);
+        apply_data_assignments(&assigns, Some(&prev), &df, &mut vars, None);
         assert_eq!(vars.get("code").map(String::as_str), Some("7"));
         assert_eq!(vars.get("out").map(String::as_str), Some("hi"));
         // Manual source sees an earlier sourced assignment via `${ref}` (the
@@ -599,7 +646,8 @@ mod tests {
                 },
                 None,
                 &df,
-                &vars
+                &vars,
+                None
             ),
             "abc123"
         );
@@ -611,7 +659,8 @@ mod tests {
                 },
                 None,
                 &df,
-                &vars
+                &vars,
+                None
             ),
             ""
         );
@@ -623,7 +672,7 @@ mod tests {
         let df = BTreeMap::new();
         let vars = BTreeMap::new();
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::AtRun, None, &df, &vars),
+            resolve_data_source(&DataSourceRecord::AtRun, None, &df, &vars, None),
             ""
         );
     }
@@ -663,7 +712,7 @@ mod tests {
         ]);
 
         let resolved =
-            resolve_variable_values(&sources, Some(&node_values), Some(&prev), &df, &vars);
+            resolve_variable_values(&sources, Some(&node_values), Some(&prev), &df, &vars, None);
         assert_eq!(
             resolved.get("url").map(String::as_str),
             Some("server-output")
@@ -695,13 +744,33 @@ mod tests {
         let node_values = BTreeMap::from([("only_node".to_string(), "n".to_string())]);
         let empty_sources = BTreeMap::new();
         let resolved =
-            resolve_variable_values(&empty_sources, Some(&node_values), None, &df, &vars);
+            resolve_variable_values(&empty_sources, Some(&node_values), None, &df, &vars, None);
         // A `data`-node var reaches the node by name…
         assert_eq!(resolved.get("only_var").map(String::as_str), Some("v"));
         assert_eq!(resolved.get("only_df").map(String::as_str), Some("d"));
         assert_eq!(resolved.get("only_node").map(String::as_str), Some("n"));
         // …but the predecessor's data_flow wins over a same-named var.
         assert_eq!(resolved.get("shared").map(String::as_str), Some("from-df"));
+    }
+
+    #[test]
+    fn resolve_variable_values_honours_loop_item_source() {
+        let sources = BTreeMap::from([("who".to_string(), DataSourceRecord::LoopItem)]);
+        let empty = BTreeMap::new();
+        let resolved =
+            resolve_variable_values(&sources, None, None, &empty, &empty, Some("banana"));
+        assert_eq!(resolved.get("who").map(String::as_str), Some("banana"));
+    }
+
+    #[test]
+    fn resolve_loop_item_indexes_by_iteration() {
+        let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(resolve_loop_item(Some(&items), 0), Some("a".to_string()));
+        assert_eq!(resolve_loop_item(Some(&items), 2), Some("c".to_string()));
+        // Out of range → None (the runner clears any stale value).
+        assert_eq!(resolve_loop_item(Some(&items), 3), None);
+        // No items configured → None.
+        assert_eq!(resolve_loop_item(None, 0), None);
     }
 
     #[test]

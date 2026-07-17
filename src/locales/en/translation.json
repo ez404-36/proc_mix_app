@@ -261,7 +261,10 @@
         "mode": "Mode",
         "count": "Iterations",
         "while": "While condition",
-        "maxIterations": "Max iterations"
+        "maxIterations": "Max iterations",
+        "passItems": "Pass data into each iteration",
+        "items": "Per-iteration items",
+        "itemsValuePlaceholder": "Value"
       },
       "try": {
         "retries": "Retries",
@@ -293,7 +296,8 @@
         "source": {
           "manual": "Enter manually",
           "atRun": "Prompt at run time",
-          "dataVar": "Variable: ${{field}}"
+          "dataVar": "Variable: ${{field}}",
+          "loopItem": "Current loop item"
         }
       },
       "workingDir": {
@@ -304,7 +308,8 @@
           "none": "Use the command's own setting",
           "manual": "Enter manually",
           "atRun": "Prompt at run time",
-          "dataVar": "Variable: ${{field}}"
+          "dataVar": "Variable: ${{field}}",
+          "loopItem": "Current loop item"
         }
       },
       "remove": "Remove",
