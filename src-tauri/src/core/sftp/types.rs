@@ -327,7 +327,9 @@ mod tests {
     /// (failing) assertion in one env-mutating test doesn't cascade into false
     /// failures in the others.
     fn lock_env() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     #[test]

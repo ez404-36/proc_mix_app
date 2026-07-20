@@ -6,6 +6,13 @@ import ReactDOM from "react-dom/client";
 // base tokens/reset (`../../style/index.css`, ~24 KB) plus the Message styles;
 // ConfigProvider needs only that same base, so this one import covers both.
 import "@arco-design/web-react/es/Message/style/css.js";
+// xterm.js's own stylesheet, needed for cursor/selection rendering inside the
+// interactive Terminal feature. A second sanctioned global-CSS exception
+// alongside Arco's — see "Console / output surfaces" in
+// docs/ui-conventions.md. All ProcMix-authored terminal chrome (tabs, panel
+// mode switch) still lives in theme.css; only xterm's own canvas rendering
+// depends on this file.
+import "@xterm/xterm/css/xterm.css";
 import "./styles/theme.css";
 import "./i18n";
 import App from "./App";

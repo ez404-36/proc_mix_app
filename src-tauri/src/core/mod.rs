@@ -20,6 +20,7 @@ pub mod sftp;
 pub mod shells;
 pub mod sound;
 pub mod ssh;
+pub mod terminal;
 pub mod utility_help;
 pub mod workflow;
 pub mod workflow_condition;

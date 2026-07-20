@@ -1157,6 +1157,7 @@
       "right": "Справа",
       "left": "Слева"
     },
+    "fullscreen": "Весь экран",
     "exitCode": "код возврата {{code}}",
     "scriptShell": "({{shell}})",
     "timedOutLine": "⏱ Процесс отменён: истёк таймаут до завершения команды.",
@@ -1183,6 +1184,17 @@
       "success": "Успех",
       "error": "Ошибка",
       "cancelled": "Отменено"
+    },
+    "modeToggle": {
+      "ariaLabel": "Режим консоли",
+      "runs": "Запуски",
+      "terminal": "Терминал"
+    },
+    "terminal": {
+      "newTab": "Новый терминал",
+      "closeTab": "Закрыть терминал",
+      "tabTitle": "Терминал {{number}}",
+      "rename": "Переименовать"
     }
   },
   "processCapture": {

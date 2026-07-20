@@ -35,6 +35,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { HttpServerPanel } from "./components/HttpServerPanel";
 import { EnvManager } from "./components/EnvManager";
 import { OutputPanel } from "./components/OutputPanel";
+import { TerminalIcon } from "./components/icons";
 import { ContextMenuProvider } from "./components/ContextMenu";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { useUpdateStore } from "./stores/updateStore";
@@ -249,7 +250,9 @@ function App(): ReactElement {
                     : t("nav.openConsoleTitle")
                 }
               >
-                <span aria-hidden="true">▣</span>
+                <span aria-hidden="true" className="app-sidebar__nav-icon">
+                  <TerminalIcon />
+                </span>
                 {!sidebarCollapsed && <span>{t("nav.openConsole")}</span>}
               </button>
               <HttpServerPanel />

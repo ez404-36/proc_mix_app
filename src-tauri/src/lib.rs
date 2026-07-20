@@ -18,6 +18,7 @@ use tauri::Manager;
 use crate::core::executor::ExecutorState;
 use crate::core::http_server::{self, HttpServerState};
 use crate::core::scheduler::{self, SchedulerState};
+use crate::core::terminal::TerminalState;
 use crate::core::workflow::WorkflowExecutorState;
 use crate::platform::process_watch::WatcherState;
 
@@ -111,6 +112,10 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(Arc::new(ExecutorState::new()))
         .manage(Arc::new(WorkflowExecutorState::new()))
+        // Interactive Terminal session registry (real PTY tabs opened from
+        // the console). Deliberately separate from `ExecutorState` — see
+        // `core::terminal` module docs and `docs/interactive-terminal.md`.
+        .manage(Arc::new(TerminalState::new()))
         .manage(Arc::new(WatcherState::new()))
         // Cron Scheduler state (v0.2.0). The loop itself is spawned in the
         // setup hook once the DB pool exists; this holds the reload signal
@@ -407,6 +412,10 @@ pub fn run() {
             commands::remove_plugin,
             commands::list_plugin_catalog,
             commands::install_plugin_version,
+            commands::terminal_spawn,
+            commands::terminal_write,
+            commands::terminal_resize,
+            commands::terminal_close,
         ])
         // Build (not `run`) so we can observe `RunEvent`s. The exit hook below
         // needs `app` and the managed `ExecutorState` to tear running children
@@ -423,6 +432,11 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 let executor = app_handle.state::<Arc<ExecutorState>>();
                 crate::core::executor::shutdown_all_sync(executor.inner());
+                // Also kill every open interactive terminal session's shell —
+                // otherwise a Terminal tab's child process (or anything it
+                // spawned) would linger as an orphan after ProcMix exits.
+                let terminal = app_handle.state::<Arc<TerminalState>>();
+                crate::core::terminal::shutdown_all_sync(terminal.inner());
             }
         });
 }

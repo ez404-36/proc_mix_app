@@ -14,6 +14,7 @@ import { buildConsoleCopyMenu } from "../../utils/consoleClipboard";
 import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 import { useExecutionStore } from "../../stores/executionStore";
 import type { ConsoleDockPosition } from "../../stores/executionStore";
+import { useTerminalStore } from "../../stores/terminalStore";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
 import { useCommandStore } from "../../stores/commandStore";
@@ -30,6 +31,7 @@ import { cancelExecution } from "../../utils/executor";
 import { triggerCommandRun } from "../../services/commandRunner";
 import { triggerWorkflowRun } from "../../services/workflowRunner";
 import { cancelWorkflow } from "../../utils/workflowRunner";
+import { TerminalPanel } from "../Terminal";
 import {
   CancelIcon,
   ClearIcon,
@@ -334,13 +336,49 @@ export function OutputPanel(): ReactElement | null {
   const workflows = useWorkflowStore((s) => s.workflows);
   const { show } = useContextMenu();
 
+  const { panelMode, setPanelMode } = useTerminalStore(
+    useShallow((s) => ({
+      panelMode: s.panelMode,
+      setPanelMode: s.setPanelMode,
+    })),
+  );
+
+  // Fullscreen: expands the console to fill the whole app window, ignoring
+  // `consolePosition`/`panelHeight`/`panelWidth` (CSS-only overlay, see
+  // `.output-panel--fullscreen`). Local, transient component state —
+  // deliberately NOT persisted (a viewing mode, not a layout preference to
+  // reopen the app into) and reset whenever the panel closes so reopening
+  // the console never surprises the user with fullscreen still active from
+  // a previous session.
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    if (!panelOpen) setFullscreen(false);
+  }, [panelOpen]);
+
+  // "Fullscreen" is offered as a FOURTH option in the same position dropdown
+  // (not a separate toggle button) — it reads as one more display mode
+  // alongside Bottom/Right/Left, matching how the user thinks about it.
+  // The underlying `consolePosition` store value is untouched by picking
+  // it: only the local `fullscreen` flag flips, so the dock position the
+  // user had before is exactly what they land back on when they pick
+  // Bottom/Right/Left again (or close and reopen the console).
   const positionOptions: ReadonlyArray<DropdownOption> = [
     { value: "bottom", label: t("outputPanel.position.bottom", { defaultValue: "Снизу" }) },
     { value: "right", label: t("outputPanel.position.right", { defaultValue: "Справа" }) },
     { value: "left", label: t("outputPanel.position.left", { defaultValue: "Слева" }) },
+    {
+      value: "fullscreen",
+      label: t("outputPanel.fullscreen", { defaultValue: "Весь экран" }),
+    },
   ];
+  const positionValue = fullscreen ? "fullscreen" : consolePosition;
 
   const handlePositionChange = (value: string): void => {
+    if (value === "fullscreen") {
+      setFullscreen(true);
+      return;
+    }
+    setFullscreen(false);
     setConsolePosition(value as ConsoleDockPosition);
   };
 
@@ -639,35 +677,76 @@ export function OutputPanel(): ReactElement | null {
     },
   ];
 
-  const panelStyle =
-    consolePosition === "bottom"
+  // Fullscreen ignores the docked size entirely (CSS `inset: 0` overrides
+  // any inline height/width), so no style is needed — and applying the
+  // docked size anyway would fight the CSS override for no benefit.
+  const panelStyle = fullscreen
+    ? undefined
+    : consolePosition === "bottom"
       ? { height: panelHeight }
       : { width: panelWidth };
 
   return (
     <div
-      className={`output-panel output-panel--${consolePosition}`}
+      className={`output-panel output-panel--${consolePosition}${
+        fullscreen ? " output-panel--fullscreen" : ""
+      }`}
       role="region"
       aria-label={t("outputPanel.ariaLabel")}
       style={panelStyle}
     >
-      <div
-        className="output-panel__resize"
-        role="separator"
-        aria-orientation={consolePosition === "bottom" ? "horizontal" : "vertical"}
-        aria-label={t("outputPanel.resizeLabel")}
-        tabIndex={0}
-        onPointerDown={handleResizePointerDown}
-        onKeyDown={handleResizeKeyDown}
-      />
+      {/* Dragging to resize a docked size makes no sense once fullscreen
+          already fills the window — hide the handle rather than let it
+          fight the CSS override. */}
+      {!fullscreen ? (
+        <div
+          className="output-panel__resize"
+          role="separator"
+          aria-orientation={consolePosition === "bottom" ? "horizontal" : "vertical"}
+          aria-label={t("outputPanel.resizeLabel")}
+          tabIndex={0}
+          onPointerDown={handleResizePointerDown}
+          onKeyDown={handleResizeKeyDown}
+        />
+      ) : null}
       <div className="output-panel__header">
         <div className="output-panel__title-row">
-          <span className="output-panel__title">
-            {active
-              ? (active.customName ?? active.commandName)
-              : t("outputPanel.defaultTitle")}
-          </span>
-          {active ? (
+          <div
+            className="output-panel__mode-toggle"
+            role="tablist"
+            aria-label={t("outputPanel.modeToggle.ariaLabel", {
+              defaultValue: "Console mode",
+            })}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={panelMode === "runs"}
+              className={`output-panel__mode-btn${panelMode === "runs" ? " is-active" : ""}`}
+              onClick={() => setPanelMode("runs")}
+            >
+              {t("outputPanel.modeToggle.runs", { defaultValue: "Runs" })}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={panelMode === "terminal"}
+              className={`output-panel__mode-btn${
+                panelMode === "terminal" ? " is-active" : ""
+              }`}
+              onClick={() => setPanelMode("terminal")}
+            >
+              {t("outputPanel.modeToggle.terminal", { defaultValue: "Terminal" })}
+            </button>
+          </div>
+          {panelMode === "runs" ? (
+            <span className="output-panel__title">
+              {active
+                ? (active.customName ?? active.commandName)
+                : t("outputPanel.defaultTitle")}
+            </span>
+          ) : null}
+          {panelMode === "runs" && active ? (
             <span
               className={`output-panel__status output-panel__status--${active.status}${
                 active.timedOut ? " output-panel__status--timedOut" : ""
@@ -676,18 +755,22 @@ export function OutputPanel(): ReactElement | null {
               {statusLabel(active.status, t, active.timedOut)}
             </span>
           ) : null}
-          {active ? <StatusIcon status={active.status} t={t} /> : null}
-          {active?.durationMs !== undefined ? (
+          {panelMode === "runs" && active ? (
+            <StatusIcon status={active.status} t={t} />
+          ) : null}
+          {panelMode === "runs" && active?.durationMs !== undefined ? (
             <span className="output-panel__meta">
               {formatDuration(active.durationMs)}
             </span>
           ) : null}
-          {active?.exitCode !== undefined && active.exitCode !== null ? (
+          {panelMode === "runs" &&
+          active?.exitCode !== undefined &&
+          active.exitCode !== null ? (
             <span className="output-panel__meta">
               {t("outputPanel.exitCode", { code: active.exitCode })}
             </span>
           ) : null}
-          {active?.status === "running" ? (
+          {panelMode === "runs" && active?.status === "running" ? (
             <button
               type="button"
               className="btn command-form__action command-form__action--cancel output-panel__inline-action"
@@ -700,7 +783,10 @@ export function OutputPanel(): ReactElement | null {
               {t("common.cancel")}
             </button>
           ) : null}
-          {active && active.status !== "running" && rerunSource ? (
+          {panelMode === "runs" &&
+          active &&
+          active.status !== "running" &&
+          rerunSource ? (
             <button
               type="button"
               className="btn command-form__action command-form__action--run output-panel__inline-action"
@@ -716,23 +802,25 @@ export function OutputPanel(): ReactElement | null {
         </div>
         <div className="output-panel__actions">
           <Dropdown
-            value={consolePosition}
+            value={positionValue}
             options={positionOptions}
             onChange={handlePositionChange}
             ariaLabel={t("outputPanel.positionTitle", { defaultValue: "Console position" })}
             className="output-panel__position-select"
           />
-          <button
-            type="button"
-            className="btn command-form__action command-form__action--cancel"
-            onClick={handleClear}
-            title={t("outputPanel.clearTitle")}
-          >
-            <span className="command-form__action-icon--cancel">
-              <ClearIcon />
-            </span>
-            {t("common.clear")}
-          </button>
+          {panelMode === "runs" ? (
+            <button
+              type="button"
+              className="btn command-form__action command-form__action--cancel"
+              onClick={handleClear}
+              title={t("outputPanel.clearTitle")}
+            >
+              <span className="command-form__action-icon--cancel">
+                <ClearIcon />
+              </span>
+              {t("common.clear")}
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn btn--view command-form__action"
@@ -747,7 +835,7 @@ export function OutputPanel(): ReactElement | null {
         </div>
       </div>
 
-      {active && active.script ? (
+      {panelMode === "runs" && active && active.script ? (
         <div className="output-panel__script">
           <div className="output-panel__script-meta">
             <span className="output-panel__script-shell">
@@ -770,7 +858,9 @@ export function OutputPanel(): ReactElement | null {
         </div>
       ) : null}
 
-      {active && active.variables && active.variables.length > 0 ? (
+      {panelMode === "terminal" ? <TerminalPanel /> : null}
+
+      {panelMode === "runs" && active && active.variables && active.variables.length > 0 ? (
         <dl className="output-panel__variables">
           <dt className="output-panel__variables-title">
             {t("outputPanel.variablesTitle")}
@@ -794,7 +884,7 @@ export function OutputPanel(): ReactElement | null {
         </dl>
       ) : null}
 
-      {active && active.env && Object.keys(active.env).length > 0 ? (
+      {panelMode === "runs" && active && active.env && Object.keys(active.env).length > 0 ? (
         <dl className="output-panel__variables output-panel__env">
           <dt className="output-panel__variables-title">
             {t("outputPanel.envTitle", { defaultValue: "Environment" })}
@@ -812,7 +902,7 @@ export function OutputPanel(): ReactElement | null {
         </dl>
       ) : null}
 
-      {active && hasResult ? (
+      {panelMode === "runs" && active && hasResult ? (
         <div className="output-panel__tabs" role="tablist">
           <button
             type="button"
@@ -839,21 +929,23 @@ export function OutputPanel(): ReactElement | null {
         </div>
       ) : null}
 
-      {active ? (
-        hasResult && activeTab === "result" && active.result ? (
-          <ResultView result={active.result} t={t} />
+      {panelMode === "runs" ? (
+        active ? (
+          hasResult && activeTab === "result" && active.result ? (
+            <ResultView result={active.result} t={t} />
+          ) : (
+            <OutputBody execution={active} />
+          )
         ) : (
-          <OutputBody execution={active} />
-        )
-      ) : (
-        <div className="output-panel__body">
-          <div className="output-panel__placeholder">
-            {t("outputPanel.noSelection")}
+          <div className="output-panel__body">
+            <div className="output-panel__placeholder">
+              {t("outputPanel.noSelection")}
+            </div>
           </div>
-        </div>
-      )}
+        )
+      ) : null}
 
-      {recents.length >= 1 ? (
+      {panelMode === "runs" && recents.length >= 1 ? (
         <div className="output-panel__recents">
           {recents.map((exec) => {
             const displayName = exec.customName ?? exec.commandName;

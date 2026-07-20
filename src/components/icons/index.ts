@@ -35,6 +35,7 @@ export { SpinnerIcon } from "./SpinnerIcon";
 export { StatusCheckIcon } from "./StatusCheckIcon";
 export { StatusCrossIcon } from "./StatusCrossIcon";
 export { TableViewIcon } from "./TableViewIcon";
+export { TerminalIcon } from "./TerminalIcon";
 export { TilesViewIcon } from "./TilesViewIcon";
 export { TrashIcon } from "./TrashIcon";
 export { ViewIcon } from "./ViewIcon";

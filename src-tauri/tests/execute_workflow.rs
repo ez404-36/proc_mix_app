@@ -1164,10 +1164,7 @@ async fn loop_finishes_cleanly_when_count_equals_max_iterations() {
 ///
 /// start → loop ──body→ step(cmd, ${item} <- loopItem) ──out→ loop
 ///              └─done→ end
-fn counted_loop_workflow_with_items(
-    body_command_id: &str,
-    items: Vec<String>,
-) -> WorkflowRecord {
+fn counted_loop_workflow_with_items(body_command_id: &str, items: Vec<String>) -> WorkflowRecord {
     let count = u32::try_from(items.len()).expect("test items list fits in u32");
     let loop_node = WorkflowNodeRecord {
         id: "lp".into(),
@@ -1434,7 +1431,9 @@ async fn loop_body_reaching_join_point_implicitly_repeats_without_a_back_edge() 
 
     let converge_runs = collected
         .iter()
-        .filter(|e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "converge"))
+        .filter(
+            |e| matches!(e, WorkflowEvent::NodeFinished { node_id, .. } if node_id == "converge"),
+        )
         .count();
     assert_eq!(
         converge_runs, 1,

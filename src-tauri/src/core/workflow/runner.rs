@@ -965,8 +965,7 @@ fn traverse_path<'a, R: Runtime>(
             if !state.loop_stack.is_empty() {
                 let mut redirected = false;
                 for loop_id in state.loop_stack.iter().rev() {
-                    let done_target =
-                        loop_done_target(&workflow.edges, &ctx.node_index, loop_id)?;
+                    let done_target = loop_done_target(&workflow.edges, &ctx.node_index, loop_id)?;
                     if done_target.as_deref() == Some(target.as_str()) {
                         current = loop_id.clone();
                         redirected = true;

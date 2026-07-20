@@ -339,13 +339,13 @@ fn apply_step(
     if step.parser == "json" {
         let cfg = StepConfig::from_step(step);
         let doc = match input {
-            PipelineValue::Text(s) => parse_json_doc(&s).map_err(|e| {
-                ExtractError::PipelineStep {
+            PipelineValue::Text(s) => {
+                parse_json_doc(&s).map_err(|e| ExtractError::PipelineStep {
                     step: step_idx,
                     parser: step.parser.clone(),
                     source: Box::new(e),
-                }
-            })?,
+                })?
+            }
             PipelineValue::Json(Value::String(s)) => {
                 parse_json_doc(&s).map_err(|e| ExtractError::PipelineStep {
                     step: step_idx,

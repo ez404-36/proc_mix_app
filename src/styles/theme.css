@@ -288,6 +288,20 @@ select {
   color: #ffffff;
 }
 
+/* One sanctioned exception to the sidebar's "Unicode glyph, not icons/
+   component" rule: the "Open console" tool button uses the shared
+   `TerminalIcon` (matching the Terminal feature's own iconography) instead
+   of a Unicode character. Sized/aligned like the Unicode glyph spans next
+   to it — `currentColor` picks up `.is-active`'s white automatically. */
+.app-sidebar__nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
 .app-sidebar__tools {
   display: flex;
   flex-direction: column;
@@ -1204,6 +1218,25 @@ body.is-editor-fullscreen .output-panel {
   border-right: 1px solid var(--console-border);
 }
 
+/* Console fullscreen: expands the panel to fill the whole app window,
+   overriding the docked position's edges/min-size and any inline
+   height/width from `panelStyle` — mirrors `.wf-editor--fullscreen`'s
+   `inset: 0` overlay approach. Declared AFTER the dock modifiers above so
+   `inset: 0` wins the cascade over whichever `--bottom`/`--right`/`--left`
+   edges are also applied (fullscreen is combined with the dock class, not
+   used instead of it, so `consolePosition` is preserved for when the user
+   exits fullscreen). Kept above the workflow editor's own fullscreen layer
+   (same z-index as the `is-editor-fullscreen` lift above) so switching TO
+   console fullscreen while the editor is also fullscreen still shows the
+   console on top. */
+.output-panel--fullscreen {
+  inset: 0;
+  z-index: calc(var(--z-modal, 1000) + 1);
+  min-width: 0;
+  min-height: 0;
+  border: none;
+}
+
 /* Offset app-shell when console is docked to the side so content is not
    obscured by the fixed panel. The data attributes are on <html>. */
 :root[data-console-open][data-console-position="right"] .app-shell {
@@ -1823,6 +1856,161 @@ body.is-editor-fullscreen .output-panel {
   flex: none;
   font-size: 12px;
   padding: 3px 8px;
+}
+
+/* Runs/Terminal mode switch in the console header. A segmented control in
+   the `output-panel__actions` family (button + variant), so it inherits the
+   console button tokens like the position `Dropdown` next to it. */
+.output-panel__mode-toggle {
+  display: flex;
+  border: 1px solid var(--console-btn-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.output-panel__mode-btn {
+  padding: 6px 12px;
+  border: none;
+  background: var(--console-btn-bg);
+  color: var(--console-btn-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.output-panel__mode-btn + .output-panel__mode-btn {
+  border-left: 1px solid var(--console-btn-border);
+}
+
+.output-panel__mode-btn.is-active {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+/* Interactive Terminal (real PTY tabs) — own class family, deliberately not
+   `output-panel__*`: this is a separate top-level MODE of the console (see
+   `terminalStore`'s `panelMode`), not a sub-view of a single run. Sits
+   inside `.output-panel` when `panelMode === "terminal"`. */
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--console-bg);
+}
+
+.terminal-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  background: var(--console-header-bg);
+  border-bottom: 1px solid var(--console-border);
+  flex-shrink: 0;
+}
+
+.terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  border-radius: 6px 6px 0 0;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--console-text-muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.terminal-tab:hover {
+  color: var(--console-text);
+}
+
+.terminal-tab.is-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+  background: var(--console-bg);
+}
+
+/* An exited session's shell has already terminated — dim the tab so the
+   user notices without needing to switch to it first. */
+.terminal-tab--exited {
+  opacity: 0.55;
+}
+
+.terminal-tab__title {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Inline rename field replacing a tab's title/close button while editing —
+   mirrors `.output-panel__recent-rename`'s sizing for the analogous rename
+   flow on the recents strip. */
+.terminal-tab__rename {
+  width: 140px;
+  flex: none;
+  font-size: 12.5px;
+  padding: 3px 8px;
+}
+
+.terminal-tab__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  flex: none;
+}
+
+.terminal-tab__close:hover {
+  opacity: 1;
+  color: var(--color-danger);
+}
+
+.terminal-tabs__new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  margin-left: 4px;
+  border: 1px solid var(--console-btn-border);
+  border-radius: 6px;
+  background: var(--console-btn-bg);
+  color: var(--console-btn-text);
+  cursor: pointer;
+  flex: none;
+}
+
+.terminal-tabs__new:hover {
+  border-color: var(--console-btn-hover-border);
+}
+
+.terminal-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+
+/* Hosts one xterm.js instance. Sized to fill the panel body; xterm's own
+   FitAddon + our ResizeObserver keep the terminal's cell grid matched to
+   this box (see `useTerminalSession`). */
+.terminal-view {
+  position: absolute;
+  inset: 0;
+  padding: 6px 10px;
 }
 
 /* Shortcut settings */

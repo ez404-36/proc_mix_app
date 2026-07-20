@@ -540,7 +540,13 @@ mod tests {
         let vars = BTreeMap::new();
         // BTreeMap → deterministic, key-sorted compact JSON object.
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&prev), &df, &vars, None),
+            resolve_data_source(
+                &DataSourceRecord::SchemaOutput,
+                Some(&prev),
+                &df,
+                &vars,
+                None
+            ),
             r#"{"count":"42","name":"build"}"#
         );
         // No extracted fields (schema-less command) → empty, not "{}".
@@ -549,7 +555,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            resolve_data_source(&DataSourceRecord::SchemaOutput, Some(&empty), &df, &vars, None),
+            resolve_data_source(
+                &DataSourceRecord::SchemaOutput,
+                Some(&empty),
+                &df,
+                &vars,
+                None
+            ),
             ""
         );
     }

@@ -1137,6 +1137,7 @@
       "right": "Right",
       "left": "Left"
     },
+    "fullscreen": "Fullscreen",
     "exitCode": "exit {{code}}",
     "scriptShell": "({{shell}})",
     "timedOutLine": "⏱ Process cancelled: the timeout elapsed before the command finished.",
@@ -1163,6 +1164,17 @@
       "success": "Success",
       "error": "Error",
       "cancelled": "Cancelled"
+    },
+    "modeToggle": {
+      "ariaLabel": "Console mode",
+      "runs": "Runs",
+      "terminal": "Terminal"
+    },
+    "terminal": {
+      "newTab": "New terminal",
+      "closeTab": "Close terminal",
+      "tabTitle": "Terminal {{number}}",
+      "rename": "Rename"
     }
   },
   "processCapture": {

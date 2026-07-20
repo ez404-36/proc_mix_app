@@ -222,6 +222,19 @@ boa_engine = "0.20"
 # runtime.
 rfd = "0.15"
 
+# Cross-platform pseudo-terminal (PTY) backend for the interactive Terminal
+# feature (`core::terminal`). Wraps Unix `openpty`/`forkpty` and Windows
+# ConPTY behind ONE API, so `core::terminal::session` never branches on
+# `#[cfg(unix)]` vs `#[cfg(windows)]` for the actual spawn — unlike
+# `core::executor`, which runs a SAVED, templated script through
+# `Command::new` + `sudo`/UAC elevation, this crate gives the user a real
+# interactive shell (their own manual keystrokes, no `${var}` templating, no
+# elevation, no output redaction). See `docs/interactive-terminal.md` for the
+# full security-boundary rationale for why this is a DELIBERATE, separate
+# path from the sandboxed executor. `serde` support is unused (session state
+# never round-trips through JSON) so only the base crate is pulled in.
+portable-pty = "0.9"
+
 # Persist the main window's position and size (including which monitor it
 # was on) across launches, restoring it on the next startup. Desktop-only:
 # the plugin is meaningless on mobile, so it is gated to desktop targets.
