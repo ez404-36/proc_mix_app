@@ -24,10 +24,9 @@ import { RegionLayout } from "./RegionLayout";
  */
 export function TerminalPanel(): ReactElement {
   const { t } = useTranslation();
-  const { layoutRoot, activeRegionId, consumeAutoOpen } = useTerminalStore(
+  const { layoutRoot, consumeAutoOpen } = useTerminalStore(
     useShallow((s) => ({
       layoutRoot: s.layoutRoot,
-      activeRegionId: s.activeRegionId,
       consumeAutoOpen: s.consumeAutoOpen,
     })),
   );
@@ -46,7 +45,7 @@ export function TerminalPanel(): ReactElement {
     <div className="terminal-panel">
       <div className="terminal-panel__body">
         {layoutRoot ? (
-          <RegionLayout node={layoutRoot} activeRegionId={activeRegionId} />
+          <RegionLayout node={layoutRoot} />
         ) : (
           // Every tab was closed (the auto-open guard is spent, so nothing
           // re-opens on its own). Offer an explicit way back in — otherwise

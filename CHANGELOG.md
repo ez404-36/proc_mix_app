@@ -5,6 +5,27 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-07-21
+
+### Fixed
+
+- **Terminal prompt lost its colors in the installed app.** `core::terminal`'s
+  `build_shell_command` now explicitly sets `TERM=xterm-256color` and
+  `COLORTERM=truecolor` on the spawned PTY session instead of inheriting
+  ProcMix's own process environment. Launched via a desktop app-launcher (the
+  installed `.deb`), that inherited environment has no `TERM` at all — unlike
+  a dev-shell launch (`npm run tauri dev`) — so the shell's login `~/.bashrc`
+  never matched its `*-256color` check and silently fell back to an
+  uncolored prompt.
+
+### Changed
+
+- **Removed the active-area highlight (`is-active`) in split Terminal
+  layouts.** Each area's own "+" button already targets that exact area, and
+  the blinking cursor already shows where keystrokes go, so the `box-shadow`
+  outline around the "active" region (`TerminalRegion`, `theme.css`) was
+  removed as redundant.
+
 ## [0.14.0] - 2026-07-21
 
 **Interactive Terminal.** A new **Terminal** mode in the console (`OutputPanel`)

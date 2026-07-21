@@ -49,7 +49,9 @@ interface TerminalState {
   regions: Record<string, TerminalRegion>;
   /** The region split layout tree, or `null` when no terminal is open. */
   layoutRoot: RegionNode | null;
-  /** The focused region (its strip's "+" opens here; highlighted). */
+  /** The focused region: a new tab opened without an explicit `regionId`
+   *  joins this one (see `openSession`). No longer drives any highlight —
+   *  each region's own "+" already targets it directly. */
   activeRegionId: string | null;
   /**
    * Tab numbers currently in use — by an OPEN session, or "reserved" for a

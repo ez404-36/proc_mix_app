@@ -7,8 +7,6 @@ import { useOpenTerminalTab } from "./useOpenTerminalTab";
 
 interface TerminalRegionProps {
   region: TerminalRegionModel;
-  /** Whether this region is the active (focused) one — drives the highlight. */
-  active: boolean;
   /** Whether the OWNING TAB of the whole panel is visible — always true here
    *  (the Terminal panel has a single layout), forwarded to each tab's view. */
   visible: boolean;
@@ -20,16 +18,18 @@ interface TerminalRegionProps {
  * their PTYs and scrollback survive). Moving a tab INTO this region via
  * drag-and-drop is handled by the tab STRIP (`TerminalTabs`), which is the
  * natural drop target — a tab belongs to a strip, not to a terminal body.
+ *
+ * No visual highlight for the "active" region: every region already has its
+ * own "+" button (`TerminalTabs`) that always targets that exact region, and
+ * where the next keystroke lands is already obvious from xterm's own blinking
+ * cursor — a border duplicated that signal without resolving any ambiguity.
  */
-export function TerminalRegion({ region, active, visible }: TerminalRegionProps): ReactElement {
+export function TerminalRegion({ region, visible }: TerminalRegionProps): ReactElement {
   const setActiveRegion = useTerminalStore((s) => s.setActiveRegion);
   const openTab = useOpenTerminalTab();
 
   return (
-    <div
-      className={`terminal-region${active ? " is-active" : ""}`}
-      onMouseDown={() => setActiveRegion(region.id)}
-    >
+    <div className="terminal-region" onMouseDown={() => setActiveRegion(region.id)}>
       <TerminalTabs region={region} onNewTab={() => openTab(region.id)} />
       <div className="terminal-region__body">
         {region.tabIds.map((tabId) => (

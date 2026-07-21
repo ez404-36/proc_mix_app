@@ -7,8 +7,6 @@ import { TerminalRegion } from "./TerminalRegion";
 interface RegionLayoutProps {
   /** The subtree to render (the whole tree at the top level). */
   node: RegionNode;
-  /** The active region id (drives which region shows the highlight). */
-  activeRegionId: string | null;
   /**
    * This node's location in the tree: the child indices from the root. `[]`
    * at the root. A `SplitHandle` combines this with its child index to tell
@@ -26,11 +24,7 @@ interface RegionLayoutProps {
  * (in `useTerminalSession`) reflow each PTY to its new box, so a resize drag
  * reaches `$COLUMNS`/`$LINES` with no extra wiring.
  */
-export function RegionLayout({
-  node,
-  activeRegionId,
-  path = [],
-}: RegionLayoutProps): ReactElement {
+export function RegionLayout({ node, path = [] }: RegionLayoutProps): ReactElement {
   const regions = useTerminalStore((s) => s.regions);
 
   if (node.type === "region") {
@@ -38,13 +32,7 @@ export function RegionLayout({
     // A tree leaf without a backing region is an impossible transient; render
     // nothing rather than crash.
     if (!region) return <></>;
-    return (
-      <TerminalRegion
-        region={region}
-        active={node.regionId === activeRegionId}
-        visible={true}
-      />
-    );
+    return <TerminalRegion region={region} visible={true} />;
   }
 
   const isRow = node.type === "row";
@@ -56,7 +44,6 @@ export function RegionLayout({
           container={node}
           child={child}
           index={i}
-          activeRegionId={activeRegionId}
           path={path}
           isRow={isRow}
         />
@@ -71,14 +58,12 @@ function ContainerChild({
   container,
   child,
   index,
-  activeRegionId,
   path,
   isRow,
 }: {
   container: RegionContainer;
   child: RegionNode;
   index: number;
-  activeRegionId: string | null;
   path: number[];
   isRow: boolean;
 }): ReactElement {
@@ -91,11 +76,7 @@ function ContainerChild({
         className="terminal-split__pane"
         style={{ flexBasis: `${container.sizes[index] * 100}%` }}
       >
-        <RegionLayout
-          node={child}
-          activeRegionId={activeRegionId}
-          path={[...path, index]}
-        />
+        <RegionLayout node={child} path={[...path, index]} />
       </div>
     </>
   );

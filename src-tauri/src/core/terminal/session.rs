@@ -58,11 +58,27 @@ fn emit_event<R: Runtime>(app: &AppHandle<R>, event: &TerminalEvent) {
 /// to `CommandBuilder::new(shell)` — ordinary PATH/absolute-path resolution,
 /// argv[0] left untouched, no login-shell prefixing (an explicit override is
 /// a one-off program name, not necessarily even a login-capable shell).
+///
+/// `TERM`/`COLORTERM` are set explicitly (overriding whatever `portable-pty`
+/// inherited from ProcMix's OWN process env) rather than left to inheritance:
+/// launched from an interactive dev shell (`npm run tauri dev`), ProcMix's
+/// process already has `TERM=xterm-256color` exported by that shell, which
+/// then propagates all the way down to the spawned PTY child. Launched from a
+/// desktop app-launcher (the installed `.deb`'s `.desktop` entry), ProcMix's
+/// process has NO `TERM` at all — GUI launches aren't terminal sessions — so
+/// the spawned shell (a LOGIN shell here, see above) sources its distro
+/// `~/.bashrc`, whose `case "$TERM" in *-256color) color_prompt=yes;; esac`
+/// never matches, and the colored prompt silently falls back to plain text.
+/// Real terminal emulators always set `TERM` themselves for exactly this
+/// reason — we do the same instead of trusting the ambient environment.
 fn build_shell_command(shell: Option<&str>) -> CommandBuilder {
-    match shell.filter(|s| !s.trim().is_empty()) {
+    let mut cmd = match shell.filter(|s| !s.trim().is_empty()) {
         Some(s) => CommandBuilder::new(s),
         None => CommandBuilder::new_default_prog(),
-    }
+    };
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd
 }
 
 /// Resolve the working directory for a NEW session: the caller-supplied
@@ -305,6 +321,28 @@ mod tests {
         let cmd = build_shell_command(Some("/bin/zsh"));
         assert!(!cmd.is_default_prog());
         assert_eq!(cmd.get_argv()[0], std::ffi::OsString::from("/bin/zsh"));
+    }
+
+    /// `TERM`/`COLORTERM` must be set explicitly regardless of the shell path
+    /// (default-prog or an override) and regardless of whatever ProcMix's own
+    /// process env happens to contain — see the doc comment on
+    /// `build_shell_command` for why (colored `PS1` breaks without this when
+    /// launched from a desktop app-launcher instead of a dev terminal).
+    #[test]
+    fn build_shell_command_sets_term_and_colorterm() {
+        for cmd in [
+            build_shell_command(None),
+            build_shell_command(Some("/bin/zsh")),
+        ] {
+            assert_eq!(
+                cmd.get_env("TERM"),
+                Some(std::ffi::OsStr::new("xterm-256color"))
+            );
+            assert_eq!(
+                cmd.get_env("COLORTERM"),
+                Some(std::ffi::OsStr::new("truecolor"))
+            );
+        }
     }
 
     #[test]

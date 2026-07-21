@@ -2088,13 +2088,6 @@ body.is-editor-fullscreen .output-panel {
   background: var(--console-bg);
 }
 
-/* The active region — subtly outlined so the user knows where the "New tab"
-   ("+") action and header "New terminal" land. Inset so it does not shift
-   content. Only meaningful when there is more than one region. */
-.terminal-region.is-active {
-  box-shadow: inset 0 0 0 1px var(--color-accent);
-}
-
 /* Drop-target highlight while a tab is dragged over a region's TAB STRIP —
    the natural drop target for moving a tab into that region. */
 .terminal-tabs--drop {
