@@ -1903,7 +1903,7 @@ body.is-editor-fullscreen .output-panel {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 4px 8px;
+  padding: 2px 8px;
   overflow-x: auto;
   background: var(--console-header-bg);
   border-bottom: 1px solid var(--console-border);
@@ -1914,7 +1914,7 @@ body.is-editor-fullscreen .output-panel {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px 6px 12px;
+  padding: 4px 8px 4px 12px;
   border-radius: 6px 6px 0 0;
   border: 1px solid transparent;
   border-bottom: 2px solid transparent;
@@ -1982,8 +1982,8 @@ body.is-editor-fullscreen .output-panel {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   margin-left: 4px;
   border: 1px solid var(--console-btn-border);
@@ -1994,8 +1994,13 @@ body.is-editor-fullscreen .output-panel {
   flex: none;
 }
 
-.terminal-tabs__new:hover {
+.terminal-tabs__new:hover:not(:disabled) {
   border-color: var(--console-btn-hover-border);
+}
+
+.terminal-tabs__new:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .terminal-panel__body {
@@ -2004,7 +2009,94 @@ body.is-editor-fullscreen .output-panel {
   position: relative;
 }
 
-/* Hosts one xterm.js instance. Sized to fill the panel body; xterm's own
+/* A split CONTAINER: a flex box of regions separated by
+   `terminal-split__handle` dividers. `--row` lays regions side by side
+   (vertical dividers, "Move right"), `--column` stacks them (horizontal
+   dividers, "Move down"). Fills its parent pane/body box. */
+.terminal-split {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.terminal-split--row {
+  flex-direction: row;
+}
+
+.terminal-split--column {
+  flex-direction: column;
+}
+
+/* One slot in a split container, holding a region or a nested split.
+   `flex-basis` is set inline from the layout tree's `sizes` fractions;
+   `flex-grow/shrink: 0` so the basis is authoritative. `position: relative`
+   anchors its absolutely-positioned child. The min-size is the visual
+   backstop to `MIN_REGION_FRACTION` — a region never collapses to a
+   zero-size PTY. */
+.terminal-split__pane {
+  position: relative;
+  flex-grow: 0;
+  flex-shrink: 0;
+  min-width: 80px;
+  min-height: 60px;
+  overflow: hidden;
+}
+
+/* Draggable divider between two regions. Thin hit-target with a hover accent;
+   the cursor tells the axis. */
+.terminal-split__handle {
+  flex: 0 0 4px;
+  background: var(--console-border);
+  transition: background 0.12s ease;
+}
+
+.terminal-split__handle:hover {
+  background: var(--color-accent);
+}
+
+.terminal-split__handle--row {
+  cursor: col-resize;
+}
+
+.terminal-split__handle--column {
+  cursor: row-resize;
+}
+
+/* One REGION: its own tab strip stacked above its tab bodies. Fills the split
+   slot (or the whole body when there is a single region). */
+.terminal-region {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--console-bg);
+}
+
+/* The active region — subtly outlined so the user knows where the "New tab"
+   ("+") action and header "New terminal" land. Inset so it does not shift
+   content. Only meaningful when there is more than one region. */
+.terminal-region.is-active {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+/* Drop-target highlight while a tab is dragged over a region's TAB STRIP —
+   the natural drop target for moving a tab into that region. */
+.terminal-tabs--drop {
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
+/* Hosts this region's tab bodies. Each `.terminal-view` fills it; only the
+   region's active tab is shown (the rest are display:none but mounted). */
+.terminal-region__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+
+/* Hosts one xterm.js instance. Sized to fill the region body; xterm's own
    FitAddon + our ResizeObserver keep the terminal's cell grid matched to
    this box (see `useTerminalSession`). */
 .terminal-view {

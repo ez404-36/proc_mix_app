@@ -1172,9 +1172,16 @@
     },
     "terminal": {
       "newTab": "New terminal",
+      "capacityReached": "Maximum number of terminals reached ({{max}})",
       "closeTab": "Close terminal",
       "tabTitle": "Terminal {{number}}",
-      "rename": "Rename"
+      "rename": "Rename",
+      "newRegionRight": "New region right",
+      "newRegionDown": "New region below",
+      "moveLeft": "Move left",
+      "moveRight": "Move right",
+      "moveUp": "Move up",
+      "moveDown": "Move down"
     }
   },
   "processCapture": {

@@ -1,5 +1,7 @@
 export { ArrowDownIcon } from "./ArrowDownIcon";
+export { ArrowLeftIcon } from "./ArrowLeftIcon";
 export { ArrowRightIcon } from "./ArrowRightIcon";
+export { ArrowUpIcon } from "./ArrowUpIcon";
 export { CancelIcon } from "./CancelIcon";
 export { CheckIcon } from "./CheckIcon";
 export { ChevronIcon } from "./ChevronIcon";
@@ -32,6 +34,8 @@ export { RunIcon } from "./RunIcon";
 export { SaveIcon } from "./SaveIcon";
 export { ServerIcon } from "./ServerIcon";
 export { SpinnerIcon } from "./SpinnerIcon";
+export { SplitColumnIcon } from "./SplitColumnIcon";
+export { SplitRowIcon } from "./SplitRowIcon";
 export { StatusCheckIcon } from "./StatusCheckIcon";
 export { StatusCrossIcon } from "./StatusCrossIcon";
 export { TableViewIcon } from "./TableViewIcon";

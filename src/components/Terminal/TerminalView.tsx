@@ -8,30 +8,26 @@ import { CopyIcon, PasteIcon } from "../icons";
 import { pasteFromClipboard, useTerminalSession } from "./useTerminalSession";
 
 interface TerminalViewProps {
+  /** The tab's PTY session id. */
   sessionId: string;
-  /** Hidden (not unmounted) when a different tab is active, so the xterm.js
-   *  instance and its scrollback survive tab switches. */
+  /** Hidden (not unmounted) when another tab of the same region is active, so
+   *  the xterm.js instance and its scrollback survive tab switches. */
   visible: boolean;
 }
 
 /**
- * Hosts a single xterm.js terminal for one PTY session. Kept mounted for
- * the lifetime of the tab (see `visible`) rather than unmounted on tab
- * switch, so the backend PTY keeps running and its scrollback is preserved
- * exactly like a real terminal emulator's tabs.
+ * Hosts a single xterm.js terminal for one PTY session (one tab). Kept
+ * mounted for the lifetime of the tab (see `visible`) rather than unmounted
+ * on tab switch, so the backend PTY keeps running and its scrollback is
+ * preserved exactly like a real terminal emulator's tabs.
  *
  * Clipboard: `Ctrl`/`Cmd`+`V` is handled by `useTerminalSession`'s own
  * `attachCustomKeyEventHandler` (layout-independent, see its doc comment),
- * not the browser's native paste event. This component ADDITIONALLY
- * exposes Copy / Paste / Select all as a right-click context menu — the
- * same affordance every other text surface in the app offers
- * (`buildConsoleCopyMenu`, `ScriptEditor`'s edit menu) — for users who
- * prefer the mouse.
+ * not the browser's native paste event. This component ADDITIONALLY exposes
+ * Copy / Paste / Select all as a right-click context menu. Region/tab layout
+ * actions (move, close) live on the tab strip (`TerminalTabs`), not here.
  */
-export function TerminalView({
-  sessionId,
-  visible,
-}: TerminalViewProps): ReactElement {
+export function TerminalView({ sessionId, visible }: TerminalViewProps): ReactElement {
   const { t } = useTranslation();
   const { show } = useContextMenu();
   const containerRef = useRef<HTMLDivElement | null>(null);

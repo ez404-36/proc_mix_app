@@ -1192,9 +1192,16 @@
     },
     "terminal": {
       "newTab": "Новый терминал",
+      "capacityReached": "Достигнут лимит терминалов ({{max}})",
       "closeTab": "Закрыть терминал",
       "tabTitle": "Терминал {{number}}",
-      "rename": "Переименовать"
+      "rename": "Переименовать",
+      "newRegionRight": "Новая область справа",
+      "newRegionDown": "Новая область снизу",
+      "moveLeft": "Перенести влево",
+      "moveRight": "Перенести вправо",
+      "moveUp": "Перенести вверх",
+      "moveDown": "Перенести вниз"
     }
   },
   "processCapture": {

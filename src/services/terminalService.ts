@@ -13,6 +13,16 @@ import type { TerminalEvent } from "../types/terminal";
 
 const TERMINAL_EVENT_CHANNEL = "terminal-event";
 
+/**
+ * Maximum number of concurrently open PTY sessions. MUST mirror the
+ * authoritative backend cap `MAX_TERMINAL_SESSIONS` in
+ * `src-tauri/src/core/terminal/types.rs` — the frontend uses it only to
+ * disable the "new tab" button and explain WHY before the user hits the
+ * backend error; the backend remains the real enforcer (a `terminal_spawn`
+ * past the cap still rejects). Keep the two in sync.
+ */
+export const MAX_TERMINAL_SESSIONS = 10;
+
 /** Spawn a new interactive PTY session. `shell` and `cwd` are optional
  *  overrides of the platform default shell / starting directory (home
  *  directory when omitted or not an existing directory). Resolves to the
