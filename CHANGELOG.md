@@ -42,16 +42,12 @@ each with their own tabs.
 - **Drag tabs between areas.** A tab is `draggable`; dropping it on another
   area's tab strip moves it there (`moveTabToRegion`). Emptying an area removes
   it and collapses the layout.
-- **Empty-state action.** Closing the last tab now shows a "New terminal"
-  button instead of leaving the panel empty with no tab strip.
-
-### Fixed
-
-- **The "new terminal" ("+") button is disabled at the session cap.** With 10
-  sessions open, the button is disabled with a tooltip explaining the limit,
-  rather than letting the user hit the backend `too many open terminal
-  sessions` error. A frontend `MAX_TERMINAL_SESSIONS` mirrors the authoritative
-  backend cap (the backend remains the real enforcer).
+- **Session limit + empty state.** Up to 10 sessions can be open at once
+  (`MAX_TERMINAL_SESSIONS`, mirroring the authoritative backend cap); at the
+  limit the "+" button is disabled with a tooltip rather than letting the user
+  hit the backend `too many open terminal sessions` error. Closing the last tab
+  shows a "New terminal" button instead of leaving the panel empty with no tab
+  strip.
 
 ## [0.13.3] - 2026-07-17
 
