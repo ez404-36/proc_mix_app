@@ -2009,6 +2009,19 @@ body.is-editor-fullscreen .output-panel {
   position: relative;
 }
 
+/* Shown when every tab has been closed (no `layoutRoot`) — a centred hint +
+   "New terminal" button, so the user is never stuck with an empty panel and
+   no tab strip / "+". */
+.terminal-panel__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
 /* A split CONTAINER: a flex box of regions separated by
    `terminal-split__handle` dividers. `--row` lays regions side by side
    (vertical dividers, "Move right"), `--column` stacks them (horizontal

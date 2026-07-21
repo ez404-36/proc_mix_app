@@ -1172,6 +1172,7 @@
     },
     "terminal": {
       "newTab": "New terminal",
+      "emptyHint": "No open terminals.",
       "capacityReached": "Maximum number of terminals reached ({{max}})",
       "closeTab": "Close terminal",
       "tabTitle": "Terminal {{number}}",

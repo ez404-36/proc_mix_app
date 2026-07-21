@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import type { ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { useTerminalStore } from "../../stores/terminalStore";
+import { TerminalIcon } from "../icons";
 import { useOpenTerminalTab } from "./useOpenTerminalTab";
 import { RegionLayout } from "./RegionLayout";
 
@@ -21,6 +23,7 @@ import { RegionLayout } from "./RegionLayout";
  * re-open a tab even after the user had deliberately closed every one.
  */
 export function TerminalPanel(): ReactElement {
+  const { t } = useTranslation();
   const { layoutRoot, activeRegionId, consumeAutoOpen } = useTerminalStore(
     useShallow((s) => ({
       layoutRoot: s.layoutRoot,
@@ -44,7 +47,22 @@ export function TerminalPanel(): ReactElement {
       <div className="terminal-panel__body">
         {layoutRoot ? (
           <RegionLayout node={layoutRoot} activeRegionId={activeRegionId} />
-        ) : null}
+        ) : (
+          // Every tab was closed (the auto-open guard is spent, so nothing
+          // re-opens on its own). Offer an explicit way back in — otherwise
+          // the panel is empty with no tab strip and no "+".
+          <div className="terminal-panel__empty">
+            <p className="empty-state">
+              {t("outputPanel.terminal.emptyHint", {
+                defaultValue: "No open terminals.",
+              })}
+            </p>
+            <button type="button" className="btn btn--primary" onClick={() => openNewTab()}>
+              <TerminalIcon />
+              {t("outputPanel.terminal.newTab", { defaultValue: "New terminal" })}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

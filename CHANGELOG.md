@@ -5,6 +5,54 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-07-21
+
+**Interactive Terminal.** A new **Terminal** mode in the console (`OutputPanel`)
+alongside the existing "Runs" view: real interactive PTY sessions the user
+types into directly (a genuine pseudo-terminal running the platform's default
+shell, not a "send text to stdin" box), split into resizable tmux-style areas
+each with their own tabs.
+
+### Added
+
+- **Terminal mode in the console.** A real interactive shell backed by
+  `portable-pty` (`core::terminal`, deliberately separate from
+  `core::executor` — see `docs/interactive-terminal.md` for the security
+  boundary). Spawns the platform's default login shell (`$SHELL` on Unix,
+  PowerShell on Windows) in the user's home directory, with a dedicated reader
+  thread per session emitting base64-encoded `terminal-event`s (Data/Exit) so
+  xterm.js reassembles multi-byte sequences split across reads. Registered and
+  torn down alongside `ExecutorState` (exit hook kills every session).
+- **xterm.js frontend with multiple tabs.** Each session renders via
+  `@xterm/xterm` + `@xterm/addon-fit`, wired through a non-destructive
+  per-session event replay buffer so a StrictMode double-mount never drops the
+  shell's startup prompt. Lowest-free-number "Terminal N" titles, inline rename
+  (double-click or context menu), Copy/Paste/Select-all, layout-independent
+  `Ctrl`/`Cmd`+`V` (keyed on `event.code`), bracketed-paste disabled to avoid
+  `^[[200~` artifacts. Console "Fullscreen" added as a 4th position-dropdown
+  option.
+- **Split areas (tmux-style region layout).** The panel is divided into
+  rectangular **areas**, each with its own tab strip, arranged by a recursive
+  `RegionNode` split tree (`utils/regionTree.ts`, pure/immutable, unit-tested).
+  A tab's right-click menu offers "New area right/below" (`moveTabToNewRegion`)
+  and directional "Move left/right/up/down" into the existing neighbour
+  (`findAdjacentRegion` → `moveTabToAdjacentRegion`, tmux `select-pane`
+  adjacency), each disabled when there is no target. Area dividers are
+  drag-resizable (`setSizes`, pointer-capture drag).
+- **Drag tabs between areas.** A tab is `draggable`; dropping it on another
+  area's tab strip moves it there (`moveTabToRegion`). Emptying an area removes
+  it and collapses the layout.
+- **Empty-state action.** Closing the last tab now shows a "New terminal"
+  button instead of leaving the panel empty with no tab strip.
+
+### Fixed
+
+- **The "new terminal" ("+") button is disabled at the session cap.** With 10
+  sessions open, the button is disabled with a tooltip explaining the limit,
+  rather than letting the user hit the backend `too many open terminal
+  sessions` error. A frontend `MAX_TERMINAL_SESSIONS` mirrors the authoritative
+  backend cap (the backend remains the real enforcer).
+
 ## [0.13.3] - 2026-07-17
 
 **Loop iteration fixes and per-iteration data.** Fixes three loop-execution
