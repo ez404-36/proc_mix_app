@@ -59,6 +59,30 @@
   --console-status-success: #047857;
   --console-status-error: #b91c1c;
   --console-status-neutral: #475569;
+
+  /* ANSI SGR base palette (16 colors), used by `AnsiText` to render ANSI
+     escape codes from piped (non-PTY) child-process output — see
+     src/utils/ansiParser.ts. Indices 0-7 are the "normal" colors, 8-15 the
+     "bright" variants, matching the standard terminal numbering so `38;5;n`
+     256-color codes with n<16 resolve to the same themed tokens. Tuned for
+     readability on the light console background rather than copied from a
+     specific terminal theme. */
+  --ansi-0: #1e293b;
+  --ansi-1: #b91c1c;
+  --ansi-2: #15803d;
+  --ansi-3: #a16207;
+  --ansi-4: #1d4ed8;
+  --ansi-5: #a21caf;
+  --ansi-6: #0e7490;
+  --ansi-7: #64748b;
+  --ansi-8: #475569;
+  --ansi-9: #dc2626;
+  --ansi-10: #16a34a;
+  --ansi-11: #ca8a04;
+  --ansi-12: #2563eb;
+  --ansi-13: #c026d3;
+  --ansi-14: #0891b2;
+  --ansi-15: #0f172a;
 }
 
 [data-theme="dark"] {
@@ -109,6 +133,25 @@
   --console-status-success: #6ee7b7;
   --console-status-error: #fca5a5;
   --console-status-neutral: #cbd5e1;
+
+  /* ANSI SGR base palette — dark variant (lighter shades for a dark
+     console background). See the light-theme block above for context. */
+  --ansi-0: #1e293b;
+  --ansi-1: #f87171;
+  --ansi-2: #4ade80;
+  --ansi-3: #facc15;
+  --ansi-4: #60a5fa;
+  --ansi-5: #e879f9;
+  --ansi-6: #22d3ee;
+  --ansi-7: #cbd5e1;
+  --ansi-8: #94a3b8;
+  --ansi-9: #fca5a5;
+  --ansi-10: #86efac;
+  --ansi-11: #fde047;
+  --ansi-12: #93c5fd;
+  --ansi-13: #f0abfc;
+  --ansi-14: #67e8f9;
+  --ansi-15: #f8fafc;
 }
 
 * {
@@ -1701,6 +1744,30 @@ body.is-editor-fullscreen .output-panel {
 
 .output-line--stderr {
   color: var(--console-stderr);
+}
+
+/* `AnsiText` segment modifiers — SGR attributes with no dedicated color
+   (bold/dim/italic/underline/strikethrough). Color/background are applied
+   as an inline style (computed from the escape code's own RGB or base
+   palette index, not a literal), so they have no class here. */
+.ansi-text__segment--bold {
+  font-weight: 700;
+}
+
+.ansi-text__segment--dim {
+  opacity: 0.65;
+}
+
+.ansi-text__segment--italic {
+  font-style: italic;
+}
+
+.ansi-text__segment--underline {
+  text-decoration: underline;
+}
+
+.ansi-text__segment--strikethrough {
+  text-decoration: line-through;
 }
 
 /* App-injected workflow step separators (the `meta` stream). Rendered as a

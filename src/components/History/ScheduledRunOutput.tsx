@@ -9,6 +9,7 @@
 
 import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+import { AnsiText } from "../AnsiText";
 import type { ExtractedResult, HistoryLogLine } from "../../types";
 
 /** Which pane of the captured detail is showing. */
@@ -23,7 +24,7 @@ function OutputPane({ lines }: { lines: HistoryLogLine[] }): ReactElement {
           key={i}
           className={`schedule-history__line schedule-history__line--${line.stream}`}
         >
-          {line.line}
+          <AnsiText text={line.line} />
           {"\n"}
         </span>
       ))}

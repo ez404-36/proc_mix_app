@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import type { TFunction } from "i18next";
 import { buildConsoleCopyMenu } from "../../utils/consoleClipboard";
 import { useContextMenu } from "../ContextMenu";
+import { AnsiText } from "../AnsiText";
 import { StatusIcon } from "./StatusIcon";
 import type { RunResult } from "./formState";
 
@@ -144,7 +145,7 @@ export function LiveRunOutput(props: LiveRunOutputProps): ReactElement {
                 key={idx}
                 className={`command-form__output-line command-form__output-line--${line.stream}`}
               >
-                {line.text}
+                <AnsiText text={line.text} />
               </div>
             ))
           )}

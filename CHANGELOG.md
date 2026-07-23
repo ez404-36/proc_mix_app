@@ -5,6 +5,34 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.3] - 2026-07-23
+
+### Added
+
+- **ANSI escape-code rendering in the "Runs" console.** A new `parseAnsiLine`
+  (`utils/ansiParser.ts`) + `AnsiText` component (`components/AnsiText/`) parse
+  SGR escape codes out of each piped (non-PTY) stdout/stderr line and render
+  them as styled spans instead of literal `ESC[...m` bytes. Supports the 16
+  base colors (new themed `--ansi-0..15` tokens for light/dark), 256-color
+  (`38;5;n`) and truecolor (`38;2;r;g;b`), and bold/dim/italic/underline/
+  strikethrough/inverse; non-SGR CSI sequences (cursor movement, erase) are
+  stripped. Wired into `OutputPanel`, the command-form `LiveRunOutput`, and the
+  scheduled-run history (`ScheduledRunOutput`). No `dangerouslySetInnerHTML` —
+  process output is rendered as safe React elements.
+
+### Fixed
+
+- **Starting a run now always switches the console to the "Runs" tab.**
+  `startExecution` / `startWorkflowExecution` opened the panel (`panelOpen`)
+  but never touched `terminalStore.panelMode`, so a run started while the
+  console was on the **Terminal** tab kept rendering `TerminalPanel` and hid
+  the run's live output until the user manually clicked "Runs". A
+  `setPanelMode("runs")` is now issued next to every run-registration site —
+  `commandRunner` / `workflowRunner` (frontend runs) and `useExecutionBridge` /
+  `useWorkflowBridge` (backend-initiated: scheduler "Run now", HTTP API). The
+  switch lives at the call sites, not in `executionStore`, preserving the
+  documented boundary that `executionStore` must not know the Terminal exists.
+
 ## [0.14.2] - 2026-07-21
 
 ### Fixed

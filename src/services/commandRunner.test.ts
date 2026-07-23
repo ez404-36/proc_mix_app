@@ -73,6 +73,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 import { triggerCommandRun } from "./commandRunner";
 import { useCommandStore } from "../stores/commandStore";
 import { useExecutionStore } from "../stores/executionStore";
+import { useTerminalStore } from "../stores/terminalStore";
 
 function makeCommand(overrides: Partial<Command> = {}): Command {
   return {
@@ -127,6 +128,7 @@ beforeEach(() => {
     activeExecutionId: null,
     panelOpen: false,
   });
+  useTerminalStore.setState({ panelMode: "terminal" });
 });
 
 describe("triggerCommandRun", () => {
@@ -152,6 +154,16 @@ describe("triggerCommandRun", () => {
     expect(exec?.commandName).toBe("My Command");
     expect(useExecutionStore.getState().activeExecutionId).toBe(id);
     expect(useExecutionStore.getState().panelOpen).toBe(true);
+  });
+
+  it("switches the console back to the Runs tab even if Terminal was active", async () => {
+    invokeRunMock.mockResolvedValueOnce(undefined);
+    // Pre-set by beforeEach: panelMode starts as "terminal".
+    expect(useTerminalStore.getState().panelMode).toBe("terminal");
+
+    await triggerCommandRun(makeCommand());
+
+    expect(useTerminalStore.getState().panelMode).toBe("runs");
   });
 
   it("should pass RunOptions through to the executor", async () => {

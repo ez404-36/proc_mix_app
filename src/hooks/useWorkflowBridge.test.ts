@@ -34,6 +34,7 @@ import {
   useWorkflowBridge,
 } from "./useWorkflowBridge";
 import { useExecutionStore } from "../stores/executionStore";
+import { useTerminalStore } from "../stores/terminalStore";
 import { useWorkflowRunStore } from "../stores/workflowRunStore";
 import { useWorkflowStore } from "../stores/workflowStore";
 import { useCommandStore } from "../stores/commandStore";
@@ -61,6 +62,7 @@ function resetRuns(): void {
   // The branch-slot map is memoised per run id at module scope; clear it so a
   // reused run id never carries a stale (empty) map between cases.
   __resetBranchSlotCacheForTests();
+  useTerminalStore.setState({ panelMode: "terminal" });
 }
 
 /** Only the log lines the bridge actually wrote to the aggregate, as
@@ -449,6 +451,10 @@ describe("useWorkflowBridge - backend-initiated run (scheduler Run now)", () => 
     expect(exec.executions["run-sched"]?.isWorkflow).toBe(true);
     expect(exec.panelOpen).toBe(true);
     expect(exec.activeExecutionId).toBe("run-sched");
+    // The console switches back to the Runs tab even though it started on
+    // Terminal (set by resetRuns()) — a backend-fired run must be visible
+    // immediately, not hidden behind the interactive-terminal tab.
+    expect(useTerminalStore.getState().panelMode).toBe("runs");
     // The run-store entry was created so node progress is recorded.
     expect(
       useWorkflowRunStore.getState().runs["run-sched"]?.nodes["n1"]?.status,

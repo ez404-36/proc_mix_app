@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { useCommandStore } from "../stores/commandStore";
 import { useExecutionStore } from "../stores/executionStore";
+import { useTerminalStore } from "../stores/terminalStore";
 import {
   isAdminPasswordRequiredError,
   setAdminPassword,
@@ -415,6 +416,10 @@ export async function triggerCommandRun(
           // resolved to a concrete host above, so it never reaches here.
           resolvedTarget,
         );
+      // The console panel opens on the "Runs" tab regardless of which tab
+      // (Runs or Terminal) was active before — switching to Terminal must
+      // not hide a run's live output behind the interactive-terminal tab.
+      useTerminalStore.getState().setPanelMode("runs");
       useCommandStore.getState().markCommandRun(cmd.id);
       try {
         await recordRunStart(executionId, cmd.id, displayName, resolvedTarget);

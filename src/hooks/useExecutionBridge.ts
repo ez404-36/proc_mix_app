@@ -3,6 +3,7 @@ import i18n from "../i18n";
 import { useCommandStore } from "../stores/commandStore";
 import { useExecutionStore } from "../stores/executionStore";
 import { useHistoryStore } from "../stores/historyStore";
+import { useTerminalStore } from "../stores/terminalStore";
 import { useWorkflowRunStore } from "../stores/workflowRunStore";
 import type { ExecutionEvent, RunStatus } from "../types";
 import { getCommandName } from "../utils/commandLabels";
@@ -204,6 +205,12 @@ function handleEvent(event: ExecutionEvent): void {
         info.target,
         event.workingDir,
       );
+      // The console panel opens on the "Runs" tab regardless of which tab
+      // (Runs or Terminal) was active before — covers backend-initiated
+      // runs (scheduler, HTTP API) the same way `commandRunner` covers a
+      // frontend-initiated run. A no-op re-set for the latter (already
+      // "runs" by the time this event arrives).
+      useTerminalStore.getState().setPanelMode("runs");
       return;
     }
     case "stdout": {

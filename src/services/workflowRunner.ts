@@ -2,6 +2,7 @@ import { Message } from "@arco-design/web-react";
 import i18n from "../i18n";
 import { useCommandStore } from "../stores/commandStore";
 import { useExecutionStore } from "../stores/executionStore";
+import { useTerminalStore } from "../stores/terminalStore";
 import { useWorkflowRunStore } from "../stores/workflowRunStore";
 import { useWorkflowStore } from "../stores/workflowStore";
 import type { HistoryEvent, Workflow } from "../types";
@@ -320,6 +321,10 @@ async function registerStartedRun(
   useExecutionStore
     .getState()
     .startWorkflowExecution(runId, workflow.name, workflow.id);
+  // The console panel opens on the "Runs" tab regardless of which tab
+  // (Runs or Terminal) was active before — switching to Terminal must not
+  // hide a run's live output behind the interactive-terminal tab.
+  useTerminalStore.getState().setPanelMode("runs");
   // AWAIT the history insert so the row exists before the bridge's terminal
   // event tries to finalize it. A history-write failure must not abort the run.
   try {

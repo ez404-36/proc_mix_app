@@ -3,6 +3,7 @@ import i18n from "../i18n";
 import { useCommandStore } from "../stores/commandStore";
 import { useExecutionStore } from "../stores/executionStore";
 import { useHistoryStore } from "../stores/historyStore";
+import { useTerminalStore } from "../stores/terminalStore";
 import {
   getExecutionWorkingDir,
   useWorkflowRunStore,
@@ -334,6 +335,11 @@ function ensureBackendRunRegistered(runId: string, workflowId: string): void {
   // The single aggregated terminal process for this run; opening the panel and
   // creating the pinnable console marker (bugs #1 and #2).
   useExecutionStore.getState().startWorkflowExecution(runId, name, workflowId);
+  // The console panel opens on the "Runs" tab regardless of which tab (Runs
+  // or Terminal) was active before — covers a backend-initiated workflow run
+  // (scheduler "Run now") the same way `registerStartedRun` covers a
+  // frontend-initiated one.
+  useTerminalStore.getState().setPanelMode("runs");
 }
 
 function handleEvent(event: WorkflowEvent): void {

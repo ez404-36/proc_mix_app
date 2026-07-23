@@ -43,6 +43,7 @@ vi.mock("@arco-design/web-react", () => ({
 
 import type { Command, HistoryEvent, Workflow } from "../types";
 import { useCommandStore } from "../stores/commandStore";
+import { useTerminalStore } from "../stores/terminalStore";
 import { useWorkflowRunStore } from "../stores/workflowRunStore";
 import { useWorkflowStore } from "../stores/workflowStore";
 import { triggerWorkflowRun } from "./workflowRunner";
@@ -109,6 +110,7 @@ beforeEach(() => {
   });
   useWorkflowStore.setState({ workflows: [], hydrated: true });
   useWorkflowRunStore.setState({ runs: {}, recentRunIds: [] });
+  useTerminalStore.setState({ panelMode: "terminal" });
 });
 
 afterEach(() => {
@@ -142,6 +144,13 @@ describe("triggerWorkflowRun - happy path", () => {
     const wf = makeWorkflow(["cmd-a", "cmd-a"]);
     await triggerWorkflowRun(wf);
     expect(upsertCommandMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("switches the console back to the Runs tab even if Terminal was active", async () => {
+    expect(useTerminalStore.getState().panelMode).toBe("terminal");
+    const wf = makeWorkflow(["cmd-a"]);
+    await triggerWorkflowRun(wf);
+    expect(useTerminalStore.getState().panelMode).toBe("runs");
   });
 });
 

@@ -10,6 +10,7 @@ import type { TFunction } from "i18next";
 import { useShallow } from "zustand/react/shallow";
 import { useContextMenu } from "../ContextMenu";
 import type { ContextMenuEntry } from "../ContextMenu";
+import { AnsiText } from "../AnsiText";
 import { buildConsoleCopyMenu } from "../../utils/consoleClipboard";
 import { formatTargetBadge, isRemoteTarget } from "../../utils/targetLabel";
 import { useExecutionStore } from "../../stores/executionStore";
@@ -186,12 +187,12 @@ function OutputBody({ execution }: OutputBodyProps): ReactElement {
             line.variant === "workdir" ? " output-line--workdir" : ""
           }`}
         >
-          {line.line}
+          <AnsiText text={line.line} />
         </div>
       ))}
       {execution.error ? (
         <div className="output-line output-line--stderr">
-          {execution.error}
+          <AnsiText text={execution.error} />
         </div>
       ) : null}
       {execution.timedOut ? (
