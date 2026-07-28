@@ -5,6 +5,45 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.4] - 2026-07-28
+
+### Added
+
+- **QR quick-connect for the HTTP API's web interface.** The HTTP API panel
+  can render a QR code so a phone/tablet on the same LAN can open the web UI
+  without typing the address. A "Show QR" button on the priority address row
+  (`lanAddress` preferred over `mdnsHost`) opens the code in a standalone
+  modal, gated on the server running, the web UI being enabled, and a
+  LAN-reachable host being known — and now also on the "Allow LAN access"
+  switch (`bindLan`) actually being on, since the bound socket only accepts
+  non-loopback connections then; the detected LAN IP / mDNS name were
+  previously shown regardless, advertising addresses nothing was listening
+  on. A second "Show QR" button, available only during the one-time token
+  reveal right after Generate/Regenerate, opens the same modal with a
+  **default-OFF** "Include token in QR" toggle rendered *inside* the modal
+  (next to what it controls, so it can be flipped without closing the modal)
+  — enabling it live-swaps the QR payload to `<address>/?token=<token>` and
+  shows an explicit warning that anyone who scans/photographs it gets the
+  token. On the web UI side, a new `useAutoLoginFromQuery` hook reads `?token=`
+  on mount, validates it via the existing `GET /api/whoami` path before
+  committing it to the session, and always strips it from the address bar
+  via `history.replaceState` — so scanning the token QR logs straight into
+  the web UI. Client-side only (canvas via the `qrcode` npm package, no
+  `data:` URI, no CSP change, no new Rust endpoint); the static-asset handler
+  never logs the request, so the token never reaches the request log/file.
+  See [`docs/http-server.md`](docs/http-server.md).
+
+### Fixed
+
+- **The address rows in the HTTP API panel changed shape (trailing `/`)
+  depending on the "Connect web interface" switch.** They now always show
+  the bare `host:port`, regardless of `serveWebUi` — the trailing `/` (the
+  SPA entry) is only ever added internally, for the QR-encoded URL.
+- **The help-tooltip icon and the QR-code icon on the address rows were not
+  vertically aligned**, and unrelated address rows (differing icon
+  footprints) made the address value fields different widths. Both icon
+  kinds now share a single fixed-size slot per row.
+
 ## [0.14.3] - 2026-07-23
 
 ### Added

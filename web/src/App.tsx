@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { fetchBootstrap } from "./api/client";
 import { applyBootstrapLanguage } from "./i18n";
 import { useTheme } from "./hooks/useTheme";
+import { useAutoLoginFromQuery } from "./hooks/useAutoLoginFromQuery";
 import { useAuthStore } from "./stores/authStore";
 import { Login } from "./views/Login";
 import { Shell } from "./views/Shell";
@@ -21,6 +22,9 @@ export function App(): React.JSX.Element {
   const { t } = useTranslation();
   const token = useAuthStore((s) => s.token);
   const [bootstrapped, setBootstrapped] = useState(false);
+
+  // QR quick-connect auto-login (F4): only runs once bootstrap has settled.
+  useAutoLoginFromQuery(bootstrapped);
 
   useEffect(() => {
     let cancelled = false;

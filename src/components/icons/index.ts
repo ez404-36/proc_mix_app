@@ -24,6 +24,7 @@ export { LockIcon } from "./LockIcon";
 export { PasteIcon } from "./PasteIcon";
 export { PinIcon } from "./PinIcon";
 export { PlusIcon } from "./PlusIcon";
+export { QrCodeIcon } from "./QrCodeIcon";
 export { RedoIcon } from "./RedoIcon";
 export { UndoIcon } from "./UndoIcon";
 export { ZoomInIcon } from "./ZoomInIcon";

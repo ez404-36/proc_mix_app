@@ -11,7 +11,8 @@ import { useHttpServerStore } from "../../stores/httpServerStore";
 import type { HttpServerConfig } from "../../types/httpServer";
 import { HelpTooltip } from "../HelpTooltip";
 import { ToggleSwitch } from "../ToggleSwitch";
-import { CancelIcon, CheckIcon, EditIcon, ServerIcon } from "../icons";
+import { CancelIcon, CheckIcon, EditIcon, QrCodeIcon, ServerIcon } from "../icons";
+import { HttpServerQrModal } from "./HttpServerQrModal";
 
 /** Lowest port the backend accepts (mirrors `storage::http_server::MIN_PORT`). */
 const MIN_PORT = 1024;
@@ -99,11 +100,27 @@ export function HttpServerPanel(): ReactElement {
   // clamp); "Apply" is gated on the draft parsing to a port in range.
   const [portEditing, setPortEditing] = useState(false);
   const [portDraft, setPortDraft] = useState("");
+  // Which standalone QR modal is open, if any:
+  //   - "address": address-only URL, no include-token control (opened from the
+  //     per-row QR button — reachable any time the server/web-UI qualify).
+  //   - "token": opened from the token section's "Show QR" button; renders the
+  //     include-token toggle INSIDE the modal (see `HttpServerQrModal`) so it
+  //     can be flipped without closing the modal to reach the panel body
+  //     behind it — the encoded URL swaps between address-only and
+  //     address+token live as the toggle changes.
+  // `includeTokenInQr` only ever affects the "token" modal; it lives under
+  // `revealedToken` and is OFF by default. Both reset when the panel closes.
+  const [qrModalKind, setQrModalKind] = useState<"address" | "token" | null>(
+    null,
+  );
+  const [includeTokenInQr, setIncludeTokenInQr] = useState(false);
 
   const closePanel = useCallback((): void => {
     setOpen(false);
     setRevealedToken(null);
     setPortEditing(false);
+    setQrModalKind(null);
+    setIncludeTokenInQr(false);
   }, []);
 
 
@@ -189,6 +206,11 @@ export function HttpServerPanel(): ReactElement {
     try {
       const token = await regenerateToken();
       setRevealedToken(token);
+      // A fresh token starts with the include-token QR OFF again — the user
+      // must opt back in for each new reveal. Close any open modal too, since
+      // it may have been showing the now-stale token.
+      setIncludeTokenInQr(false);
+      setQrModalKind(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       Message.error(message);
@@ -202,6 +224,8 @@ export function HttpServerPanel(): ReactElement {
     try {
       await clearToken();
       setRevealedToken(null);
+      setIncludeTokenInQr(false);
+      setQrModalKind(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       Message.error(message);
@@ -250,26 +274,53 @@ export function HttpServerPanel(): ReactElement {
 
   // Reachable addresses, as a single ordered list — shown whether the server is
   // running or stopped (so you can see/copy the addresses before starting). The
-  // local loopback is always present; the friendly `procmix.local` mDNS name and
-  // the raw LAN IP come from the status whenever a LAN IPv4 is detected (the
-  // backend reports them even while stopped). When the web UI is enabled the
-  // rows point at `/` (the SPA entry); otherwise they are the bare REST base.
-  const webPath = config.serveWebUi ? "/" : "";
+  // local loopback is always present. The friendly `procmix.local` mDNS name and
+  // the raw LAN IP are detected (and mDNS-announced) REGARDLESS of `bindLan` —
+  // best-effort, so the UI can preview them before a LAN-enabled start — but the
+  // socket itself only accepts non-loopback connections when `bindLan` is on
+  // (see `core::http_server::start`: bind is 127.0.0.1 unless `bind_lan`).
+  // Showing them while `bindLan` is off would advertise addresses nothing is
+  // actually listening on, so they're gated on it here. `status.bindLan`
+  // reflects the LIVE bind while running, or the persisted config while
+  // stopped (what a start WOULD use) — see `http_server_status`. Always the
+  // bare `host:port` — NOT conditioned on `config.serveWebUi` — so toggling the
+  // web UI switch never changes the displayed/copied address format; a
+  // trailing `/` (the SPA entry) is only added where it's actually needed,
+  // i.e. the QR-encoded URL below, which already requires the web UI to be
+  // enabled.
   const addressRows: ReadonlyArray<{ url: string; hintKey?: string }> = [
     // Local address — always available (the port is known from config).
-    { url: `http://127.0.0.1:${status.port}${webPath}` },
-    ...(status.mdnsHost !== undefined
+    { url: `http://127.0.0.1:${status.port}` },
+    ...(status.bindLan && status.mdnsHost !== undefined
       ? [
           {
-            url: `http://${status.mdnsHost}:${status.port}${webPath}`,
+            url: `http://${status.mdnsHost}:${status.port}`,
             hintKey: "httpServer.address.mdnsHint",
           },
         ]
       : []),
-    ...(status.lanAddress !== undefined
-      ? [{ url: `http://${status.lanAddress}:${status.port}${webPath}` }]
+    ...(status.bindLan && status.lanAddress !== undefined
+      ? [{ url: `http://${status.lanAddress}:${status.port}` }]
       : []),
   ];
+
+  // QR quick-connect (docs/plans/http-server/03-qr-quick-connect-implementation-plan.md):
+  // a loopback-only QR is useless to a phone, so it's gated on the web UI
+  // being enabled AND at least one LAN-reachable host being known — AND
+  // `bindLan`, same as `addressRows` above: the detected LAN IP / mDNS name are
+  // just a preview when `bindLan` is off, since the socket then refuses
+  // non-loopback connections regardless. Priority is `lanAddress` (guaranteed
+  // to resolve) over `mdnsHost` (`.local` doesn't resolve everywhere).
+  const qrHost = status.bindLan ? (status.lanAddress ?? status.mdnsHost) : undefined;
+  const qrAvailable = status.running && config.serveWebUi && qrHost !== undefined;
+  // The bare `host:port` matching the priority address row above (no trailing
+  // slash — see `addressRows`), used to pick which row gets the QR button.
+  const qrBareUrl = qrHost !== undefined ? `http://${qrHost}:${status.port}` : "";
+  // The trailing `/` is added ONLY here, for the actual QR payload — the SPA
+  // needs an explicit path to route to, unlike the copyable address text.
+  const qrAddressUrl = qrHost !== undefined ? `${qrBareUrl}/` : "";
+  const qrTokenUrl =
+    revealedToken !== null ? `${qrAddressUrl}?token=${revealedToken}` : "";
 
   // The request log rendered as plain text for a read-only textarea, so the
   // user can select and copy lines. Newest first; one request per line:
@@ -364,32 +415,55 @@ export function HttpServerPanel(): ReactElement {
               <h3 className="http-server-panel__section-title">
                 {t("httpServer.address.title")}
               </h3>
-              {addressRows.map((row) => (
-                <div key={row.url} className="http-server-panel__address-row">
-                  <code className="http-server-panel__address-value">{row.url}</code>
-                  {/* Fixed-width hint slot rendered on EVERY row (empty when the
-                      row has no tooltip) so the value fields stay equal width and
-                      the Copy buttons line up vertically across all rows. */}
-                  <span className="http-server-panel__address-hint">
-                    {row.hintKey ? (
-                      <HelpTooltip
-                        id={`http-server-addr-${row.url}`}
-                        buttonLabel={t("httpServer.address.hintLabel")}
-                        body={t(row.hintKey)}
-                      />
-                    ) : null}
-                  </span>
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--icon"
-                    onClick={() => void handleCopyUrl(row.url)}
-                    aria-label={t("httpServer.address.copy")}
-                    title={t("httpServer.address.copy")}
-                  >
-                    {t("httpServer.address.copy")}
-                  </button>
-                </div>
-              ))}
+              {addressRows.map((row) => {
+                // QR quick-connect is offered only on the priority row (the
+                // same address a scanning phone would be pointed at). Compared
+                // against the bare (slash-less) form since `addressRows` never
+                // adds a trailing slash.
+                const isQrRow = qrAvailable && row.url === qrBareUrl;
+                return (
+                  <div key={row.url} className="http-server-panel__address-row">
+                    <code className="http-server-panel__address-value">{row.url}</code>
+                    {/* Single slot rendered on EVERY row (empty when the row has
+                        neither) so the help tooltip and the QR button always
+                        start from the same column, keeping the icons aligned
+                        vertically across rows. On the rare row that qualifies
+                        for BOTH (the mDNS-only row when no lanAddress is known,
+                        so it doubles as the QR row) both render side by side —
+                        the slot's min-width, not a fixed width, keeps single-icon
+                        rows aligned while still accommodating that case. */}
+                    <span className="http-server-panel__address-hint">
+                      {row.hintKey ? (
+                        <HelpTooltip
+                          id={`http-server-addr-${row.url}`}
+                          buttonLabel={t("httpServer.address.hintLabel")}
+                          body={t(row.hintKey)}
+                        />
+                      ) : null}
+                      {isQrRow ? (
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--icon"
+                          onClick={() => setQrModalKind("address")}
+                          aria-label={t("httpServer.qr.showLabel")}
+                          title={t("httpServer.qr.showLabel")}
+                        >
+                          <QrCodeIcon />
+                        </button>
+                      ) : null}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--icon"
+                      onClick={() => void handleCopyUrl(row.url)}
+                      aria-label={t("httpServer.address.copy")}
+                      title={t("httpServer.address.copy")}
+                    >
+                      {t("httpServer.address.copy")}
+                    </button>
+                  </div>
+                );
+              })}
             </section>
           ) : null}
 
@@ -582,13 +656,32 @@ export function HttpServerPanel(): ReactElement {
                   {t("httpServer.token.copy")}
                 </button>
               </div>
-            ) : (
+            ) : null}
+
+            {/* QR quick-connect for the token: only ever offered during this
+                one-time reveal — closing the panel or regenerating clears it.
+                Opens the standalone modal in "token" mode, where the
+                include-token toggle (default OFF) lives so it can be flipped
+                WITHOUT closing the modal to reach this button again. The
+                address must also qualify (qrAvailable). */}
+            {revealedToken !== null && qrAvailable ? (
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={() => setQrModalKind("token")}
+              >
+                <QrCodeIcon />
+                {t("httpServer.qr.showLabel")}
+              </button>
+            ) : null}
+
+            {revealedToken === null ? (
               <p className="http-server-panel__token-status">
                 {hasToken
                   ? t("httpServer.token.present")
                   : t("httpServer.token.absent")}
               </p>
-            )}
+            ) : null}
 
             <div className="http-server-panel__token-actions">
               <button
@@ -704,6 +797,23 @@ export function HttpServerPanel(): ReactElement {
         </span>
       </div>
       {open ? createPortal(panel, document.body) : null}
+      <HttpServerQrModal
+        url={
+          qrModalKind === "address"
+            ? qrAddressUrl
+            : qrModalKind === "token"
+              ? includeTokenInQr
+                ? qrTokenUrl
+                : qrAddressUrl
+              : null
+        }
+        onClose={() => setQrModalKind(null)}
+        includeToken={
+          qrModalKind === "token"
+            ? { checked: includeTokenInQr, onChange: setIncludeTokenInQr }
+            : undefined
+        }
+      />
     </>
   );
 }

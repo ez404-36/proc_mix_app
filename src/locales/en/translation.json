@@ -1579,6 +1579,16 @@
       "empty": "No requests yet.",
       "clear": "Clear"
     },
+    "qr": {
+      "showLabel": "Show QR",
+      "title": "Scan to open the web interface",
+      "scanHint": "Point your phone's or tablet's camera at this code to open the login page — no need to type the address.",
+      "altText": "QR code for {{url}}",
+      "includeToken": "Include token in QR (auto-login)",
+      "includeTokenWarning": "Anyone who scans or photographs this code gets your access token. It stays valid until you regenerate or clear the token — show it only to people you trust.",
+      "unavailableHint": "No LAN address available yet — start the server and enable the web interface to show a QR code.",
+      "renderError": "Could not render the QR code."
+    },
     "errors": {
       "portInUse": "That port is already in use. Choose a different port.",
       "invalidPort": "Port must be between {{min}} and {{max}}."

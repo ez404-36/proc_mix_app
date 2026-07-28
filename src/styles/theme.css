@@ -9032,21 +9032,104 @@ body.is-editor-fullscreen .output-panel {
   overflow-wrap: anywhere;
 }
 
-/* Fixed-width slot for the optional per-row help tooltip. Reserved on every row
-   (even empty) so all `__address-value` fields are the same width and the Copy
-   buttons align vertically regardless of which row has a tooltip. */
+/* Slot for the optional per-row help tooltip and/or QR button. Reserved on
+   every row (even empty) at a MINIMUM width so all `__address-value` fields
+   stay the same width and both icons align vertically across rows, whichever
+   (if any) a given row has. `min-width` rather than a fixed `width` because
+   the mDNS-only row (no lanAddress known) can carry BOTH icons at once — the
+   slot then grows to fit them side by side instead of clipping. Sized to
+   match `.help-tooltip__trigger` (22px) exactly, and the QR button inside
+   this slot is forced to the same 22×22 footprint below — otherwise the two
+   icon types render at different sizes and the slot (and therefore the
+   `__address-value` fields, which share the row via `flex: 1`) end up a
+   different width per row. */
 .http-server-panel__address-hint {
   flex: 0 0 auto;
-  width: 20px;
+  min-width: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 2px;
+}
+
+.http-server-panel__address-hint .btn--icon {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  min-height: 0;
 }
 
 .http-server-panel__token-reveal {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* QR quick-connect: the canvas sits in a bordered card, matching the address/
+   token value fields' surface tokens. */
+.http-server-panel__qr {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+}
+
+.http-server-panel__qr-canvas {
+  border-radius: 4px;
+}
+
+/* Standalone QR modal (HttpServerQrModal). Reuses `.command-form` sizing but
+   narrower, matching `--confirm`/`--meta`. */
+.command-form--qr {
+  width: 320px;
+}
+
+.http-server-panel__qr-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 20px 0;
+  gap: 12px;
+}
+
+.http-server-panel__qr-modal-header .command-form__title {
+  padding: 0;
+}
+
+.http-server-panel__qr-modal-hint {
+  margin: 12px 0 0;
+  padding: 0 20px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.http-server-panel__qr-modal-body {
+  display: flex;
+  justify-content: center;
+  padding: 16px 20px 20px;
+}
+
+.http-server-panel__qr-modal-body .http-server-panel__qr {
+  margin-top: 0;
+}
+
+/* The include-token toggle + warning render INSIDE the modal (between the
+   scan hint and the QR body) so they can be reached without closing it —
+   `.http-server-panel__toggle`/`__warning` have no horizontal padding of
+   their own (they normally sit inside the panel's already-padded body), so
+   the modal supplies it here to match `__qr-modal-hint` above. */
+.http-server-panel__qr-modal-toggle {
+  margin: 12px 20px 0;
+}
+
+.command-form--qr .http-server-panel__warning {
+  margin: 10px 20px 0;
 }
 
 .http-server-panel__token-value {
