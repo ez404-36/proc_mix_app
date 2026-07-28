@@ -147,10 +147,32 @@ jobs:
           # so we retry the lookup a few times before giving up. The `awk 'NR==1'`
           # (instead of `head -n1`) avoids a SIGPIPE that would make the upstream
           # `gh` exit non-zero under `pipefail`.
+          #
+          # A transient GitHub API hiccup (5xx / timeout) can make `gh api`
+          # print its JSON error BODY to stdout instead of failing loudly —
+          # e.g. `{"message": "We couldn't respond to your request in time..."}`
+          # — which `-q`/`awk` then happily pass through as if it were a real
+          # id. This bit us once: that string got written to `release-id`,
+          # tauri-action couldn't find a release with it, fell back to
+          # creating one by tag WITHOUT `releaseName` set, and failed with
+          # "releaseName not set but required to create release." Every
+          # extraction point below is therefore validated as ALL-DIGITS before
+          # being accepted — a non-numeric result is treated exactly like "not
+          # found" (empty), never trusted.
+          is_numeric_id() {
+            case "$1" in
+              '' ) return 1 ;;
+              *[!0-9]* ) return 1 ;;
+              * ) return 0 ;;
+            esac
+          }
+
           find_id() {
-            gh api --paginate "repos/$repo/releases" \
+            local candidate
+            candidate="$(gh api --paginate "repos/$repo/releases" \
               -q ".[] | select(.tag_name == \"$tag\") | .id" 2>/dev/null \
-              | awk 'NR==1'
+              | awk 'NR==1')"
+            is_numeric_id "$candidate" && printf '%s' "$candidate"
           }
 
           find_id_retry() {
@@ -175,12 +197,16 @@ jobs:
               --title "ProcMix $tag" \
               --notes "Installers for ProcMix $tag.")"
             echo "Created draft release: $release_url"
-            release_id="$(gh api --paginate "repos/$repo/releases" \
+            url_id="$(gh api --paginate "repos/$repo/releases" \
               -q ".[] | select(.html_url == \"$release_url\") | .id" 2>/dev/null \
               | awk 'NR==1' || true)"
-            # Fall back to the tag-name scan (with retries) if the URL match
-            # missed (e.g. a trailing-newline mismatch).
-            [ -z "$release_id" ] && release_id="$(find_id_retry)"
+            if is_numeric_id "$url_id"; then
+              release_id="$url_id"
+            else
+              # Fall back to the tag-name scan (with retries) if the URL match
+              # missed (e.g. a trailing-newline mismatch) or returned garbage.
+              release_id="$(find_id_retry)"
+            fi
           fi
 
           if [ -z "$release_id" ]; then
