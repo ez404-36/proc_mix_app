@@ -259,20 +259,15 @@ pub enum HistoryEventPayload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result: Option<HistoryExtractedResult>,
     },
-    /// A run triggered automatically by the cron Scheduler (v0.2.0). This is
-    /// the source of truth for background fires — they happen with no window
-    /// open, so the streamed `execution-event` / `workflow-event` are not
-    /// reliably observed. The scheduler records ONE of these per fire with
-    /// the final `status`. Unlike the other run variants it is recorded
-    /// already-finalised (no `update_run_event` round-trip), so it carries no
-    /// dedicated `execution_id` column — its detail (including the optional
-    /// captured `exit_code` / `duration_ms` / `output` / `result`) lives
-    /// entirely in `payload_json`.
+    /// A run triggered automatically by the cron Scheduler — the source of
+    /// truth for background fires, since no window is open to observe the
+    /// streamed `execution-event` / `workflow-event`. Recorded
+    /// already-finalised, so it carries no `execution_id`; run detail lives
+    /// in `payload_json`.
     ///
     /// `status` is a free-form scheduler status string (`"success"`,
-    /// `"error"`, `"missingVariable"`, `"skipped"`, `"cancelled"`) rather
-    /// than the `RunStatus` enum, because the scheduler distinguishes more
-    /// outcomes than the streaming executor does.
+    /// `"error"`, `"missingVariable"`, `"skipped"`, `"cancelled"`), distinct
+    /// from the `RunStatus` enum used by the streaming executor.
     #[serde(rename_all = "camelCase")]
     ScheduledRun {
         schedule_id: String,
@@ -754,11 +749,8 @@ pub fn bound_history_output(lines: Vec<HistoryLogLine>) -> Vec<HistoryLogLine> {
 /// [`bound_history_output`] (so the byte cap and trailing `"…(truncated)"`
 /// marker behave identically regardless of which producer wrote it).
 ///
-/// This is the single shared mapper for the scheduler's per-command and
-/// per-workflow capture paths and the HTTP-API run finalizers — previously
-/// four near-identical copies (`scheduler::map_captured_output` /
-/// `map_workflow_capture`, `handlers::outcome_output` / `workflow_output`),
-/// each re-implementing the same map-then-cap.
+/// Shared mapper for the scheduler's per-command and per-workflow capture
+/// paths and the HTTP-API run finalizers.
 pub fn from_captured_lines(lines: &[CapturedLine]) -> Vec<HistoryLogLine> {
     let mapped = lines
         .iter()
@@ -772,9 +764,8 @@ pub fn from_captured_lines(lines: &[CapturedLine]) -> Vec<HistoryLogLine> {
 
 /// Map an executor [`ExtractedOutput`] (the structured output-schema result)
 /// into the History [`HistoryExtractedResult`] shape, cloning the `fields` map
-/// into a `serde_json::Map`. A successful extraction has no `error`. The single
-/// shared mapper for the scheduler and HTTP-API finalizers (previously
-/// `scheduler::map_extracted_result` / `handlers::outcome_result`).
+/// into a `serde_json::Map`. A successful extraction has no `error`. Shared
+/// mapper for the scheduler and HTTP-API finalizers.
 pub fn extracted_to_history(extracted: &ExtractedOutput) -> HistoryExtractedResult {
     HistoryExtractedResult {
         fields: extracted

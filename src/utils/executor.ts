@@ -162,28 +162,16 @@ export async function runCommand(
   // Resolve elevation at the execution boundary so EVERY entry point
   // (Library, palette, hotkey, tray, live-run) agrees.
   //
-  // Precedence:
-  //   1. `opts.elevated` — the CommandForm live-run override, honouring
-  //      the unsaved checkbox before Save.
-  //   2. `cmd.runAsAdmin` — the persisted flag.
-  //   3. Inline-escalation detection on the script body.
+  // Precedence: `opts.elevated` (live-run override) > `cmd.runAsAdmin`
+  // (persisted flag) > inline sudo/doas/pkexec detection on the script body
+  // — imports always force `runAsAdmin: false`, so this is what still
+  // elevates a script that self-escalates.
   //
-  // (3) is the fix for the imported-command failure: import forces
-  // `runAsAdmin: false` (security — never arrive pre-armed), but a
-  // script that begins with `sudo`/`doas`/`pkexec` WILL escalate
-  // regardless. Without this, such a command ran on the non-elevated
-  // path whose child has `Stdio::null()` stdin and no TTY, so the
-  // inline `sudo` died with "a terminal is required to read the
-  // password". Routing it through the backend's `sudo -S` path feeds
-  // the keychain password on stdin; the now-root inner `sudo` no longer
-  // prompts. The CommandForm checkbox auto-detect (useAdminEscalation)
-  // only covers the editing surface — this covers direct runs.
-  // Resolve the execution target at the same boundary as elevation: a
-  // per-run override (`opts.target`, the "choose host at run time" result)
-  // wins over the persisted `cmd.target`, which defaults to local. A
-  // `remotePrompt` here is a caller bug — `triggerCommandRun` is responsible
-  // for resolving it before this point — so we treat it as local rather than
-  // sending a value the backend rejects; the run-path guards against it too.
+  // Resolve the execution target at the same boundary: a per-run override
+  // (`opts.target`) wins over the persisted `cmd.target` (defaults to
+  // local). A `remotePrompt` here is a caller bug — `triggerCommandRun`
+  // must resolve it first — so we fall back to local rather than send a
+  // value the backend rejects.
   const resolvedTarget: ExecutionTarget = opts.target ??
     cmd.target ?? { kind: "local" };
   const isRemote = resolvedTarget.kind === "remote";
@@ -261,10 +249,6 @@ export async function listRunningExecutions(): Promise<string[]> {
  * the first time anyone imports this module. All consumers register handlers
  * into a shared Set, so the Tauri-side listener is created exactly once and
  * is live before any user interaction can trigger an execution.
- *
- * This is the fix for the race where `useExecutionBridge` was registering
- * `listen()` inside a useEffect: with the seed-bootstrap added, users could
- * click Run before the listen Promise resolved, dropping every event.
  */
 let unlistenPromise: Promise<UnlistenFn> | null = null;
 const handlers = new Set<(e: ExecutionEvent) => void>();
@@ -288,18 +272,9 @@ void ensureSubscribed();
 
 /**
  * Register a handler for execution events. Returns the unsubscribe function
- * synchronously — the handler is added to the in-memory Set immediately, and
- * the global Tauri listener (set up at module load via `void
- * ensureSubscribed()`) is the only thing that needs to be awaited. Use
- * `awaitBridgeReady()` separately if you need to block on listener readiness.
- *
- * Returning the unsub synchronously is important: under React StrictMode the
- * effect runs twice with the same `handleEvent` reference. If the unsub were
- * delivered via a Promise, the first effect's cleanup could fire before its
- * `.then()` resolved, leaving `cleanup = null` and letting the late `.then()`
- * decide to call `unlisten()` based on its own stale `active` flag — which
- * would then delete the only entry from the deduplicated Set, dropping every
- * subsequent event. Sync return removes that race entirely.
+ * synchronously — required to avoid a cleanup race under React StrictMode's
+ * double-invoked effects. Use `awaitBridgeReady()` if you need to block on
+ * listener readiness.
  */
 export function subscribeExecutionEvents(
   handler: (e: ExecutionEvent) => void,

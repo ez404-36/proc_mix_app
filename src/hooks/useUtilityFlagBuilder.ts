@@ -85,17 +85,11 @@ export function useUtilityFlagBuilder(
     });
   }, [utilityRange]);
 
-  // Proactively fetch ParsedCli for EVERY recognised+found utility (so flag
-  // highlights appear for each command without the user opening the
-  // builder). The fetched flags accumulate in `flagsByUtility`; the leading
-  // utility's flags also feed the single-utility flag-builder panel.
-  //
-  // We track which names have been fetched this session so a status
-  // transition loading→found for the same name doesn't refetch, and prune
-  // entries whose utility is no longer present in the script.
-  //
-  // `flagBuilderOpen` is intentionally NOT in the dep array: opening/closing
-  // the builder must not re-trigger this effect.
+  // Proactively fetches ParsedCli for every recognised+found utility so flag
+  // highlights appear without opening the builder. Results accumulate in
+  // `flagsByUtility`, keyed by name to avoid refetching and pruned when a
+  // utility leaves the script. `flagBuilderOpen` is deliberately not in the
+  // dep array — opening/closing the builder must not re-trigger this.
   const fetchedUtilitiesRef = useRef<Set<string>>(new Set());
   const flagBuilderOpenRef = useRef(flagBuilderOpen);
   flagBuilderOpenRef.current = flagBuilderOpen;

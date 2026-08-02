@@ -144,8 +144,7 @@ describe("executionStore.finishExecution", () => {
   });
 
   it("carries the timedOut flag through so the panel can surface it", () => {
-    // Regression: finishExecution previously dropped patch.timedOut, so a
-    // timed-out run looked like a generic error in the console.
+    // Regression: finishExecution must preserve patch.timedOut.
     useExecutionStore.getState().startExecution("e1", undefined, "n");
     useExecutionStore.getState().finishExecution("e1", {
       status: "error",

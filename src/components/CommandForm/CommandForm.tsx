@@ -1064,17 +1064,9 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
 
         {/*
          * LiveRunOutput sits OUTSIDE `.command-form__body` so it stays
-         * visible regardless of how many fields/hints push the body's
-         * scroll. The body scrolls; the output panel and footer are
-         * fixed-height siblings under the same flex column. This was
-         * the root fix for "терминал не видно при запуске" — embedding
-         * the panel inside the scrolling body meant a tall script
-         * textarea or sudo-detection hint pushed the panel off-screen.
-         *
-         * We render the panel only when it has something meaningful to
-         * show (any non-idle status, or lines collected) so an empty
-         * idle modal doesn't permanently reserve a strip of space at
-         * the bottom of the form.
+         * visible regardless of the body's scroll height. Rendered only
+         * when it has something to show, so an idle panel doesn't reserve
+         * space at the bottom of the form.
          */}
         {runTarget === "embedded" &&
         (runResult.status !== "idle" || runResult.lines.length > 0) ? (

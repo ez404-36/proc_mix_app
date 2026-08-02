@@ -3,12 +3,9 @@
 //!
 //! ## Why polling, not `notify`
 //!
-//! These config files change rarely and a second of latency is irrelevant, so
-//! a tiny mtime poll is more than adequate — and it deliberately avoids a new
-//! `notify` crate dependency plus its well-known gotchas (editors replace a
-//! file via atomic rename, which breaks a file-level inotify watch; you then
-//! have to watch the directory and debounce). Polling the files' modification
-//! times sidesteps all of that with a few lines and no dependency.
+//! These config files change rarely and a second of latency is irrelevant,
+//! so a tiny mtime poll is adequate without adding the `notify` crate as a
+//! dependency.
 //!
 //! ## What it emits
 //!

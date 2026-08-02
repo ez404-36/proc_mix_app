@@ -138,14 +138,7 @@ mod tests {
         );
     }
 
-    // NOTE: the "persistent alias, nothing stored" path is deliberately NOT
-    // unit-tested. With a non-empty, safe alias `resolve_password` reaches the
-    // real `keyring` backend (`sync-secret-service` on Linux — there is no
-    // in-memory mock in this build, see `security::api_token`). On a headless
-    // CI runner that has no Secret Service / D-Bus session, `get_password`
-    // returns a *backend error* — not `NoEntry` — so the helper resolves to
-    // `Err(())`, not `Ok(None)`. Both outcomes funnel to "print nothing, exit
-    // non-zero" in `main`, so the user-visible contract is identical; the
-    // distinction is only meaningful against a real keychain, which is covered
-    // at the manual QA / smoke-test layer (same rationale as `api_token`).
+    // NOTE: the "persistent alias, nothing stored" path is not unit-tested —
+    // it requires a real keyring backend, unavailable in headless CI. Covered
+    // at the manual QA / smoke-test layer.
 }

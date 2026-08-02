@@ -308,13 +308,8 @@ describe("runCommand", () => {
     expect("elevated" in payload2.req).toBe(false);
   });
 
-  // Regression: an imported command whose script begins with `sudo`
-  // arrives with `runAsAdmin: false` (import forces it off for
-  // security). Running it directly from the Library must STILL route
-  // through the elevated `sudo -S` path — otherwise the inline `sudo`
-  // runs on a null-stdin / no-TTY child and dies with "a terminal is
-  // required to read the password". The boundary derives elevation from
-  // the script body via detectAdminEscalation.
+  // Regression: elevation must still trigger for an imported command
+  // (runAsAdmin forced false) whose script self-escalates via sudo.
   it("forces `elevated: true` when the script begins with sudo even if runAsAdmin is false", async () => {
     invokeMock.mockResolvedValueOnce("exec-elev-5");
     const cmd = makeCommand({

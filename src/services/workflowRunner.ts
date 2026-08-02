@@ -108,12 +108,9 @@ type NodeVariableValues = Record<string, Record<string, string>>;
 
 /**
  * Resolve the variable values for every `command` / `condition` node that
- * references a command, REUSING `resolveVariableValues` from the
+ * references a command, reusing `resolveVariableValues` from the
  * single-command run path — so spec defaults are merged and any variable
- * with no default opens the SAME interactive prompt the Library "Run"
- * uses. Workflow nodes previously ran with an empty value map and relied
- * solely on spec defaults, so a command with a no-default variable failed
- * the whole run (`missingVariable`). This collects the values up front.
+ * with no default opens the same interactive prompt the Library "Run" uses.
  *
  * Returns a map keyed by node id (only nodes that resolved to a non-empty
  * value set are included; an all-defaulted command contributes nothing and

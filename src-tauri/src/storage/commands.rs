@@ -1252,9 +1252,7 @@ mod sqlite_integration_tests {
 
     /// Toggling a prompt flag back OFF via upsert must persist — verifies the
     /// `excluded.prompt_working_dir` / `excluded.prompt_ssh_password` entries
-    /// are present in the ON CONFLICT clause (a re-upsert of the same id must
-    /// clear a previously-set flag, exactly the re-upsert path that surfaced
-    /// the original bug).
+    /// are present in the ON CONFLICT clause.
     #[tokio::test]
     async fn upsert_can_clear_prompt_flags() {
         let pool = make_pool().await;

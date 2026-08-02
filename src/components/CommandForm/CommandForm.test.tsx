@@ -265,10 +265,8 @@ describe("CommandForm — Variables section", () => {
   });
 
   it("does NOT show the invalid-name error until the user touches the name field", async () => {
-    // Regression: an earlier version surfaced the invalid-name error
-    // immediately on Add (empty name fails the regex), which felt
-    // hostile. The error must only appear after the field has been
-    // edited or blurred, OR after the user has hit Save.
+    // Regression: the invalid-name error must only appear after the field
+    // has been edited/blurred, or after Save was clicked.
     await renderForm();
     fillRequiredFields();
     clickAddVariable();
@@ -496,10 +494,8 @@ describe("CommandForm — tabs", () => {
 
 describe("CommandForm — unsaved-changes guard", () => {
   it("clears the dirty flag on a successful save so navigation isn't blocked", async () => {
-    // Regression: saving a dirty form used to leave the host's dirty flag
-    // set, so the editor's leave-guard parked the post-save navigation
-    // behind the "discard unsaved changes?" dialog. A save must report the
-    // form as clean (onDirtyChange(false)) before it closes.
+    // Regression: a save must report the form as clean (onDirtyChange(false))
+    // before it closes, so the leave-guard doesn't block navigation.
     const { onClose, onDirtyChange } = await renderForm();
     fillRequiredFields();
 

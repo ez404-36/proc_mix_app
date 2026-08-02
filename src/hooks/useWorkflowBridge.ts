@@ -230,16 +230,10 @@ function buildStepHeaderLines(
 
 /**
  * Flush a node's buffered output into the aggregated workflow process as one
- * contiguous block: the step HEADER first, then every buffered stdout/stderr
- * line in arrival order. Emitting the header HERE (at flush, not at
- * nodeStarted) is what keeps each node's header+body together — three parallel
- * branches no longer print three headers up-front before any output.
- *
- * The header is written UNCONDITIONALLY, even when the node produced no output,
- * so a silent step still appears in the console (matching the pre-grouping
- * behaviour where every started node got a header). The node's buffer (if any)
- * is removed via `takeNodeBuffer`, so a later run-end sweep skips an
- * already-flushed node.
+ * contiguous block: the step header first, then every buffered stdout/stderr
+ * line in arrival order. The header is written unconditionally, even for a
+ * silent node, so every started node appears in the console. Removes the
+ * node's buffer via `takeNodeBuffer` so a later run-end sweep skips it.
  */
 function flushNodeOutput(
   runId: string,
@@ -259,11 +253,9 @@ function flushNodeOutput(
 
 /**
  * At run end, flush any node buffers that never received an explicit
- * `nodeFinished` — e.g. a run that errored before a node completed, or
- * fail-fast aborting sibling branches mid-stream. Without this, those nodes'
- * partial output would be silently dropped. Each remaining node's block is
- * emitted (header + buffered lines); no exit trailer, since the node has no
- * exit code. `takeAllBuffers` clears the run's buffers so nothing lingers.
+ * `nodeFinished` (e.g. an error or fail-fast abort mid-stream), so partial
+ * output isn't dropped. Each block is header + buffered lines, no exit
+ * trailer. `takeAllBuffers` clears the run's buffers.
  */
 function flushRemainingBuffers(runId: string, workflowId: string): void {
   const runStore = useWorkflowRunStore.getState();
@@ -279,37 +271,17 @@ function flushRemainingBuffers(runId: string, workflowId: string): void {
 }
 
 /**
- * Lazily register a run that was started OUTSIDE the frontend (a scheduler
- * "Run now", or any future backend-initiated workflow run). The normal
- * frontend Run path calls `registerStartedRun` (in `services/workflowRunner`)
- * with the in-memory graph BEFORE invoking, so the aggregate execution and the
- * run-store entry already exist by the time the first `workflow-event` arrives.
- * A backend-initiated run never does that, so without this bootstrap the first
- * event lands on a non-existent run/execution: `markNodeStarted` /
- * `bufferNodeLine` early-return, `startWorkflowExecution` is never called (the
- * panel never opens, no console marker), and `appendLog` /
- * `appendWorkflowStepHeader` no-op (empty output). This reproduced as the three
- * "manual schedule run" bugs.
+ * Lazily register a run started outside the frontend (e.g. a scheduler
+ * "Run now"), so the first `workflow-event` has a run-store entry and
+ * aggregate execution to attach to.
  *
- * This bootstraps ONLY the in-memory stores (run store + aggregate console
- * execution), NOT a history row. A schedule fire is already recorded by the
- * Rust side as a single canonical `scheduledRun` event (the source of truth for
- * backend runs); inserting a `workflowRun` row here would produce a DUPLICATE
- * history entry. This mirrors the command path exactly: a schedule-fired
- * command never gets a frontend `commandRun` row either — `recordRunCompletion`
- * only UPDATES a pre-existing row (a no-op for backend runs), leaving the lone
- * `scheduledRun` record. The live console still shows the run; history shows the
- * single `scheduledRun` entry.
+ * Bootstraps only the in-memory stores, not a history row — the Rust side
+ * already records the canonical `scheduledRun` history event for backend
+ * runs.
  *
- * Resolves the workflow's name and node→command map from `useWorkflowStore` by
- * `workflowId` (a saved workflow — the only kind a schedule can target — is
- * always loaded). Idempotent: when the run-store entry already exists it does
- * nothing, so a pre-registered frontend run is never touched and repeated
- * events for the same backend run register exactly once.
- *
- * Unlike `registerStartedRun` it does NOT bump the workflow's run count: that
- * stat belongs to the schedule accounting on the Rust side (a manual "Run now"
- * is explicitly out of band and must not shift the workflow's own counters).
+ * Idempotent: a no-op when the run-store entry already exists. Does not
+ * bump the workflow's run count — that belongs to schedule accounting on
+ * the Rust side.
  */
 function ensureBackendRunRegistered(runId: string, workflowId: string): void {
   if (useWorkflowRunStore.getState().runs[runId] !== undefined) {

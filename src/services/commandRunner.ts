@@ -545,19 +545,10 @@ export async function triggerCommandRun(
     return await attempt(optsWithDir);
   } catch (err) {
     if (isAdminPasswordRequiredError(err)) {
-      // First time the user runs an admin-flagged command on a fresh
-      // install (or the user previously cleared the keychain entry).
-      // Open the modal, then choose between two flows:
-      //
-      //   - remember=true  → persist via setAdminPassword, then retry
-      //     with the caller's original options (the executor reads
-      //     the password from the keychain).
-      //   - remember=false → skip persistence, retry with the password
-      //     attached to RunOptions so the Rust side uses it one-shot
-      //     and never touches the keychain.
-      //
-      // A second sentinel from the retry means sudo rejected the
-      // password — we report and bail rather than looping.
+      // No password in the keychain yet. Prompt, then either persist it
+      // (remember=true) or attach it one-shot to RunOptions (remember=false).
+      // A second sentinel from the retry means sudo rejected the password —
+      // report and bail rather than looping.
       const promptResult = await promptForAdminPassword();
       if (promptResult === null) {
         // User cancelled — quiet exit, no toast (they're aware). Finalize

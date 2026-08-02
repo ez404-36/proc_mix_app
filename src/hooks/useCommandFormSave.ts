@@ -269,12 +269,8 @@ export function useCommandFormSave(
     // If a live-run is still active when the user saves, cancel it so
     // we don't leak a background process after the modal closes.
     cancelActiveRunForSave();
-    // The changes are now persisted, so the form is no longer "dirty".
-    // Clear the host's dirty flag BEFORE navigating: `onClose` funnels
-    // through `requestNavigation`, which would otherwise see a stale
-    // dirty signal (our `isDirty` compares `form` to the original
-    // `initial` snapshot and stays true even after the save) and park the
-    // navigation behind the unsaved-changes confirm dialog.
+    // Clear the dirty flag before navigating, or `onClose` sees a stale
+    // dirty signal and parks navigation behind the unsaved-changes dialog.
     onDirtyChange?.(false);
     teardownRun();
     onClose();

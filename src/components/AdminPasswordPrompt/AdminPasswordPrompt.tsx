@@ -118,16 +118,10 @@ export function AdminPasswordPrompt(): React.ReactElement | null {
               })}
             </span>
             {/*
-              * Input + reveal button live inside a positioned wrapper
-              * so the button can overlap the input's right edge
-              * without using flex (which would shrink the input on
-              * autofill or browser-native quirks). The input itself
-              * carries `className="input"` — without it the field
-              * gets unstyled browser defaults that on dark theme
-              * render as black-on-black, making typed bullets
-              * invisible. That was the root cause of the original
-              * "input looks empty" report — adding the `input` class
-              * also restores the focus ring and theme colours.
+              * Input + reveal button live inside a positioned wrapper so
+              * the button can overlap the input's right edge. `className="input"`
+              * is required — without it, dark theme renders unstyled text
+              * black-on-black.
               */}
             <div className="admin-password-prompt__input-wrap">
               <input

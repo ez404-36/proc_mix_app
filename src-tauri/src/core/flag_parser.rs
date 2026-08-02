@@ -885,8 +885,8 @@ Options:
     }
 
     #[test]
-    fn usage_colon_prefix_still_works_after_bug3_change() {
-        // Regression: the existing `usage:` path must be unaffected.
+    fn usage_colon_prefix_still_works() {
+        // Regression: the `usage:` path must be unaffected.
         let help = "Usage: cp <SOURCE> <DEST>\n";
         let result = parse_flags(help);
         let names: Vec<&str> = result

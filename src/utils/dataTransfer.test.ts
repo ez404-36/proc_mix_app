@@ -146,10 +146,8 @@ describe("exportData", () => {
     expect(envelope.version).toBe(EXPORT_VERSION);
     expect(envelope.commands).toHaveLength(1);
     expect(envelope.workflows).toHaveLength(1);
-    // Regression: schedules are local to a machine's clock and are NEVER
-    // part of the export bundle. The envelope must not carry a `schedules`
-    // key — if a future change adds one it must be a deliberate decision,
-    // not an accident. We assert on the freshly-parsed JSON object.
+    // Regression: schedules are local to a machine's clock and must never
+    // be part of the export bundle.
     expect(parsed).not.toHaveProperty("schedules");
     // Per-install state is stripped from the export; the definition + the
     // id reference key are kept.
