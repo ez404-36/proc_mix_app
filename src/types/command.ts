@@ -362,7 +362,10 @@ export type View =
   | "recorder"
   | "settings"
   | "plugins"
-  | "env";
+  | "env"
+  | "miniapps"
+  | "miniapp-editor"
+  | "miniapp-runner";
 
 /**
  * Target for the full-screen command editor view (`command-editor`).
@@ -402,8 +405,8 @@ export interface CommandEditorTarget {
   returnTo?: View;
 }
 
-/** Active tab within the Library view: commands or workflows. */
-export type LibraryTab = "commands" | "workflows";
+/** Active tab within the Library view: commands, workflows, or mini-apps. */
+export type LibraryTab = "commands" | "workflows" | "miniapps";
 
 export type Theme = "light" | "dark" | "system";
 

@@ -283,6 +283,20 @@ pub async fn pick_env_file() -> Result<Option<String>, String> {
     Ok(path.map(|p| p.to_string_lossy().into_owned()))
 }
 
+/// Open a native «open file» dialog with NO type filter and return the chosen
+/// absolute path, or `None` when the user cancels. Used by Mini-App `path`
+/// artifacts, which reference arbitrary files (not just .env), so the picked
+/// value must be the full filesystem path — a browser `<input type="file">`
+/// only exposes the file NAME inside the Tauri webview.
+#[tauri::command]
+pub async fn pick_artifact_path() -> Result<Option<String>, String> {
+    let path = tokio::task::spawn_blocking(|| rfd::FileDialog::new().pick_file())
+        .await
+        .map_err(|e| format!("file dialog task failed: {e}"))?;
+
+    Ok(path.map(|p| p.to_string_lossy().into_owned()))
+}
+
 // --------------------------------------------------------------------------
 // "Environment" view: read-only snapshots with source detection.
 //

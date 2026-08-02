@@ -1,12 +1,16 @@
-// Smoke test for the Library view's Commands / Workflows tabs:
+// Smoke test for the Library view's Commands / Workflows / Mini-Apps tabs:
 //
-//   - the tab strip switches between the Commands list and the Workflows
-//     list;
+//   - the tab strip switches between the Commands, Workflows, and Mini-Apps
+//     lists;
 //   - workflow cards render name/description and fire Run / Delete /
-//     Favorite through the right service/store boundary.
+//     Favorite through the right service/store boundary;
+//   - mini-app cards render name/description/widget count and fire
+//     Run / Edit / Delete / Favorite through the right service/store
+//     boundary (mirrors the former standalone `MiniApps.smoke.test.tsx`,
+//     now that the Mini-Apps list lives inside the Library as a tab).
 //
-// We mock the repository surfaces (IPC) and the workflow runner so the
-// test never crosses the Tauri boundary, but the stores, services, and
+// We mock the repository surfaces (IPC) and the workflow/mini-app runners so
+// the test never crosses the Tauri boundary, but the stores, services, and
 // Library component all run unchanged. The ContextMenu provider is mounted
 // so `useContextMenu` resolves.
 
@@ -30,21 +34,36 @@ vi.mock("../../utils/historyRepository", () => ({
   updateRunHistoryEventInDb: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../utils/miniappRepository", () => ({
+  listMiniAppsFromDb: vi.fn().mockResolvedValue([]),
+  getMiniAppFromDb: vi.fn().mockResolvedValue(null),
+  saveMiniAppInDb: vi.fn().mockResolvedValue(undefined),
+  deleteMiniAppInDb: vi.fn().mockResolvedValue(undefined),
+  runStatusProbe: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("../../utils/platform", () => ({
+  getPlatform: vi.fn().mockResolvedValue("linux"),
+  getCachedPlatform: vi.fn().mockReturnValue("linux"),
+}));
+
 const triggerWorkflowRun = vi.fn().mockResolvedValue("run-1");
 vi.mock("../../services/workflowRunner", () => ({
   triggerWorkflowRun: (...args: unknown[]) => triggerWorkflowRun(...args),
 }));
 
 vi.mock("@arco-design/web-react", () => ({
-  Message: { error: vi.fn(), success: vi.fn() },
+  Message: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }));
 
 import "../../i18n";
 import { ContextMenuProvider } from "../ContextMenu";
 import { useCommandStore } from "../../stores/commandStore";
+import { useMiniAppStore } from "../../stores/miniappStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import type { Command, Workflow } from "../../types";
+import type { Command, MiniApp, MiniAppWidget, Workflow } from "../../types";
+import { listMiniAppsFromDb } from "../../utils/miniappRepository";
 import { Library } from "./Library";
 
 function makeCommand(overrides: Partial<Command> = {}): Command {
@@ -78,6 +97,32 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
   };
 }
 
+function buttonWidget(id: string): MiniAppWidget {
+  return {
+    id,
+    kind: "button",
+    layout: { x: 0, y: 0, w: 120, h: 44 },
+    label: "Go",
+    action: { kind: "inline", name: "Go", script: "echo go" },
+  };
+}
+
+function makeMiniApp(overrides: Partial<MiniApp> = {}): MiniApp {
+  return {
+    id: "ma-1",
+    name: "VPN Panel",
+    description: "Controls the office VPN",
+    widgets: [buttonWidget("w-1")],
+    tags: ["network"],
+    favorite: false,
+    createdAt: "2026-07-31T00:00:00.000Z",
+    updatedAt: "2026-07-31T00:00:00.000Z",
+    runCount: 0,
+    panelSize: { w: 400, h: 320 },
+    ...overrides,
+  };
+}
+
 function resetStores(): void {
   useCommandStore.setState({
     commands: [],
@@ -86,11 +131,19 @@ function resetStores(): void {
     hydrated: true,
   });
   useWorkflowStore.setState({ workflows: [], hydrated: true });
+  useMiniAppStore.setState({
+    miniapps: [],
+    favorites: [],
+    hydrated: true,
+    seedsInitialized: true,
+  });
   useUIStore.setState({
     libraryTab: "commands",
     editorWorkflowId: null,
     currentView: "library",
     commandEditorTarget: null,
+    miniappEditorId: null,
+    miniappRunnerId: null,
   });
 }
 
@@ -100,6 +153,34 @@ function renderLibrary(): void {
       <Library />
     </ContextMenuProvider>,
   );
+}
+
+/**
+ * Render the Library and flush the Mini-Apps tab's post-mount
+ * `hydrateFromDb` effect, so the resolved IPC promise never lands after the
+ * test body (which React reports as an un-acted update). The mocked
+ * `listMiniAppsFromDb` echoes the state the test staged, so hydrating is a
+ * no-op rather than a wipe.
+ */
+async function renderLibraryWithMiniApps(): Promise<void> {
+  vi.mocked(listMiniAppsFromDb).mockResolvedValue(
+    useMiniAppStore.getState().miniapps,
+  );
+  await act(async () => {
+    render(
+      <ContextMenuProvider>
+        <Library />
+      </ContextMenuProvider>,
+    );
+  });
+}
+
+/** Find the card whose title matches `name`. */
+function cardFor(name: string): HTMLElement {
+  const title = screen.getByText(name);
+  const card = title.closest(".list-tile");
+  if (card === null) throw new Error(`no card for "${name}"`);
+  return card as HTMLElement;
 }
 
 // jsdom does not implement scrollIntoView; the custom Dropdown calls it
@@ -113,6 +194,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetStores();
+  vi.clearAllMocks();
 });
 
 describe("Library tabs", () => {
@@ -421,6 +503,197 @@ describe("Library Commands tab — editor navigation", () => {
       mode: "edit",
       commandId: "c-1",
     });
+  });
+});
+
+describe("Library Mini-Apps tab", () => {
+  it("switches to the Mini-Apps tab from the tab strip", async () => {
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp()],
+      favorites: [],
+      hydrated: true,
+      seedsInitialized: true,
+    });
+    await renderLibraryWithMiniApps();
+
+    expect(screen.queryByText("VPN Panel")).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Mini-Apps" }));
+    });
+
+    expect(useUIStore.getState().libraryTab).toBe("miniapps");
+    expect(screen.getByText("VPN Panel")).toBeTruthy();
+    expect(screen.getByText("Controls the office VPN")).toBeTruthy();
+  });
+
+  it("shows the teaching empty state when there are no mini-apps", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    await renderLibraryWithMiniApps();
+
+    expect(screen.getByText("No mini-applications yet.")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Start from example" }),
+    ).toBeTruthy();
+  });
+
+  it("renders the name, description, widget count, and tags", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [
+        makeMiniApp({
+          widgets: [buttonWidget("w-1"), buttonWidget("w-2")],
+          tags: ["network", "vpn"],
+        }),
+      ],
+      favorites: [],
+      hydrated: true,
+      seedsInitialized: true,
+    });
+    await renderLibraryWithMiniApps();
+
+    const card = cardFor("VPN Panel");
+    expect(within(card).getByText("Controls the office VPN")).toBeTruthy();
+    expect(within(card).getByText("2 widgets")).toBeTruthy();
+    expect(within(card).getByText("network")).toBeTruthy();
+    expect(within(card).getByText("vpn")).toBeTruthy();
+  });
+
+  it("Run opens the runner for that mini-app", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp()],
+      favorites: [],
+      hydrated: true,
+      seedsInitialized: true,
+    });
+    await renderLibraryWithMiniApps();
+
+    act(() => {
+      fireEvent.click(
+        within(cardFor("VPN Panel")).getByRole("button", { name: "Run" }),
+      );
+    });
+
+    expect(useUIStore.getState().currentView).toBe("miniapp-runner");
+    expect(useUIStore.getState().miniappRunnerId).toBe("ma-1");
+  });
+
+  it("Edit opens the editor for that mini-app", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp()],
+      favorites: [],
+      hydrated: true,
+      seedsInitialized: true,
+    });
+    await renderLibraryWithMiniApps();
+
+    act(() => {
+      fireEvent.click(
+        within(cardFor("VPN Panel")).getByRole("button", { name: "Edit" }),
+      );
+    });
+
+    expect(useUIStore.getState().currentView).toBe("miniapp-editor");
+    expect(useUIStore.getState().miniappEditorId).toBe("ma-1");
+  });
+
+  it("New Mini-App navigates to the editor with no target id", async () => {
+    useUIStore.setState({
+      libraryTab: "miniapps",
+      miniappEditorId: "ma-1",
+    });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp({ id: "ma-1" })],
+      favorites: [],
+      hydrated: true,
+      seedsInitialized: true,
+    });
+    await renderLibraryWithMiniApps();
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Create mini-app" }),
+      );
+    });
+
+    expect(useUIStore.getState().currentView).toBe("miniapp-editor");
+    expect(useUIStore.getState().miniappEditorId).toBeNull();
+  });
+
+  it("right-click Delete raises a confirm dialog, and confirming removes the mini-app", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp()],
+      favorites: [],
+      hydrated: true,
+      seedsInitialized: true,
+    });
+    await renderLibraryWithMiniApps();
+
+    act(() => {
+      fireEvent.contextMenu(cardFor("VPN Panel"));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    });
+
+    expect(screen.getByText("Delete mini-app?")).toBeTruthy();
+    expect(useMiniAppStore.getState().miniapps).toHaveLength(1);
+
+    const dialog = screen.getByRole("dialog");
+    act(() => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    });
+
+    expect(useMiniAppStore.getState().miniapps).toEqual([]);
+  });
+
+  it("Favorite toggles the mini-app's favorite flag in the store", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp({ favorite: false })],
+      favorites: [],
+      hydrated: true,
+      seedsInitialized: true,
+    });
+    await renderLibraryWithMiniApps();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Favorite" }));
+    });
+
+    expect(useMiniAppStore.getState().miniapps[0]?.favorite).toBe(true);
+  });
+
+  it("filters by search query", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [
+        makeMiniApp({ id: "ma-1", name: "VPN Panel", tags: ["network"] }),
+        makeMiniApp({
+          id: "ma-2",
+          name: "Docker Tools",
+          description: "Container helpers",
+          tags: ["docker"],
+        }),
+      ],
+      favorites: [],
+      hydrated: true,
+      seedsInitialized: true,
+    });
+    await renderLibraryWithMiniApps();
+
+    const field = screen.getByPlaceholderText(
+      "Search mini-apps by name, description, or tag…",
+    );
+    act(() => {
+      fireEvent.change(field, { target: { value: "docker" } });
+    });
+
+    expect(screen.getByText("Docker Tools")).toBeTruthy();
+    expect(screen.queryByText("VPN Panel")).toBeNull();
   });
 });
 

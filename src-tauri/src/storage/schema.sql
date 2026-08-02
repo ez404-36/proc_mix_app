@@ -194,6 +194,45 @@ CREATE INDEX IF NOT EXISTS idx_workflows_last_run_at ON workflows(last_run_at);
 -- ensure_workflows_columns (AFTER the column is guaranteed to exist), NOT here —
 -- same ordering reason as idx_commands_api_slug above.
 
+-- Mini-Apps: compact custom panels of widgets (button / toggle / status /
+-- artifact) built on top of existing ProcMix commands or inline scripts
+-- (see docs/plans/plan-mini-prilozhenia-mini-apps-v-procmix.md). Mirrors the
+-- `workflows` JSON-blob pattern: the widget tree is persisted as a single
+-- JSON-encoded TEXT column (`widgets_json`) decoded by
+-- storage/miniapps.rs; scalar columns back the indexes. Mini-Apps hold no
+-- execution engine of their own — a button runs an existing command (by id)
+-- or an inline script through the existing runner.
+CREATE TABLE IF NOT EXISTS miniapps (
+  id            TEXT PRIMARY KEY NOT NULL,
+  name          TEXT NOT NULL,
+  -- Optional i18next keys for the display name / description. Set ONLY by
+  -- built-in seed mini-apps (mirrors commands.name_key / description_key);
+  -- NULL for every user-created mini-app.
+  name_key        TEXT,
+  description   TEXT,
+  description_key TEXT,
+  icon          TEXT,
+  widgets_json  TEXT NOT NULL DEFAULT '[]',
+  tags_json     TEXT NOT NULL DEFAULT '[]',
+  category_id   TEXT,
+  favorite      INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  last_run_at   TEXT,
+  run_count     INTEGER NOT NULL DEFAULT 0,
+  -- JSON-encoded optional target-OS restriction (array of
+  -- "linux"|"macos"|"windows"). NULL = universal (runs on every OS).
+  os_json       TEXT,
+  -- JSON-encoded main-panel pixel dimensions `{"w":..,"h":..}`. NOT NULL with
+  -- a compact-control-panel default so a pre-panelSize row hydrates at
+  -- 400×320 (mirrors the Rust `default_panel_size` serde default).
+  panel_size_json TEXT NOT NULL DEFAULT '{"w":400.0,"h":320.0}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_miniapps_favorite ON miniapps(favorite);
+CREATE INDEX IF NOT EXISTS idx_miniapps_last_run_at ON miniapps(last_run_at);
+
+
 -- Schedules: cron-driven automatic runs of a command OR a workflow (v0.2.0).
 -- The Scheduler (core/scheduler.rs) runs a single in-process Tokio loop that
 -- fires each enabled schedule when its `cron` expression becomes due. Runs

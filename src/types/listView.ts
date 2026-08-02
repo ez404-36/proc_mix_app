@@ -18,6 +18,9 @@ export type CommandSortKey = "createdAt" | "name";
 /** Sort keys for the Workflows list. Same semantics as {@link CommandSortKey}. */
 export type WorkflowSortKey = "createdAt" | "name";
 
+/** Sort keys for the Mini-Apps list. Same semantics as {@link CommandSortKey}. */
+export type MiniAppSortKey = "createdAt" | "name";
+
 /**
  * Sort keys for the Schedules list. `runCount` sorts by total fires.
  * Per-status (success / error) sorting is intentionally absent until the
@@ -26,7 +29,11 @@ export type WorkflowSortKey = "createdAt" | "name";
 export type ScheduleSortKey = "createdAt" | "name" | "runCount";
 
 /** Union of every list's sort key — useful for generic helpers. */
-export type ListSortKey = CommandSortKey | WorkflowSortKey | ScheduleSortKey;
+export type ListSortKey =
+  | CommandSortKey
+  | WorkflowSortKey
+  | MiniAppSortKey
+  | ScheduleSortKey;
 
 /**
  * How a list renders its items:
@@ -56,4 +63,5 @@ export interface ListViewState<K extends ListSortKey> {
 
 export type CommandViewState = ListViewState<CommandSortKey>;
 export type WorkflowViewState = ListViewState<WorkflowSortKey>;
+export type MiniAppViewState = ListViewState<MiniAppSortKey>;
 export type ScheduleViewState = ListViewState<ScheduleSortKey>;

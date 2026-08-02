@@ -18,6 +18,7 @@ import { RemoteHostPrompt } from "./components/RemoteHostPrompt/RemoteHostPrompt
 import { SshPasswordPrompt } from "./components/SshPasswordPrompt/SshPasswordPrompt";
 import { Home } from "./components/Home";
 import { Library } from "./components/Library";
+import { MiniAppEditor, MiniAppRunner } from "./components/MiniApps";
 import { SchedulerTab, ScheduleEditor } from "./components/Scheduler";
 // Lazy-load the workflow Editor so @xyflow/react (~178 kB) is split into its
 // own async chunk rather than the startup bundle. The editor is only reached
@@ -118,6 +119,16 @@ function renderView(view: View): ReactElement {
       return <Settings />;
     case "plugins":
       return <Plugins />;
+    case "miniapps":
+      // The standalone Mini-Apps view no longer has a sidebar entry — it is
+      // reached only via the Library's Mini-Apps tab. This case remains so
+      // `View` stays exhaustive without special-casing the switch; nothing
+      // navigates here anymore (see `docs/glossary.md` navigation notes).
+      return <Library />;
+    case "miniapp-editor":
+      return <MiniAppEditor />;
+    case "miniapp-runner":
+      return <MiniAppRunner />;
   }
 }
 

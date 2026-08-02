@@ -25,13 +25,14 @@ export type DuplicateChoice = "rename" | "skip";
 
 /**
  * The resolved import plan handed to `applyImport`:
- *   - `commandIds` / `workflowIds`: the subset to import.
+ *   - `commandIds` / `workflowIds` / `miniappIds`: the subset to import.
  *   - `rename`: imported command id → the new, unique name it should be
  *     created under (only for name-duplicates resolved to "rename").
  */
 export interface ImportSelection {
   commandIds: ReadonlySet<string>;
   workflowIds: ReadonlySet<string>;
+  miniappIds: ReadonlySet<string>;
   rename: ReadonlyMap<string, string>;
 }
 
@@ -46,7 +47,12 @@ export interface ResolveImportInput {
   commands: ReadonlyArray<ResolveImportCommand>;
   /** Workflows the user resolved to import. */
   workflowIds: ReadonlyArray<string>;
-  /** Command ids force-included by a selected workflow (cannot be skipped). */
+  /** Mini-apps the user resolved to import. */
+  miniappIds?: ReadonlyArray<string>;
+  /**
+   * Command ids force-included by a selected workflow or mini-app (cannot be
+   * skipped).
+   */
   forcedCommandIds: ReadonlySet<string>;
   /** Imported command id → its duplicate match, for flagged commands only. */
   duplicates: ReadonlyMap<string, DuplicateMatch>;
@@ -118,6 +124,7 @@ export function resolveImportSelection(
   return {
     commandIds,
     workflowIds: new Set(input.workflowIds),
+    miniappIds: new Set(input.miniappIds ?? []),
     rename,
   };
 }

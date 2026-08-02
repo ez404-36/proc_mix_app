@@ -25,6 +25,11 @@
   --color-accent-subtle: rgba(79, 140, 247, 0.12);
   --color-success: #16a34a;
   --color-bg-subtle: #f1f5f9;
+  /* Background for popups floating ABOVE the page (dropdown / tag-suggest /
+     emoji-grid / artifact-ref popups). Every call site used to spell it
+     `var(--color-bg-elevated, var(--color-bg))` for a token that was never
+     declared anywhere; it is declared here so a rename is a single edit. */
+  --color-bg-elevated: #ffffff;
   --color-surface-hover: rgba(15, 23, 42, 0.05);
   /* Monospace stack is theme-independent; declared once here, dark inherits. */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -105,6 +110,9 @@
   --color-accent-subtle: rgba(96, 165, 250, 0.18);
   --color-success: #4ade80;
   --color-bg-subtle: #162133;
+  /* One step lighter than `--color-surface`, so a popup reads as floating
+     above the panel it overlays rather than merging into it. */
+  --color-bg-elevated: #253449;
   --color-surface-hover: rgba(255, 255, 255, 0.07);
 
   --console-bg: #0b1220;
@@ -562,6 +570,12 @@ select {
   border-left: 3px solid var(--app-color-edit);
 }
 
+/* Mini-app cards reuse the same list-tile skeleton; the accent border
+ * distinguishes them from commands/workflows/schedules at a glance. */
+.list-tile--miniapp {
+  border-left: 3px solid var(--color-accent);
+}
+
 .type-badge {
   font-size: 10px;
   font-weight: 700;
@@ -732,6 +746,19 @@ select {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: none;
+}
+
+/* Mini-app icon rendered before the title in a list tile and the runner
+ * header. Both an emoji span and a data-URI <img> (rendered by `renderIcon`)
+ * need the same inline footprint + right margin so they hug the title text. */
+.list-tile__icon,
+.view-title__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  margin-right: 6px;
   flex: none;
 }
 
@@ -3751,7 +3778,7 @@ body.is-editor-fullscreen .output-panel {
   list-style: none;
   border-radius: 8px;
   border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated, var(--color-bg));
+  background: var(--color-bg-elevated);
   box-shadow: var(--shadow-sm);
   max-height: 200px;
   overflow-y: auto;
@@ -3768,6 +3795,92 @@ body.is-editor-fullscreen .output-panel {
 .tag-suggest__option--active {
   background: var(--color-bg-subtle);
   color: var(--color-primary);
+}
+
+/* ---- Mini-App icon picker (emoji grid + SVG/PNG upload) ---- */
+/* Reused in the editor's metadata fields; the emoji grid mirrors the
+ * `.tag-suggest` popup's elevated, shadowed, z-200 treatment. */
+.icon-picker {
+  position: relative;
+}
+
+.icon-picker__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.icon-picker__preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  overflow: hidden;
+}
+
+.icon-picker__placeholder {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--color-text-muted);
+}
+
+/* Hidden file input surfaced via a programmatic `.click()` from the Upload
+ * button; `display: none` keeps it out of the layout while remaining
+ * clickable in the Tauri webview. */
+.icon-picker__file-input {
+  display: none;
+}
+
+.icon-picker__emoji-grid {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 2px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  max-width: 320px;
+  max-height: 264px;
+  overflow-y: auto;
+}
+
+.icon-picker__emoji-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.icon-picker__emoji-btn:hover {
+  background: var(--color-bg-subtle);
+}
+
+.icon-picker__emoji-btn.is-selected {
+  background: var(--color-accent-subtle);
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
 }
 
 /* Locked-state styling for the admin checkbox: visually softened so
@@ -5372,7 +5485,7 @@ body.is-editor-fullscreen .output-panel {
 .wf-node__predicate {
   flex: 1;
   min-width: 0;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--color-text-muted);
   white-space: nowrap;
@@ -6185,6 +6298,15 @@ body.is-editor-fullscreen .output-panel {
 .export-tree__count {
   margin: 12px 20px 0;
   font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* Footnote under the selection tree (e.g. the export dialog's note that
+ * secret artifact values are never written to the file). */
+.export-tree__note {
+  margin: 6px 20px 0;
+  font-size: 11px;
+  font-style: italic;
   color: var(--color-text-muted);
 }
 
@@ -8295,7 +8417,7 @@ body.is-editor-fullscreen .output-panel {
   max-width: 70vw;
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: var(--color-bg-elevated, var(--color-bg));
+  background: var(--color-bg-elevated);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
@@ -8486,7 +8608,7 @@ body.is-editor-fullscreen .output-panel {
   list-style: none;
   border-radius: 6px;
   border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated, var(--color-bg));
+  background: var(--color-bg-elevated);
   box-shadow: var(--shadow-sm);
   max-height: 240px;
   overflow-y: auto;
@@ -9619,4 +9741,1066 @@ body.is-editor-fullscreen .output-panel {
 
 .sound-settings .sound-config-editor__custom-list {
   max-width: 320px;
+}
+
+/* ---- Mini-Apps list: empty state ---------------------------------------- */
+/* Offers a worked example alongside Create. Layered on the shared
+   `.empty-state`. */
+.miniapps-empty__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+/* ---- Mini-Apps runner ---------------------------------------------------- */
+/* Runtime widget panel for a single mini-app (the `miniapp-runner` view).
+   The panel is a relative canvas: each widget is placed at its absolute
+   `layout` x/y inside a `.miniapp-runner__widget-slot`, whose inline style
+   sets left/top/width/height. The slot centers its widget, and the widget
+   card fills the slot. Tokens only — no hardcoded colours. */
+
+.miniapp-runner__panel {
+  position: relative;
+  min-height: 400px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+/* Absolutely positioned widget slot. Inline style supplies left/top/width/
+   height; this rule centers the widget card within its layout box. */
+.miniapp-runner__widget-slot {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.miniapp-widget {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+/* Button / toggle cards host a `.btn` or `.toggle-switch` control that
+   already carries its own vertical padding (or a fixed height); doubling up
+   with the base card's 14px top/bottom padding pushes the combined minimum
+   intrinsic height past the compact `MIN_WIDGET_H_BUTTON` floor the editor
+   enforces (`MiniAppEditor.tsx`), which is what clipped the control against
+   the card's rounded corners at the default/minimum widget height. Cuts the
+   card's own vertical padding down to what the control needs on top of its
+   own chrome. */
+.miniapp-widget--button {
+  padding: 6px 12px;
+}
+
+/* Runner-only: strips the card chrome (border/background) so a widget reads
+   as a bare control on the panel background, while keeping the layout box
+   model (size/centering) and a little breathing-room padding so widgets
+   don't visually collide. The editor's WYSIWYG preview never sets this — it
+   keeps the bordered card look for selection/drag affordances. */
+.miniapp-widget--chromeless {
+  border: none;
+  border-radius: 0;
+  background: none;
+  padding: 4px;
+}
+
+.miniapp-widget--chromeless.miniapp-widget--button {
+  padding: 4px;
+}
+
+.miniapp-widget__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+/* Static styled-text widget. Base only: overflow / wrapping / box model.
+   The dynamic style values (font-size, color, weight, italic, alignment)
+   are author data supplied inline per widget — never hardcoded here. */
+.miniapp-widget__text {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: auto;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* A button widget fills its card so a single control reads as the whole
+   widget. The row wrapper carries the broken-reference marker beside it. */
+.miniapp-widget__button-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.miniapp-widget__button {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
+}
+
+/* A widget whose action / status source points at a deleted command. The
+   control is disabled; this dims it so the breakage reads at a glance. */
+.miniapp-widget__button.is-broken,
+.miniapp-widget__status.is-broken {
+  opacity: 0.6;
+}
+
+/* Warning marker rendered next to a broken widget. Inherits the icon's
+   16×16 currentColor glyph; the danger token carries the meaning. */
+.miniapp-widget__broken {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  color: var(--color-danger);
+}
+
+/* Toggle widget: the shared `ToggleSwitch` component + label + inline status
+   badge when a status source is configured. The switch itself is styled by
+   the `.toggle-switch` family — do NOT re-declare it here. */
+.miniapp-widget__toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.miniapp-widget__toggle .miniapp-widget__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+/* Marks a switch position that is NOT verified against the real world (no
+   status source, or a status source with no `onValue` mapping). */
+.miniapp-widget__unverified {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  cursor: help;
+}
+
+/* A configured button icon (emoji / data URI) sits where the run glyph
+   would, so both variants occupy the same footprint. */
+.miniapp-widget__button-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* Status widget: label above an inline badge. The same badge is reused
+   inline next to a status-backed toggle. */
+.miniapp-widget__status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.miniapp-widget__status-inline {
+  display: inline-flex;
+}
+
+.miniapp-widget__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.miniapp-widget__badge--ok {
+  color: var(--color-success);
+}
+
+.miniapp-widget__badge--error {
+  color: var(--color-danger);
+}
+
+.miniapp-widget__badge--loading,
+.miniapp-widget__badge--idle {
+  color: var(--color-text-muted);
+}
+
+/* No mapping rule matched the probe's raw value — distinct from `--ok` so a
+   real match is never confused with "the probe ran but nothing recognised
+   it". */
+.miniapp-widget__badge--unmatched {
+  color: var(--color-warning, #b45309);
+}
+
+.miniapp-widget__badge--loading svg {
+  animation: miniapp-widget-spin 0.9s linear infinite;
+}
+
+@keyframes miniapp-widget-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Artifact widget: label above an editable input. Path shows a text input +
+   a "browse" button (native OS file dialog) + an "open" button; secret shows a password
+   input with a reveal toggle; text shows a plain editable input. The inputs
+   reuse the global `.input` chrome; the variant-specific rules below only
+   size them to fill the row and keep the action buttons from shrinking. */
+.miniapp-widget__artifact {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.miniapp-widget__path-row,
+.miniapp-widget__secret-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Editable artifact inputs: stretch to fill the row, keep a compact height
+   so a label + input fits inside the default 56px artifact slot. Inherits
+   the `.input` border/focus chrome — these rules only adjust geometry. */
+.miniapp-widget__path-input,
+.miniapp-widget__secret-input,
+.miniapp-widget__text-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.miniapp-widget__browse,
+.miniapp-widget__open,
+.miniapp-widget__reveal {
+  flex-shrink: 0;
+}
+
+/* ---- Mini-App editor (full-screen `miniapp-editor` view) ----------------- */
+/* Mirrors the schedule-editor frame: a sticky-ish header row with the back /
+   save actions and a scrollable, width-constrained form column below. The
+   fields themselves reuse the generic `.form-field` / `.form-hint` / `.input`
+   chrome, so this block only defines the page frame and the widget-card /
+   sub-form geometry. */
+.ma-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ma-editor__header {
+  flex-shrink: 0;
+}
+
+.ma-editor__title-wrap,
+.miniapp-runner__title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ma-editor__row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ma-editor__row > .form-field {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* Kind caption at the top of the properties inspector. (The rest of the
+   pre-canvas `.ma-editor__widget*` list-card family was removed with the
+   editor refactor that replaced the list with the canvas builder.) */
+.ma-editor__widget-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* A bordered sub-form block grouping related fields (an action, the status
+   config). Visually nests one level inside a properties section. */
+.ma-editor__subform {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+}
+
+.ma-editor__subform-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+/* The status-mapping rule rows. */
+.ma-editor__rules {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* One rule's controls + its own error line stacked below (the regex
+   validation message belongs to the row, not the whole rules list). */
+.ma-editor__rule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ma-editor__rule {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ma-editor__rule > .input {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+/* The exact/contains/regex selector at the start of a rule row. Fixed width
+   so the row does not reflow every time a longer mode label is selected. */
+.ma-editor__match-mode {
+  flex: 0 0 110px;
+}
+
+/* Colour picker for one mapping rule: a swatch row over a free-text field for
+   a literal value. Takes the full rule-row width so the swatches never wrap
+   into single-column stripes. */
+.ma-editor__rule-color {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.ma-editor__swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* One theme-token colour choice. The fill comes from an inline style (it IS
+   the value being picked, and is always a `var(--token)` reference). */
+.ma-editor__swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  flex: none;
+  border: 2px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ma-editor__swatch:hover {
+  border-color: var(--color-primary);
+}
+
+.ma-editor__swatch.is-selected {
+  border-color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+}
+
+.ma-editor__rule-color-input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* The "default text colour" swatch: a checkerboard-ish neutral tile (no fill),
+   distinguishing "clear the colour" from any concrete token. */
+.ma-editor__swatch--default {
+  background-color: var(--color-surface);
+  background-image: linear-gradient(
+    135deg,
+    transparent 45%,
+    var(--color-border) 45%,
+    var(--color-border) 55%,
+    transparent 55%
+  );
+}
+
+/* ---- Mini-App editor: text-widget style controls ------------------------- */
+/* Grouped font-size / colour / bold / italic / alignment controls for a text
+   widget, stacked in the properties panel's Content section. */
+.ma-text-style-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Segmented left/center/right alignment selector. */
+.ma-editor__align {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.ma-editor__align-option {
+  padding: 4px 12px;
+  border: none;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.ma-editor__align-option:last-child {
+  border-right: none;
+}
+
+.ma-editor__align-option:hover {
+  color: var(--color-text);
+}
+
+.ma-editor__align-option.is-selected {
+  background: var(--color-primary);
+  /* White-on-primary, matching `.btn--primary` (no token exists for this). */
+  color: #ffffff;
+}
+
+/* ---- Mini-App editor: visual canvas (three-pane) ------------------------- */
+/* Replaces the form column with a low-code canvas builder: a draggable widget
+   palette (left), an absolute-positioned canvas (center), and a properties
+   inspector (right). Palette→canvas creation uses HTML5 DnD (the
+   `application/procmix-widget` MIME), mirroring the workflow palette; on-canvas
+   repositioning uses a pointer-capture drag snapped to GRID_SIZE, mirroring the
+   Terminal split-handle drag. All colours are tokens — no hex. */
+
+/* A `.form-hint` rendered in the danger colour when an editor field is
+   invalid (e.g. an artifact `name` that isn't a valid identifier). */
+.ma-editor__field-error {
+  color: var(--color-danger);
+}
+
+/* "Test probe now" result panel: raw output + the live mapped preview,
+   shown right below the status source script so a user can write matching
+   rules with the actual output in view. */
+.ma-editor__probe-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.ma-editor__probe-result--error {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* The probe's raw stdout: bounded height so a chatty command cannot push the
+   rest of the properties panel out of view. */
+.ma-editor__probe-output {
+  margin: 0;
+  max-height: 140px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--color-bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ma-editor__probe-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The live-mapped preview badge — mirrors the runner's status badge glyph +
+   label pairing so what the user sees here matches what the panel will show. */
+.ma-editor__probe-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  font-weight: 600;
+}
+
+.ma-editor__probe-badge--error {
+  color: var(--color-danger);
+}
+
+.ma-editor__probe-badge--ok {
+  color: var(--color-success);
+}
+
+.ma-editor__probe-badge--unmatched {
+  color: var(--color-warning, #b45309);
+}
+
+/* Aggregate "N problems" badge shown beside Save once validation errors are
+   revealed. Purely informational — Save stays clickable. */
+.ma-editor__issue-count {
+  align-self: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-danger);
+  white-space: nowrap;
+}
+
+/* Second toolbar row below the header, mirroring `.wf-toolbar`: the
+   read-only mini-app name, the Properties button (opens
+   `MiniAppMetaModal`), and Undo/Redo. */
+.ma-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ma-toolbar__name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.ma-toolbar__spacer {
+  flex: 1;
+}
+
+/* Subtle asterisk shown beside the Save buttons while the draft has unsaved
+   changes. Purely informational — the Save buttons stay clickable. */
+.ma-editor__dirty-indicator {
+  align-self: center;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-warning, #b45309);
+  user-select: none;
+}
+
+/* The three-pane work area: fills all height left below the header. */
+.ma-canvas-editor {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 12px;
+  padding: 0 0 12px;
+  overflow: hidden;
+}
+
+/* Shared small uppercase caption that tops each pane (palette / properties). */
+.ma-canvas-editor__pane-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin: 0 0 4px;
+}
+
+/* ---- Palette (left) ----------------------------------------------------- */
+.ma-canvas-editor__palette {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  overflow-y: auto;
+}
+
+/* A draggable + clickable palette entry (one per widget kind). It is a real
+   `btn btn--ghost` (keyboard-reachable, like `.wf-palette__btn`), so this rule
+   only carries the deltas: full-width left-aligned layout and the grab cursor
+   that signals the DnD affordance. A plain click also adds the widget at a
+   cascade default. */
+.ma-palette__item {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  cursor: grab;
+  user-select: none;
+}
+
+.ma-palette__item:active {
+  cursor: grabbing;
+}
+
+/* ---- Canvas (center) ---------------------------------------------------- */
+.ma-canvas-editor__canvas {
+  flex: 1;
+  position: relative;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background-color: var(--color-surface);
+  background-image: radial-gradient(
+    circle,
+    var(--color-border) 1px,
+    transparent 1px
+  );
+  background-size: 16px 16px;
+}
+
+/* Active drag from the palette. The canvas — not just the panel — accepts the
+   drop (an off-panel drop lands at the nearest legal panel position), so the
+   whole surface advertises itself as a target. */
+.ma-canvas-editor__canvas.is-drop-target {
+  border-color: var(--color-primary);
+}
+
+/* The bordered main panel — the bordered rectangle widgets live inside. It
+   sits centered on the dotted grid (`margin: auto`), so it is the positioned
+   ancestor for absolutely-placed widgets. Width/height come from the
+   mini-app's `panelSize` (inline style); the handle resizes it. */
+.ma-canvas-panel {
+  position: relative;
+  margin: 24px auto;
+  border: 1px solid var(--color-primary);
+  border-radius: 8px;
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  /* Clip anything reaching past the border, so the editor shows exactly what
+     the runner will: `.miniapp-runner__panel` renders at `panelSize` too.
+     Without this an out-of-bounds widget draws over the surrounding dotted
+     grid, where it looks placed, and the two views disagree about the layout. */
+  overflow: hidden;
+}
+
+/* The panel is the widget-bearing region, so it gets the stronger highlight
+   while a palette drag is in flight. */
+.ma-canvas-panel.is-drop-target {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
+}
+
+/* Bottom-right resize grip. A small triangular handle rendered with a
+   border-triangle using the primary token, plus a wider hit area. Pointer
+   capture is grabbed in JS (`onPanelResizeStart`), so the visible grip just
+   needs to advertise the drag affordance. Anchored flush to the corner (not
+   overhanging it) because the panel now clips its overflow. */
+.ma-canvas-panel__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background-color: transparent;
+}
+
+.ma-canvas-panel__resize::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 0 14px 14px;
+  border-color: transparent transparent var(--color-primary) transparent;
+  border-bottom-right-radius: 6px;
+}
+
+/* Centered "drag widgets here" hint. Layers positioning-only deltas on the
+   shared `.empty-state` (the documented `form-hint scheduler-runs-hint`
+   pattern); `pointer-events: none` keeps background clicks deselecting. */
+.ma-canvas__empty {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 24px;
+  border: none;
+  background: none;
+  pointer-events: none;
+}
+
+/* While a drag is in flight over a panel that ALREADY has widgets, the hint
+   stays visible but dimmed and backed, so it reads as an overlay naming the
+   drop target rather than as panel content. */
+.ma-canvas__empty.is-overlay {
+  background: var(--color-surface);
+  opacity: 0.75;
+}
+
+/* An absolutely-positioned widget block on the canvas. Width/height come from
+   its `layout.w`/`layout.h`; left/top from `layout.x`/`layout.y`. */
+.ma-canvas-widget {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: move;
+  user-select: none;
+  overflow: hidden;
+}
+
+.ma-canvas-widget:hover {
+  border-color: var(--color-primary);
+}
+
+/* The widget block is focusable (`tabIndex={0}`) so the properties inspector
+   is reachable without a mouse; make that focus visible. */
+.ma-canvas-widget:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.ma-canvas-widget.is-selected {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+  /* Resize handles and the delete affordance sit half-outside the box (e.g.
+     `left: -5px`); reveal them while a widget is selected. Text ellipsis is
+     handled by the preview label's own overflow, so this is safe. */
+  overflow: visible;
+}
+
+/* A widget that failed validation, marked once the user presses Save. The
+   danger border survives selection (it is the more urgent signal) so the
+   offending widget stays findable on a crowded panel. */
+.ma-canvas-widget.is-invalid,
+.ma-canvas-widget.is-invalid:hover,
+.ma-canvas-widget.is-invalid.is-selected {
+  border-color: var(--color-danger);
+}
+
+/* WYSIWYG preview: the wrapper hosts the REAL runtime `.miniapp-widget`, so
+   the editor shows what the runner will render.
+
+   `pointer-events: none` is the whole contract — every pointer event falls
+   through to `.ma-canvas-widget`, which owns select + drag, so no preview
+   control can be clicked (and no action can fire from the editor). The inner
+   widget drops its own border/background: the canvas wrapper already draws
+   the selection/invalid chrome, and two nested cards read as a double
+   border. */
+.ma-canvas-widget__preview {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  pointer-events: none;
+}
+
+.ma-canvas-widget__preview .miniapp-widget {
+  border: none;
+  border-radius: 0;
+  background: none;
+  padding: 6px 8px;
+  gap: 4px;
+}
+
+/* The × affordance that appears on a selected widget (top-right corner). Its
+   pointerdown is stopped so clicking it never starts a move drag. */
+.ma-canvas-widget__delete {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--color-danger);
+  background: var(--color-surface);
+  color: var(--color-danger);
+  cursor: pointer;
+}
+
+.ma-canvas-widget__delete:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+/* Corner resize handles shown on the selected widget. Each is a small square
+   centered on a corner (offset by half its size so the corner sits on the
+   border). Hidden unless the widget is selected — the resize logic lives in
+   `onWidgetResizeStart`. */
+.ma-canvas-widget__resize-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background-color: var(--color-primary);
+  border: 2px solid var(--color-surface);
+  border-radius: 2px;
+  z-index: 1;
+}
+
+.ma-canvas-widget:not(.is-selected) .ma-canvas-widget__resize-handle {
+  display: none;
+}
+
+.ma-canvas-widget__resize-handle--nw {
+  left: -5px;
+  top: -5px;
+  cursor: nwse-resize;
+}
+
+.ma-canvas-widget__resize-handle--ne {
+  right: -5px;
+  top: -5px;
+  cursor: nesw-resize;
+}
+
+.ma-canvas-widget__resize-handle--sw {
+  left: -5px;
+  bottom: -5px;
+  cursor: nesw-resize;
+}
+
+.ma-canvas-widget__resize-handle--se {
+  right: -5px;
+  bottom: -5px;
+  cursor: nwse-resize;
+}
+
+/* ---- Properties (right) ------------------------------------------------- */
+/* Slightly wider than the original 300px: the worst case (a toggle with a
+   status source and a mapping table) is a long column of controls, and the
+   mapping rule rows need room not to wrap into stripes. */
+.ma-canvas-editor__properties {
+  width: 340px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  overflow-y: auto;
+}
+
+/* Vertical stack of form fields inside the inspector (metadata view or the
+   selected-widget view). Reuses `.ma-editor__subform` for the layout block. */
+.ma-properties__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* One collapsible group of related controls (Content / Status / Mapping /
+   Layout). The header is a disclosure `<button aria-expanded>` — the same
+   pattern `.env-manager__collapse-toggle` uses — and the body is unmounted
+   while collapsed. */
+.ma-properties__group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
+}
+
+.ma-properties__group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.ma-properties__group-toggle:hover {
+  color: var(--color-primary);
+}
+
+.ma-properties__group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Duplicate + Delete row at the foot of the selected-widget inspector. */
+.ma-properties__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---- Artifact reference input (insert ${name} into text fields) --------- */
+/* Reusable field used in the mini-app editor's properties panel. Typing `${`
+   triggers an autocomplete list; a right-click menu offers the same insert.
+   The dropdown reuses the `.tag-suggest` popup visual (elevated, shadowed,
+   z-200). Tokens drive all colours. */
+.artifact-ref-input {
+  position: relative;
+}
+
+/* The field lives inside `.artifact-ref-input__editor`, which anchors the
+   overlay and the absolutely-positioned autocomplete dropdown. */
+.artifact-ref-input__editor {
+  position: relative;
+  min-width: 0;
+}
+
+.artifact-ref-input__field {
+  width: 100%;
+}
+
+/* Overlay-highlight pattern (same as the command-form Script field and the
+   workflow text node): a `<pre>` paints the `${var}` references in colour
+   behind a transparent field that owns input + caret. Both layers MUST share
+   identical text metrics so glyphs line up. */
+.artifact-ref-input__field,
+.artifact-ref-input__overlay {
+  box-sizing: border-box;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Transparent text so the overlay shows through; the caret stays visible.
+   The field sits on top of the overlay and owns input/selection/scroll. */
+.artifact-ref-input__field--overlay {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--color-text);
+  background: transparent;
+}
+
+.artifact-ref-input__field--overlay::selection {
+  background: rgba(37, 99, 235, 0.35);
+  color: var(--color-text);
+}
+
+/* Overlay sits behind the field, out of the a11y tree and pointer events so
+   right-click / selection land on the field. Inherits the same border box so
+   the padding/border widths align with the `.input` field. */
+.artifact-ref-input__overlay {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--color-text);
+  background: transparent;
+}
+
+/* Single-line: match the `<input>` — no wrapping, horizontal scroll clipped. */
+.artifact-ref-input__overlay--single {
+  white-space: pre;
+}
+
+/* Multiline: match the `<textarea>` — wrap like the field does. */
+.artifact-ref-input__overlay--multiline {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* A `${var}` reference to a known artifact — accent colour, mirroring the
+   command-form Script field / workflow text node. */
+.artifact-ref-input__var--known {
+  color: var(--color-primary);
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.25);
+}
+
+/* A `${var}` reference whose name is not an available artifact — danger
+   colour so the author spots the typo / out-of-scope name, mirroring the
+   command-form Script field / workflow text node. */
+.artifact-ref-input__var--unknown {
+  color: var(--color-danger);
+  background: rgba(220, 38, 38, 0.08);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.3);
+}
+
+.artifact-ref-input__dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 200;
+  min-width: 160px;
+  max-width: 240px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.artifact-ref-input__dropdown--empty {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  list-style: none;
+}
+
+.artifact-ref-input__option {
+  padding: 7px 12px;
+  font-size: 14px;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.artifact-ref-input__option--active,
+.artifact-ref-input__option:hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-primary);
 }

@@ -8,10 +8,17 @@
 // `invoke` directly.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Command, Workflow } from "../types";
+import type { Command, MiniApp, MiniAppWidget, Workflow } from "../types";
 
-/** Current export-envelope schema version. Bump on a breaking change. */
-export const EXPORT_VERSION = 1 as const;
+/**
+ * Current export-envelope schema version. Bump on a breaking change.
+ *
+ * v2 adds the optional `miniapps` array (Mini-Apps feature). A v1 file (no
+ * `miniapps` key) is still accepted on import — `miniapps` is optional, so the
+ * guard treats its absence as an empty list. This keeps legacy exports
+ * importable without migration.
+ */
+export const EXPORT_VERSION = 2 as const;
 
 /**
  * Per-install STATE fields that describe how a user has interacted with a
@@ -51,6 +58,13 @@ type ExportExcludedFields = "sound";
  */
 export type ExportedCommand = Omit<Command, InstanceStateFields | ExportExcludedFields>;
 export type ExportedWorkflow = Omit<Workflow, InstanceStateFields | ExportExcludedFields>;
+/**
+ * Portable mini-app definition. `MiniApp` carries no `sound` config (so
+ * {@link ExportExcludedFields} does not apply) — only the per-install
+ * {@link InstanceStateFields} are stripped. The importer re-stamps id /
+ * timestamps and resets `favorite`/`runCount`.
+ */
+export type ExportedMiniApp = Omit<MiniApp, InstanceStateFields>;
 
 /**
  * Versioned container written to / read from disk. Holds only the portable
@@ -59,10 +73,19 @@ export type ExportedWorkflow = Omit<Workflow, InstanceStateFields | ExportExclud
  * overwrites existing entries.
  */
 export interface ProcMixExport {
-  version: typeof EXPORT_VERSION;
+  /**
+   * Envelope schema version. `1` is a legacy export (no `miniapps` key); `2`
+   * adds the optional `miniapps` array. Both are accepted on import.
+   */
+  version: number;
   exportedAt: string;
   commands: ExportedCommand[];
   workflows: ExportedWorkflow[];
+  /**
+   * Mini-apps (v2+). Optional so a v1 export — which predates Mini-Apps — is
+   * still a valid envelope; its absence is treated as "no mini-apps".
+   */
+  miniapps?: ExportedMiniApp[];
 }
 
 /**
@@ -97,6 +120,50 @@ function toExportedWorkflow(wf: Workflow): ExportedWorkflow {
     ...definition
   } = wf;
   return definition;
+}
+
+/**
+ * Blank the value of a `secret`-variant artifact widget; every other widget is
+ * returned unchanged (including a non-secret artifact, whose value IS part of
+ * the portable definition — a config path or a plain text default is exactly
+ * what makes a shared mini-app usable).
+ *
+ * SECURITY: a `secret` artifact holds a credential the user typed (a password,
+ * a token). It lives in `widgets_json` in the local SQLite DB, which is the
+ * user's own machine — but an export file is a SHARE artefact: it is mailed,
+ * committed, and posted. Writing the secret verbatim would leak it to every
+ * recipient, so the exported widget keeps its `name`/`label`/`variant` (the
+ * recipient still gets the input field, correctly typed) but carries an EMPTY
+ * value they must fill in themselves. This is the export-side half of the
+ * secret-artifact contract; the redaction of secret values in command output
+ * is handled by the `sensitive: true` VariableSpec path in the runner.
+ */
+function stripSecretArtifactValue(widget: MiniAppWidget): MiniAppWidget {
+  if (widget.kind === "artifact" && widget.variant === "secret") {
+    return { ...widget, value: "" };
+  }
+  return widget;
+}
+
+/**
+ * Strip the per-install state fields from a mini-app for export (keeps id —
+ * the importer needs it as the reference key, then discards it for a fresh id)
+ * and blank every `secret` artifact value (see
+ * {@link stripSecretArtifactValue}).
+ */
+function toExportedMiniApp(ma: MiniApp): ExportedMiniApp {
+  const {
+    favorite: _favorite,
+    runCount: _runCount,
+    lastRunAt: _lastRunAt,
+    createdAt: _createdAt,
+    updatedAt: _updatedAt,
+    ...definition
+  } = ma;
+  return {
+    ...definition,
+    widgets: definition.widgets.map(stripSecretArtifactValue),
+  };
 }
 
 /**
@@ -171,12 +238,34 @@ function isExportedWorkflow(value: unknown): value is ExportedWorkflow {
 }
 
 /**
- * Type guard for the export envelope. Rejects the wrong version, missing
- * arrays, or any malformed command/workflow inside them.
+ * Narrow an unknown decoded value to an `ExportedMiniApp` — basic shape only:
+ * a string id / name and a `widgets` array (plus the `tags` string array the
+ * other guards enforce). The widget tree is deep and discriminated; a full
+ * structural validation belongs to the store on persist, not the file guard, so
+ * a malformed widget is caught when the importer walks it rather than here.
+ */
+function isExportedMiniApp(value: unknown): value is ExportedMiniApp {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    Array.isArray(value.widgets) &&
+    isStringArray(value.tags)
+  );
+}
+
+/**
+ * Type guard for the export envelope. Rejects an unknown version, missing
+ * arrays, or any malformed command/workflow/mini-app inside them.
+ *
+ * Accepts BOTH version 1 (legacy, no `miniapps` key) and version 2 (with an
+ * optional `miniapps` array) so a file exported before Mini-Apps shipped still
+ * imports. When `miniapps` is present, every entry must pass the basic
+ * {@link isExportedMiniApp} shape check.
  */
 export function isProcMixExport(value: unknown): value is ProcMixExport {
   if (!isRecord(value)) return false;
-  if (value.version !== EXPORT_VERSION) return false;
+  if (value.version !== 1 && value.version !== 2) return false;
   if (
     !Array.isArray(value.commands) ||
     !value.commands.every(isExportedCommand)
@@ -186,6 +275,15 @@ export function isProcMixExport(value: unknown): value is ProcMixExport {
   if (
     !Array.isArray(value.workflows) ||
     !value.workflows.every(isExportedWorkflow)
+  ) {
+    return false;
+  }
+  // `miniapps` is optional (absent on a v1 file). When present, validate every
+  // entry so a malformed mini-app can't slip past the guard.
+  if (
+    value.miniapps !== undefined &&
+    (!Array.isArray(value.miniapps) ||
+      !value.miniapps.every(isExportedMiniApp))
   ) {
     return false;
   }
@@ -199,16 +297,24 @@ export function isProcMixExport(value: unknown): value is ProcMixExport {
  * Resolves `true` when the file was saved, `false` when the user cancelled
  * the native dialog. A filesystem error rejects (surfaced as a toast at the
  * call site).
+ *
+ * `miniapps` defaults to empty: when none are present the `miniapps` key is
+ * OMITTED from the file entirely (rather than written as `[]`) so a
+ * mini-app-less export is byte-identical to the pre-Mini-Apps shape — a v2
+ * file with no mini-apps stays compact and a reader that ignores the key sees
+ * no difference.
  */
 export async function exportData(
   commands: Command[],
   workflows: Workflow[],
+  miniapps: MiniApp[] = [],
 ): Promise<boolean> {
   const envelope: ProcMixExport = {
     version: EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
     commands: commands.map(toExportedCommand),
     workflows: workflows.map(toExportedWorkflow),
+    ...(miniapps.length > 0 ? { miniapps: miniapps.map(toExportedMiniApp) } : {}),
   };
   const payload = JSON.stringify(envelope, null, 2);
   return invoke<boolean>("export_data", { payload });

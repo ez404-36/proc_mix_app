@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
-import type { Command, Workflow } from "../types";
+import type { Command, MiniApp, Workflow } from "../types";
 import {
   EXPORT_VERSION,
   exportData,
@@ -63,6 +63,75 @@ function sampleEnvelope(): ProcMixExport {
   };
 }
 
+function sampleMiniApp(id = "ma-1"): MiniApp {
+  return {
+    id,
+    name: "VPN panel",
+    panelSize: { w: 400, h: 320 },
+    widgets: [
+      {
+        id: "w-btn",
+        kind: "button",
+        layout: { x: 0, y: 0, w: 140, h: 44 },
+        label: "Connect",
+        action: { kind: "commandRef", commandId: "cmd-1" },
+      },
+    ],
+    tags: [],
+    favorite: true,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    runCount: 7,
+    lastRunAt: "2026-01-02T00:00:00.000Z",
+  };
+}
+
+/** A mini-app carrying one artifact of each variant, all with a value set. */
+function miniAppWithArtifacts(): MiniApp {
+  return {
+    ...sampleMiniApp("ma-secrets"),
+    widgets: [
+      {
+        id: "w-secret",
+        kind: "artifact",
+        layout: { x: 0, y: 0, w: 200, h: 44 },
+        name: "apiToken",
+        label: "API token",
+        value: "s3cr3t-token",
+        variant: "secret",
+      },
+      {
+        id: "w-path",
+        kind: "artifact",
+        layout: { x: 0, y: 60, w: 200, h: 44 },
+        name: "configPath",
+        label: "Config",
+        value: "/etc/openvpn3/my.conf",
+        variant: "path",
+      },
+      {
+        id: "w-text",
+        kind: "artifact",
+        layout: { x: 0, y: 120, w: 200, h: 44 },
+        name: "region",
+        label: "Region",
+        value: "eu-west-1",
+        variant: "text",
+      },
+    ],
+  };
+}
+
+/** The exported artifact widget with the given id, as a plain record. */
+function exportedArtifact(
+  envelope: ProcMixExport,
+  widgetId: string,
+): Record<string, unknown> {
+  const widget = envelope.miniapps?.[0]?.widgets.find((w) => w.id === widgetId);
+  if (widget === undefined) throw new Error(`no widget ${widgetId}`);
+  return widget as unknown as Record<string, unknown>;
+}
+
 afterEach(() => {
   invokeMock.mockReset();
 });
@@ -78,8 +147,45 @@ describe("isProcMixExport", () => {
     expect(isProcMixExport([])).toBe(false);
   });
 
-  it("rejects the wrong version", () => {
-    expect(isProcMixExport({ ...sampleEnvelope(), version: 2 })).toBe(false);
+  it("rejects an unknown version", () => {
+    // v1 and v2 are both accepted; anything else is rejected.
+    expect(isProcMixExport({ ...sampleEnvelope(), version: 3 })).toBe(false);
+    expect(isProcMixExport({ ...sampleEnvelope(), version: 0 })).toBe(false);
+  });
+
+  it("accepts a v1 legacy envelope (no `miniapps` key)", () => {
+    // A file exported before Mini-Apps shipped has version 1 and no miniapps.
+    // It must still import, so the guard accepts it.
+    const v1 = { ...sampleEnvelope(), version: 1 };
+    delete (v1 as { miniapps?: unknown }).miniapps;
+    expect(isProcMixExport(v1)).toBe(true);
+  });
+
+  it("accepts a v2 envelope carrying an optional `miniapps` array", () => {
+    const withMiniApps: ProcMixExport = {
+      ...sampleEnvelope(),
+      miniapps: [sampleMiniApp()],
+    };
+    expect(isProcMixExport(withMiniApps)).toBe(true);
+  });
+
+  it("accepts a v2 envelope with no `miniapps` key (mini-apps are optional)", () => {
+    const noMiniApps = { ...sampleEnvelope() };
+    delete (noMiniApps as { miniapps?: unknown }).miniapps;
+    expect(isProcMixExport(noMiniApps)).toBe(true);
+  });
+
+  it("rejects a `miniapps` array containing a malformed entry", () => {
+    const bad = {
+      ...sampleEnvelope(),
+      miniapps: [{ id: "ma-1", name: "no-widgets" }],
+    };
+    expect(isProcMixExport(bad)).toBe(false);
+  });
+
+  it("rejects a `miniapps` value that is not an array", () => {
+    const bad = { ...sampleEnvelope(), miniapps: { id: "ma-1" } };
+    expect(isProcMixExport(bad)).toBe(false);
   });
 
   it("rejects missing arrays", () => {
@@ -174,6 +280,93 @@ describe("exportData", () => {
   it("propagates the cancel result (false)", async () => {
     invokeMock.mockResolvedValue(false);
     await expect(exportData([], [])).resolves.toBe(false);
+  });
+
+  it("omits the `miniapps` key when none are passed (compact v2 file)", async () => {
+    invokeMock.mockResolvedValue(true);
+    await exportData([sampleCommand()], [sampleWorkflow()], []);
+    const [, args] = invokeMock.mock.calls[0] as [
+      string,
+      { payload: string },
+    ];
+    const parsed = JSON.parse(args.payload) as Record<string, unknown>;
+    // No mini-apps → the key is omitted entirely, not written as `[]`.
+    expect(parsed).not.toHaveProperty("miniapps");
+  });
+
+  it("includes mini-apps (per-install state stripped) when the array is non-empty", async () => {
+    invokeMock.mockResolvedValue(true);
+    await exportData(
+      [sampleCommand()],
+      [sampleWorkflow()],
+      [sampleMiniApp()],
+    );
+    const [, args] = invokeMock.mock.calls[0] as [
+      string,
+      { payload: string },
+    ];
+    const envelope = JSON.parse(args.payload) as ProcMixExport;
+    expect(envelope.miniapps).toHaveLength(1);
+    const exportedMa = envelope.miniapps![0] as Record<string, unknown>;
+    // Per-install state is stripped; id (the reference key) is kept.
+    expect(exportedMa.id).toBe("ma-1");
+    expect(exportedMa.name).toBe("VPN panel");
+    expect(exportedMa).not.toHaveProperty("favorite");
+    expect(exportedMa).not.toHaveProperty("runCount");
+    expect(exportedMa).not.toHaveProperty("lastRunAt");
+    expect(exportedMa).not.toHaveProperty("createdAt");
+    expect(exportedMa).not.toHaveProperty("updatedAt");
+  });
+
+  // --- S7: secret artifact values must never reach the file ---------------
+
+  it("blanks a secret artifact's value on export (S7)", async () => {
+    invokeMock.mockResolvedValue(true);
+    await exportData([], [], [miniAppWithArtifacts()]);
+    const [, args] = invokeMock.mock.calls[0] as [string, { payload: string }];
+    const envelope = JSON.parse(args.payload) as ProcMixExport;
+
+    const secret = exportedArtifact(envelope, "w-secret");
+    // The credential is gone…
+    expect(secret.value).toBe("");
+    // …but the widget is still a usable, correctly-typed input for the
+    // recipient — only the VALUE is withheld.
+    expect(secret.variant).toBe("secret");
+    expect(secret.name).toBe("apiToken");
+    expect(secret.label).toBe("API token");
+  });
+
+  it("never writes the secret string anywhere in the payload (S7)", async () => {
+    invokeMock.mockResolvedValue(true);
+    await exportData([], [], [miniAppWithArtifacts()]);
+    const [, args] = invokeMock.mock.calls[0] as [string, { payload: string }];
+    // Belt-and-braces: scan the RAW serialized document, not just the parsed
+    // widget, so a future field that echoes the value is caught too.
+    expect(args.payload).not.toContain("s3cr3t-token");
+  });
+
+  it("keeps non-secret artifact values (they are part of the definition) (S7)", async () => {
+    invokeMock.mockResolvedValue(true);
+    await exportData([], [], [miniAppWithArtifacts()]);
+    const [, args] = invokeMock.mock.calls[0] as [string, { payload: string }];
+    const envelope = JSON.parse(args.payload) as ProcMixExport;
+
+    expect(exportedArtifact(envelope, "w-path").value).toBe(
+      "/etc/openvpn3/my.conf",
+    );
+    expect(exportedArtifact(envelope, "w-text").value).toBe("eu-west-1");
+  });
+
+  it("does not mutate the source mini-app when blanking secrets (S7)", async () => {
+    invokeMock.mockResolvedValue(true);
+    const source = miniAppWithArtifacts();
+    await exportData([], [], [source]);
+
+    // The in-memory record the user is still editing keeps its value; only the
+    // exported COPY is blanked.
+    const secret = source.widgets.find((w) => w.id === "w-secret");
+    if (secret?.kind !== "artifact") throw new Error("expected artifact");
+    expect(secret.value).toBe("s3cr3t-token");
   });
 });
 

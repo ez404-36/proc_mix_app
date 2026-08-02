@@ -3,6 +3,7 @@ export * from "./execution";
 export * from "./history";
 export * from "./httpServer";
 export * from "./listView";
+export * from "./miniapp";
 export * from "./outputSchema";
 export * from "./platform";
 export * from "./plugin";

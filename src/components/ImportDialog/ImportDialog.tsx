@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { Command } from "../../types";
 import type {
   ExportedCommand,
+  ExportedMiniApp,
   ExportedWorkflow,
   ProcMixExport,
 } from "../../utils/dataTransfer";
@@ -94,12 +95,17 @@ export function ImportDialog({
   // `forcedCommandIds` comes straight from the tree so the dependency graph is
   // never recomputed here.
   const handleImport = (
-    selection: SelectionResult<ExportedCommand, ExportedWorkflow>,
+    selection: SelectionResult<
+      ExportedCommand,
+      ExportedWorkflow,
+      ExportedMiniApp
+    >,
   ): void => {
     onImport(
       resolveImportSelection({
         commands: selection.commands.map((c) => ({ id: c.id, name: c.name })),
         workflowIds: selection.workflows.map((w) => w.id),
+        miniappIds: selection.miniapps.map((m) => m.id),
         forcedCommandIds: selection.forcedCommandIds,
         duplicates,
         choiceFor,
@@ -158,13 +164,18 @@ export function ImportDialog({
   };
 
   return createPortal(
-    <SelectionTree<ExportedCommand, ExportedWorkflow>
+    <SelectionTree<ExportedCommand, ExportedWorkflow, ExportedMiniApp>
       title={t("importDialog.title")}
       confirmLabel={t("importDialog.importBtn")}
       commands={parsed.commands}
       workflows={parsed.workflows}
+      // A v1 file has no `miniapps` key; an empty array still renders the
+      // group with its empty-state line, which keeps the dialog's shape
+      // stable across envelope versions.
+      miniapps={parsed.miniapps ?? []}
       renderCommandLabel={(cmd) => cmd.name}
       renderWorkflowLabel={(wf) => wf.name}
+      renderMiniAppLabel={(ma) => ma.name}
       renderCommandExtra={renderCommandExtra}
       formModifier="command-form--export command-form--import"
       onConfirm={handleImport}

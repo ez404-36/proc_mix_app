@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   ChangeEvent,
   MouseEvent as ReactMouseEvent,
@@ -6,12 +6,15 @@ import type {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+import { Message } from "@arco-design/web-react";
 import {
   deleteCommand as deleteCommandWithHistory,
   duplicateCommand,
 } from "../../services/commandActions";
 import { deleteWorkflow as deleteWorkflowWithHistory } from "../../services/workflowActions";
 import { useCommandStore } from "../../stores/commandStore";
+import { useMiniAppStore } from "../../stores/miniappStore";
+import { buildMiniAppSeedsForPlatform } from "../../stores/miniappSeeds";
 import { useScheduleStore } from "../../stores/scheduleStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
@@ -19,20 +22,29 @@ import type {
   Command,
   CommandSortKey,
   LibraryTab,
+  MiniApp,
+  MiniAppSortKey,
   Workflow,
   WorkflowSortKey,
 } from "../../types";
+import type { Platform } from "../../types/platform";
+import { getPlatform } from "../../utils/platform";
 import {
   getCommandDescription,
   getCommandName,
 } from "../../utils/commandLabels";
+import {
+  getMiniAppDescription,
+  getMiniAppName,
+} from "../../utils/miniappLabels";
+import { renderIcon } from "../../utils/iconRenderer";
 import {
   collectCategories,
   collectTags,
   filterCommands,
   globalCommands,
 } from "../../utils/commandFilters";
-import { sortCommands, sortWorkflows } from "../../utils/sortLists";
+import { sortCommands, sortMiniApps, sortWorkflows } from "../../utils/sortLists";
 import { paginate } from "../../utils/paginate";
 import { triggerCommandRun } from "../../services/commandRunner";
 import { triggerWorkflowRun } from "../../services/workflowRunner";
@@ -52,7 +64,14 @@ import type { DropdownOption } from "../Dropdown";
 import { ListControls } from "../ListControls/ListControls";
 import type { SortOption } from "../ListControls/ListControls";
 import { Pagination } from "../Pagination/Pagination";
-import { ChevronIcon, PlusIcon, RunIcon, ViewIcon } from "../icons";
+import {
+  ChevronIcon,
+  CopyIcon,
+  EditIcon,
+  PlusIcon,
+  RunIcon,
+  ViewIcon,
+} from "../icons";
 import { TargetBadge } from "../TargetBadge";
 /**
  * Workflows are user-authored, so their `name`/`description` are not run
@@ -66,6 +85,27 @@ function matchesWorkflowQuery(wf: Workflow, query: string): boolean {
   if (wf.name.toLowerCase().includes(q)) return true;
   if (wf.description && wf.description.toLowerCase().includes(q)) return true;
   if (wf.tags.some((tag) => tag.toLowerCase().includes(q))) return true;
+  return false;
+}
+
+/**
+ * Case-insensitive name/description/tag match, mirroring
+ * `matchesWorkflowQuery`. A seed mini-app's DISPLAYED (translated) labels
+ * are matched, so searching for what is on screen works in either
+ * language; the literal fields are matched too, because that is what a
+ * user-created mini-app carries.
+ */
+function matchesMiniAppQuery(
+  ma: MiniApp,
+  query: string,
+  t: TFunction,
+): boolean {
+  if (query.length === 0) return true;
+  const q = query.toLowerCase();
+  if (getMiniAppName(ma, t).toLowerCase().includes(q)) return true;
+  const description = getMiniAppDescription(ma, t);
+  if (description && description.toLowerCase().includes(q)) return true;
+  if (ma.tags.some((tag) => tag.toLowerCase().includes(q))) return true;
   return false;
 }
 
@@ -1374,6 +1414,498 @@ function WorkflowsTab(): ReactElement {
   );
 }
 
+interface MiniAppCardProps {
+  miniapp: MiniApp;
+  onToggleFavorite: (id: string) => void;
+  onDelete: (miniapp: MiniApp) => void;
+  onEdit: (miniapp: MiniApp) => void;
+  onRun: (miniapp: MiniApp) => void;
+  /** Render the dense layout: no description, icon-only Run/Edit buttons. */
+  compact?: boolean;
+}
+
+function buildMiniAppCardMenuItems(
+  miniapp: MiniApp,
+  t: TFunction,
+  actions: {
+    onToggleFavorite: (id: string) => void;
+    onDelete: (miniapp: MiniApp) => void;
+    onEdit: (miniapp: MiniApp) => void;
+    onRun: (miniapp: MiniApp) => void;
+  },
+): ContextMenuEntry[] {
+  return [
+    {
+      id: "run",
+      label: t("contextMenu.run"),
+      onSelect: () => actions.onRun(miniapp),
+    },
+    {
+      id: "favorite",
+      label: miniapp.favorite
+        ? t("contextMenu.favoriteRemove")
+        : t("contextMenu.favoriteAdd"),
+      onSelect: () => actions.onToggleFavorite(miniapp.id),
+    },
+    { id: "div1", divider: true },
+    {
+      id: "edit",
+      label: t("contextMenu.edit"),
+      onSelect: () => actions.onEdit(miniapp),
+    },
+    {
+      id: "delete",
+      label: t("contextMenu.delete"),
+      danger: true,
+      onSelect: () => actions.onDelete(miniapp),
+    },
+  ];
+}
+
+function MiniAppCard({
+  miniapp,
+  onToggleFavorite,
+  onDelete,
+  onEdit,
+  onRun,
+  compact = false,
+}: MiniAppCardProps): ReactElement {
+  const { t } = useTranslation();
+  const { show } = useContextMenu();
+  const favoriteLabel = miniapp.favorite
+    ? t("miniapps.unfavorite")
+    : t("miniapps.favorite");
+
+  // Seed mini-apps render their translated labels; user-created ones their
+  // literal `name` / `description`.
+  const displayName = getMiniAppName(miniapp, t);
+  const displayDescription = getMiniAppDescription(miniapp, t);
+
+  const widgetCount = miniapp.widgets.length;
+  const widgetLabel = t("miniapps.widgetsCount", { count: widgetCount });
+
+  const handleFavoriteClick = (e: ReactMouseEvent<HTMLButtonElement>): void => {
+    e.stopPropagation();
+    onToggleFavorite(miniapp.id);
+  };
+
+  const handleRunClick = (e: ReactMouseEvent<HTMLButtonElement>): void => {
+    e.stopPropagation();
+    onRun(miniapp);
+  };
+
+  const handleEditClick = (e: ReactMouseEvent<HTMLButtonElement>): void => {
+    e.stopPropagation();
+    onEdit(miniapp);
+  };
+
+  const handleContextMenu = (e: ReactMouseEvent<HTMLDivElement>): void => {
+    show({
+      event: {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        preventDefault: () => e.preventDefault(),
+      },
+      items: buildMiniAppCardMenuItems(miniapp, t, {
+        onToggleFavorite,
+        onDelete,
+        onEdit,
+        onRun,
+      }),
+    });
+  };
+
+  return (
+    <div
+      className={`list-tile list-tile--miniapp${compact ? " list-tile--compact" : ""}`}
+      onContextMenu={handleContextMenu}
+    >
+      <div className="list-tile__head">
+        <div className="list-tile__heading">
+          <h3 className="list-tile__title" title={displayName}>
+            {renderIcon(miniapp.icon, 20, "list-tile__icon")}
+            {displayName}
+          </h3>
+          {!compact && displayDescription ? (
+            <p className="list-tile__desc">{displayDescription}</p>
+          ) : null}
+        </div>
+        {compact ? (
+          <div className="list-tile__head-actions">
+            <button
+              type="button"
+              className="btn btn--run btn--icon"
+              onClick={handleRunClick}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={t("miniapps.run")}
+              title={t("miniapps.run")}
+            >
+              <RunIcon />
+            </button>
+            <button
+              type="button"
+              className="btn btn--edit btn--icon"
+              onClick={handleEditClick}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={t("miniapps.edit")}
+              title={t("miniapps.edit")}
+            >
+              <EditIcon />
+            </button>
+            <button
+              type="button"
+              className={`favorite-toggle${miniapp.favorite ? " is-on" : ""}`}
+              onClick={handleFavoriteClick}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={favoriteLabel}
+              title={favoriteLabel}
+            >
+              {miniapp.favorite ? "♥" : "♡"}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className={`favorite-toggle${miniapp.favorite ? " is-on" : ""}`}
+            onClick={handleFavoriteClick}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={favoriteLabel}
+            title={favoriteLabel}
+          >
+            {miniapp.favorite ? "♥" : "♡"}
+          </button>
+        )}
+      </div>
+      <div className="list-tile__meta">
+        <span className="shell-badge">{widgetLabel}</span>
+        {miniapp.categoryId !== undefined &&
+        miniapp.categoryId.trim() !== "" ? (
+          <span className="category-chip">{miniapp.categoryId}</span>
+        ) : null}
+        {miniapp.tags.map((tag) => (
+          <span key={tag} className="tag-chip">
+            {tag}
+          </span>
+        ))}
+      </div>
+      {!compact ? (
+        <div className="list-tile__actions">
+          <button type="button" className="btn btn--run" onClick={handleRunClick}>
+            <RunIcon />
+            {t("miniapps.run")}
+          </button>
+          {/* The outlined variant tints its glyph via the `btn--edit-icon`
+              wrapper — a bare glyph renders in the neutral label colour, which
+              defeats the point of the variant. */}
+          <button type="button" className="btn btn--edit" onClick={handleEditClick}>
+            <span className="btn--edit-icon">
+              <EditIcon />
+            </span>
+            {t("miniapps.edit")}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Grid template (column widths) for the mini-app table rows. */
+const MINIAPP_TABLE_COLUMNS = "auto minmax(0, 2fr) 1fr 1fr";
+
+interface MiniAppTableProps {
+  miniapps: ReadonlyArray<MiniApp>;
+  onRun: (miniapp: MiniApp) => void;
+  onEdit: (miniapp: MiniApp) => void;
+}
+
+/** Tabular layout for mini-apps (table view mode). */
+function MiniAppTable({
+  miniapps,
+  onRun,
+  onEdit,
+}: MiniAppTableProps): ReactElement {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="table"
+      role="table"
+      aria-label={t("workflow.tabs.miniapps")}
+    >
+      <div
+        className="table__row table__head"
+        role="row"
+        style={{ gridTemplateColumns: MINIAPP_TABLE_COLUMNS }}
+      >
+        <span className="table__cell" role="columnheader" aria-hidden="true" />
+        <span className="table__cell" role="columnheader">
+          {t("listView.sortByName")}
+        </span>
+        <span className="table__cell" role="columnheader">
+          {t("listView.columnCategory")}
+        </span>
+        <span className="table__cell" role="columnheader">
+          {t("listView.sortByCreatedAt")}
+        </span>
+      </div>
+      {miniapps.map((miniapp) => (
+        <div
+          key={miniapp.id}
+          className="table__row table__row--body table__row--clickable"
+          role="row"
+          onClick={() => onEdit(miniapp)}
+          style={{ gridTemplateColumns: MINIAPP_TABLE_COLUMNS }}
+        >
+          <span className="table__cell table__cell--actions" role="cell">
+            <button
+              type="button"
+              className="btn btn--run btn--icon"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRun(miniapp);
+              }}
+              aria-label={t("miniapps.run")}
+              title={t("miniapps.run")}
+            >
+              <RunIcon />
+            </button>
+          </span>
+          <span className="table__cell" role="cell">
+            {miniapp.favorite ? "♥ " : ""}
+            {getMiniAppName(miniapp, t)}
+          </span>
+          <span className="table__cell table__cell--muted" role="cell">
+            {miniapp.categoryId !== undefined && miniapp.categoryId.trim() !== ""
+              ? miniapp.categoryId
+              : t("listView.uncategorized")}
+          </span>
+          <span className="table__cell table__cell--muted" role="cell">
+            {formatDate(miniapp.createdAt)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MiniAppsTab(): ReactElement {
+  const { t } = useTranslation();
+  const miniapps = useMiniAppStore((s) => s.miniapps);
+  const hydrated = useMiniAppStore((s) => s.hydrated);
+  const toggleFavorite = useMiniAppStore((s) => s.toggleFavorite);
+  const deleteMiniApp = useMiniAppStore((s) => s.deleteMiniApp);
+  const addMiniApp = useMiniAppStore((s) => s.addMiniApp);
+  const setView = useUIStore((s) => s.setView);
+  const setMiniappEditorId = useUIStore((s) => s.setMiniappEditorId);
+  const setMiniappRunnerId = useUIStore((s) => s.setMiniappRunnerId);
+  const miniappsView = useUIStore((s) => s.miniappsView);
+  const updateMiniappsView = useUIStore((s) => s.updateMiniappsView);
+
+  const [query, setQuery] = useState<string>("");
+  // Transient table page (1-based); reset on filter/sort/mode changes.
+  const [page, setPage] = useState<number>(1);
+  // The mini-app staged for deletion (awaiting confirmation), or null.
+  const [pendingDelete, setPendingDelete] = useState<MiniApp | null>(null);
+  // True while "Start from example" is resolving the host platform over IPC.
+  const [seeding, setSeeding] = useState<boolean>(false);
+
+  // Hydrate the store from SQLite the first time the tab mounts. Mirrors the
+  // command/workflow stores' bootstrap-hydrate contract, but the mini-app
+  // store has no seed step and is hydrated on demand instead — `hydrateFromDb`
+  // is idempotent and swallows its own errors (it still flips `hydrated`), so
+  // an unguarded call here is safe under React Strict Mode and re-mounts.
+  useEffect(() => {
+    void useMiniAppStore.getState().hydrateFromDb();
+  }, []);
+
+  const filtered = useMemo(
+    () => miniapps.filter((ma) => matchesMiniAppQuery(ma, query, t)),
+    [miniapps, query, t],
+  );
+
+  const sortOptions: ReadonlyArray<SortOption<MiniAppSortKey>> = useMemo(
+    () => [
+      { key: "createdAt", dir: "desc", label: t("listView.sortNewestFirst") },
+      { key: "createdAt", dir: "asc", label: t("listView.sortOldestFirst") },
+      { key: "name", dir: "asc", label: t("listView.sortNameAsc") },
+      { key: "name", dir: "desc", label: t("listView.sortNameDesc") },
+    ],
+    [t],
+  );
+
+  const sorted = useMemo(
+    () =>
+      sortMiniApps(filtered, {
+        key: miniappsView.sortKey,
+        dir: miniappsView.sortDir,
+      }),
+    [filtered, miniappsView.sortKey, miniappsView.sortDir],
+  );
+
+  const pageResult = useMemo(
+    () => paginate(sorted, page, miniappsView.pageSize),
+    [sorted, page, miniappsView.pageSize],
+  );
+
+  const showTable = miniappsView.mode === "table";
+  const compact = miniappsView.mode === "compact";
+
+  const handleSearch = (e: ChangeEvent<HTMLInputElement>): void => {
+    setQuery(e.target.value);
+    setPage(1);
+  };
+
+  const handleCreate = (): void => {
+    setMiniappEditorId(null);
+    setView("miniapp-editor");
+  };
+
+  /**
+   * Materialise the built-in example panels for this host.
+   *
+   * The seeds are otherwise a ONE-SHOT startup step (`useSeedBootstrap` runs
+   * `initializeSeeds` only when the library is empty on first launch), so a
+   * user who deleted them — or who joined an install that already had
+   * commands — could never get a worked example back. This re-adds them on
+   * demand through the normal `addMiniApp` path, so each copy gets fresh ids
+   * and is persisted like any user-created mini-app.
+   */
+  const handleStartFromExample = (): void => {
+    if (seeding) return;
+    setSeeding(true);
+    void (async (): Promise<void> => {
+      try {
+        const detected = await getPlatform();
+        const platform: Platform = detected === "unknown" ? "linux" : detected;
+        const seeds = buildMiniAppSeedsForPlatform(platform);
+        for (const seed of seeds) addMiniApp(seed);
+        Message.success(t("miniapps.exampleAdded", { count: seeds.length }));
+      } catch (err: unknown) {
+        // Platform detection is the only thing that can throw here; surface it
+        // rather than leaving the button silently inert.
+        const message = err instanceof Error ? err.message : String(err);
+        Message.error(t("miniapps.exampleFailed", { message }));
+      } finally {
+        setSeeding(false);
+      }
+    })();
+  };
+
+  const handleEdit = (miniapp: MiniApp): void => {
+    setMiniappEditorId(miniapp.id);
+    setView("miniapp-editor");
+  };
+
+  const handleRun = (miniapp: MiniApp): void => {
+    setMiniappRunnerId(miniapp.id);
+    setView("miniapp-runner");
+  };
+
+  const requestDelete = (miniapp: MiniApp): void => {
+    setPendingDelete(miniapp);
+  };
+
+  const confirmDelete = (): void => {
+    if (pendingDelete === null) return;
+    deleteMiniApp(pendingDelete.id);
+    setPendingDelete(null);
+  };
+
+  return (
+    <>
+      <div className="library-toolbar">
+        <input
+          className="input"
+          type="search"
+          placeholder={t("miniapps.searchPlaceholder")}
+          value={query}
+          onChange={handleSearch}
+        />
+        <ListControls
+          sortOptions={sortOptions}
+          sortKey={miniappsView.sortKey}
+          sortDir={miniappsView.sortDir}
+          onSortChange={(key, dir) => {
+            updateMiniappsView({ sortKey: key, sortDir: dir });
+            setPage(1);
+          }}
+          mode={miniappsView.mode}
+          onModeChange={(mode) => updateMiniappsView({ mode })}
+        />
+      </div>
+
+      {!hydrated ? (
+        <div className="empty-state">{t("common.loading")}</div>
+      ) : miniapps.length === 0 ? (
+        <div className="empty-state">
+          <p>{t("miniapps.empty")}</p>
+          <p>{t("miniapps.emptyHint")}</p>
+          <div className="miniapps-empty__actions">
+            <button type="button" className="btn btn--primary" onClick={handleCreate}>
+              <PlusIcon />
+              {t("miniapps.createLabel")}
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={handleStartFromExample}
+              disabled={seeding}
+            >
+              <CopyIcon />
+              {t("miniapps.startFromExample")}
+            </button>
+          </div>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="empty-state">{t("miniapps.noResults")}</div>
+      ) : showTable ? (
+        <>
+          <MiniAppTable
+            miniapps={pageResult.pageItems}
+            onRun={handleRun}
+            onEdit={handleEdit}
+          />
+          <Pagination
+            page={pageResult.page}
+            totalPages={pageResult.totalPages}
+            pageSize={miniappsView.pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              updateMiniappsView({ pageSize: size });
+              setPage(1);
+            }}
+          />
+        </>
+      ) : (
+        <div className={`command-list${compact ? " command-list--compact" : ""}`}>
+          {sorted.map((miniapp) => (
+            <MiniAppCard
+              key={miniapp.id}
+              miniapp={miniapp}
+              onToggleFavorite={toggleFavorite}
+              onDelete={requestDelete}
+              onEdit={handleEdit}
+              onRun={handleRun}
+              compact={compact}
+            />
+          ))}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={t("miniapps.deleteConfirmTitle")}
+        message={t("miniapps.deleteConfirm", {
+          name: pendingDelete !== null ? getMiniAppName(pendingDelete, t) : "",
+        })}
+        confirmLabel={t("common.delete")}
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
+    </>
+  );
+}
+
 export function Library(): ReactElement {
   const { t } = useTranslation();
   const libraryTab = useUIStore((s) => s.libraryTab);
@@ -1382,10 +1914,12 @@ export function Library(): ReactElement {
   const setCommandEditorTarget = useUIStore((s) => s.setCommandEditorTarget);
   const setCommandEditorDirty = useUIStore((s) => s.setCommandEditorDirty);
   const setEditorWorkflowId = useUIStore((s) => s.setEditorWorkflowId);
+  const setMiniappEditorId = useUIStore((s) => s.setMiniappEditorId);
 
   const tabs: ReadonlyArray<{ key: LibraryTab; labelKey: string }> = [
     { key: "commands", labelKey: "workflow.tabs.commands" },
     { key: "workflows", labelKey: "workflow.tabs.workflows" },
+    { key: "miniapps", labelKey: "workflow.tabs.miniapps" },
   ];
 
   const handleNewCommand = (): void => {
@@ -1397,6 +1931,11 @@ export function Library(): ReactElement {
   const handleNewWorkflow = (): void => {
     setEditorWorkflowId(null);
     setView("editor");
+  };
+
+  const handleNewMiniApp = (): void => {
+    setMiniappEditorId(null);
+    setView("miniapp-editor");
   };
 
   return (
@@ -1435,7 +1974,7 @@ export function Library(): ReactElement {
             <PlusIcon />
             {t("library.newCommandLabel")}
           </button>
-        ) : (
+        ) : libraryTab === "workflows" ? (
           <button
             type="button"
             className="btn btn--primary"
@@ -1446,10 +1985,27 @@ export function Library(): ReactElement {
             <PlusIcon />
             {t("workflow.newLabel")}
           </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={handleNewMiniApp}
+            aria-label={t("miniapps.create")}
+            title={t("miniapps.create")}
+          >
+            <PlusIcon />
+            {t("miniapps.createLabel")}
+          </button>
         )}
       </div>
 
-      {libraryTab === "commands" ? <CommandsTab /> : <WorkflowsTab />}
+      {libraryTab === "commands" ? (
+        <CommandsTab />
+      ) : libraryTab === "workflows" ? (
+        <WorkflowsTab />
+      ) : (
+        <MiniAppsTab />
+      )}
     </div>
   );
 }

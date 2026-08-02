@@ -1,6 +1,8 @@
 import type {
   Command,
   CommandSortKey,
+  MiniApp,
+  MiniAppSortKey,
   Schedule,
   ScheduleSortKey,
   SortDir,
@@ -87,6 +89,26 @@ export function sortWorkflows(
 ): Workflow[] {
   const { key, dir } = options;
   return [...workflows].sort((a, b) => {
+    let cmp: number;
+    if (key === "name") {
+      cmp = compareNames(a.name, b.name);
+    } else {
+      cmp = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
+    }
+    if (cmp !== 0) return applyDir(cmp, dir);
+    const byName = compareNames(a.name, b.name);
+    if (byName !== 0) return byName;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/** Sort mini-apps by the given key/direction. Uses the literal `name`. */
+export function sortMiniApps(
+  miniapps: ReadonlyArray<MiniApp>,
+  options: SortOptions<MiniAppSortKey>,
+): MiniApp[] {
+  const { key, dir } = options;
+  return [...miniapps].sort((a, b) => {
     let cmp: number;
     if (key === "name") {
       cmp = compareNames(a.name, b.name);

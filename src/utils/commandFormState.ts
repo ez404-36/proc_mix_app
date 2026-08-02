@@ -1,7 +1,16 @@
 import type { VariableSpec } from '../types';
 import type { EnvRow, RunResult, VariableRow } from '../types/commandForm';
 
-const VAR_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}/g;
+/**
+ * Grammar for a `${name}` / `${name:default}` template reference — the same
+ * identifier alphabet Rust's `core/parser.rs` accepts. Exported so other
+ * scanners (notably `validateMiniApp`) flag exactly the tokens the backend
+ * would try to substitute, rather than a divergent copy of the pattern.
+ *
+ * It carries the `g` flag, so it is STATEFUL: every consumer must reset
+ * `VAR_RE.lastIndex = 0` before an `exec` loop (as the functions below do).
+ */
+export const VAR_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}/g;
 
 export const CANCEL_GRACE_MS = 200;
 export const CANCEL_FALLBACK_MS = 500;

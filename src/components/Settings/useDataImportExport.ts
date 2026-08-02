@@ -1,8 +1,9 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useCommandStore } from "../../stores/commandStore";
+import { useMiniAppStore } from "../../stores/miniappStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import type { Command, Workflow } from "../../types";
+import type { Command, MiniApp, Workflow } from "../../types";
 import { applyImport, type ImportSelection } from "../../services/dataImport";
 import {
   exportData,
@@ -17,6 +18,20 @@ interface DataStatus {
   message: string;
 }
 
+/**
+ * Whether any of the mini-apps about to be exported carries a `secret`-variant
+ * artifact whose value would have been written to the file. `toExportedMiniApp`
+ * blanks those values unconditionally; this only decides whether the success
+ * plaque needs to MENTION it, so the note appears exactly when it is relevant.
+ */
+function hasSecretArtifact(miniapps: ReadonlyArray<MiniApp>): boolean {
+  return miniapps.some((ma) =>
+    ma.widgets.some(
+      (w) => w.kind === "artifact" && w.variant === "secret" && w.value !== "",
+    ),
+  );
+}
+
 interface DataImportExport {
   exportDialogOpen: boolean;
   openExportDialog: () => void;
@@ -26,9 +41,16 @@ interface DataImportExport {
   dataStatus: DataStatus | null;
   exportCommands: Command[];
   exportWorkflows: Workflow[];
+  /**
+   * Every mini-app in the store, offered as a third selectable group in the
+   * Export dialog. Only the user's chosen subset is written to the file —
+   * exporting one command must never ship every mini-app the user owns.
+   */
+  exportMiniApps: MiniApp[];
   handleExportConfirm: (selection: {
     commands: Command[];
     workflows: Workflow[];
+    miniapps: MiniApp[];
   }) => Promise<void>;
   handleImportOpen: () => Promise<void>;
   handleImportConfirm: (selection: ImportSelection) => void;
@@ -55,24 +77,38 @@ export function useDataImportExport(): DataImportExport {
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null);
   const exportCommands = useCommandStore((s) => s.commands);
   const exportWorkflows = useWorkflowStore((s) => s.workflows);
+  const exportMiniApps = useMiniAppStore((s) => s.miniapps);
 
   const handleExportConfirm = useCallback(
     async (selection: {
       commands: Command[];
       workflows: Workflow[];
+      miniapps: MiniApp[];
     }): Promise<void> => {
       setExportDialogOpen(false);
       try {
-        const saved = await exportData(selection.commands, selection.workflows);
+        // Only the SELECTED mini-apps are written — never the whole store.
+        const saved = await exportData(
+          selection.commands,
+          selection.workflows,
+          selection.miniapps,
+        );
         // `false` = user cancelled the native save dialog → stay silent.
         if (saved) {
-          setDataStatus({
-            kind: "success",
-            message: t("settings.data.exportSuccess", {
+          const parts: string[] = [
+            t("settings.data.exportSuccess", {
               commands: selection.commands.length,
               workflows: selection.workflows.length,
+              miniapps: selection.miniapps.length,
             }),
-          });
+          ];
+          // Secret artifact values are blanked by `toExportedMiniApp`; say so
+          // when at least one exported mini-app actually carried one, so the
+          // recipient knows they must re-enter it.
+          if (hasSecretArtifact(selection.miniapps)) {
+            parts.push(t("settings.data.exportSecretsOmitted"));
+          }
+          setDataStatus({ kind: "success", message: parts.join(" ") });
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -122,8 +158,19 @@ export function useDataImportExport(): DataImportExport {
           t("settings.data.importSuccess", {
             commands: result.commands,
             workflows: result.workflows,
+            miniapps: result.miniapps,
           }),
         ];
+        // A malformed mini-app is dropped rather than aborting the import
+        // (commands/workflows are already written by then). Report the loss so
+        // the user knows the file was not fully applied.
+        if (result.miniappsFailed > 0) {
+          parts.push(
+            t("settings.data.importMiniAppsFailed", {
+              count: result.miniappsFailed,
+            }),
+          );
+        }
         if (result.renamed > 0) {
           parts.push(
             t("settings.data.importRenamed", {
@@ -171,6 +218,7 @@ export function useDataImportExport(): DataImportExport {
     dataStatus,
     exportCommands,
     exportWorkflows,
+    exportMiniApps,
     handleExportConfirm,
     handleImportOpen,
     handleImportConfirm,

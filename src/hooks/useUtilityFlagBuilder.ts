@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
 import { parseUtilityFlags } from "../services/utilityHelp";
 import type { FormState } from "../types/commandForm";
 import type { ParsedCli, UtilityHelp } from "../types";
 import type { UtilityNameRange } from "../utils/utilityName";
+import { useFlagsByUtility } from "./useFlagsByUtility";
 
 export interface UseUtilityFlagBuilderParams {
   /** Every recognised utility range in the current script (leading + chained). */
@@ -62,13 +63,8 @@ export function useUtilityFlagBuilder(
   const [flagBuilderOpen, setFlagBuilderOpen] = useState<boolean>(false);
   const [flagBuilderData, setFlagBuilderData] = useState<ParsedCli | null>(null);
   const [flagBuilderLoading, setFlagBuilderLoading] = useState<boolean>(false);
-  // Parsed CLI per recognised utility name, for the editor's per-command
-  // flag highlighting (every command in a `|`/`;` chain, not just the
-  // leading one). Keyed by utility name; populated by the proactive
-  // effect below as each utility resolves to "found".
-  const [flagsByUtility, setFlagsByUtility] = useState<
-    ReadonlyMap<string, ParsedCli>
-  >(() => new Map());
+  const flagBuilderOpenRef = useRef(flagBuilderOpen);
+  flagBuilderOpenRef.current = flagBuilderOpen;
 
   // Flag builder: fetch parsed CLI on demand, then open the inline section.
   const handleOpenFlagBuilder = useCallback((): void => {
@@ -77,7 +73,6 @@ export function useUtilityFlagBuilder(
     setFlagBuilderLoading(true);
     void parseUtilityFlags(name).then((parsed) => {
       setFlagBuilderData(parsed);
-      setFlagsByUtility((prev) => new Map(prev).set(name, parsed));
       setFlagBuilderOpen(true);
       setFlagBuilderLoading(false);
     }).catch(() => {
@@ -85,69 +80,24 @@ export function useUtilityFlagBuilder(
     });
   }, [utilityRange]);
 
-  // Proactively fetch ParsedCli for EVERY recognised+found utility (so flag
-  // highlights appear for each command without the user opening the
-  // builder). The fetched flags accumulate in `flagsByUtility`; the leading
-  // utility's flags also feed the single-utility flag-builder panel.
-  //
-  // We track which names have been fetched this session so a status
-  // transition loading→found for the same name doesn't refetch, and prune
-  // entries whose utility is no longer present in the script.
-  //
-  // `flagBuilderOpen` is intentionally NOT in the dep array: opening/closing
-  // the builder must not re-trigger this effect.
-  const fetchedUtilitiesRef = useRef<Set<string>>(new Set());
-  const flagBuilderOpenRef = useRef(flagBuilderOpen);
-  flagBuilderOpenRef.current = flagBuilderOpen;
-  // Stable key of the found-utility name set, so the effect only re-runs
-  // when which utilities are FOUND actually changes.
-  const foundUtilityKey = useMemo<string>(() => {
-    const found = new Set<string>();
-    for (const range of utilityRanges) {
-      if (helpByUtility.get(range.name)?.status === "found") {
-        found.add(range.name);
-      }
-    }
-    return [...found].sort().join("\n");
-  }, [utilityRanges, helpByUtility]);
+  // Parsed CLI per recognised+found utility name, for the editor's
+  // per-command flag highlighting (every command in a `|`/`;` chain, not
+  // just the leading one). The proactive fetch/prune logic is shared with
+  // `ArtifactRefInput`'s shell-syntax highlighting via `useFlagsByUtility`.
+  const flagsByUtility = useFlagsByUtility(utilityRanges, helpByUtility);
+
+  // Close the single-utility flag-builder panel when no utility in the
+  // script is found anymore (the proactive fetch above already handles
+  // fetching/pruning `flagsByUtility` itself).
+  const anyUtilityFound = utilityRanges.some(
+    (range) => helpByUtility.get(range.name)?.status === "found",
+  );
   useEffect(() => {
-    const found = foundUtilityKey === "" ? [] : foundUtilityKey.split("\n");
-    const foundSet = new Set(found);
-
-    // Prune cached flags + fetch markers for utilities no longer found.
-    fetchedUtilitiesRef.current = new Set(
-      [...fetchedUtilitiesRef.current].filter((n) => foundSet.has(n)),
-    );
-    setFlagsByUtility((prev) => {
-      let changed = false;
-      const next = new Map(prev);
-      for (const name of prev.keys()) {
-        if (!foundSet.has(name)) {
-          next.delete(name);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-
-    if (found.length === 0) {
+    if (!anyUtilityFound) {
       setFlagBuilderData(null);
       if (flagBuilderOpenRef.current) setFlagBuilderOpen(false);
-      return;
     }
-
-    for (const name of found) {
-      if (fetchedUtilitiesRef.current.has(name)) continue;
-      fetchedUtilitiesRef.current.add(name);
-      void parseUtilityFlags(name)
-        .then((parsed) => {
-          setFlagsByUtility((prev) => new Map(prev).set(name, parsed));
-        })
-        .catch(() => {
-          fetchedUtilitiesRef.current.delete(name);
-        });
-    }
-  }, [foundUtilityKey]);
+  }, [anyUtilityFound]);
 
   // Keep the single-utility flag-builder panel in sync with the leading
   // utility's parsed flags (or clear it when the leading utility changes /

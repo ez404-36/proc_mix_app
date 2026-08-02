@@ -16,6 +16,7 @@ export function DataSection(): ReactElement {
     dataStatus,
     exportCommands,
     exportWorkflows,
+    exportMiniApps,
     handleExportConfirm,
     handleImportOpen,
     handleImportConfirm,
@@ -63,6 +64,7 @@ export function DataSection(): ReactElement {
         <ExportDialog
           commands={exportCommands}
           workflows={exportWorkflows}
+          miniapps={exportMiniApps}
           onExport={(selection) => void handleExportConfirm(selection)}
           onCancel={closeExportDialog}
         />

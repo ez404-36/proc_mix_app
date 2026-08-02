@@ -53,6 +53,7 @@ pub async fn init_pool(db_path: PathBuf) -> Result<DbPool, String> {
     // so we inspect `PRAGMA table_info` first.
     ensure_commands_columns(&pool).await?;
     ensure_workflows_columns(&pool).await?;
+    ensure_miniapps_columns(&pool).await?;
     ensure_schedules_columns(&pool).await?;
     ensure_history_columns(&pool).await?;
     ensure_ssh_host_meta_columns(&pool).await?;
@@ -279,6 +280,40 @@ async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
     .map_err(|e| format!("create idx_workflows_api_slug: {e}"))?;
 
     Ok(())
+}
+
+/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `miniapps` table.
+///
+/// The `miniapps` table was introduced whole; every entry below was added
+/// after that first release (`panel_size_json` for the resizable main panel,
+/// `name_key` / `description_key` for localizable seed mini-apps). Mirrors
+/// [`ensure_workflows_columns`]; the `PRAGMA table_info` inspection in
+/// [`apply_column_migrations`] guards idempotency.
+async fn ensure_miniapps_columns(pool: &SqlitePool) -> Result<(), String> {
+    // (column_name, "ADD COLUMN …" fragment). Append future columns here.
+    let migrations: &[(&str, &'static str)] = &[
+        (
+            // JSON-encoded main-panel pixel dimensions `{"w":..,"h":..}`
+            // (Enhancement: default resizable main panel). NOT NULL with the
+            // compact-control-panel default so pre-existing rows hydrate at
+            // 400×320, matching the Rust serde default.
+            "panel_size_json",
+            "ALTER TABLE miniapps ADD COLUMN panel_size_json TEXT NOT NULL DEFAULT '{\"w\":400.0,\"h\":320.0}'",
+        ),
+        (
+            // i18next key for the display name of a built-in seed mini-app
+            // (mirrors `commands.name_key`). Nullable — user-created
+            // mini-apps never set it, so existing rows back-fill to NULL.
+            "name_key",
+            "ALTER TABLE miniapps ADD COLUMN name_key TEXT",
+        ),
+        (
+            // i18next key for the display description of a seed mini-app.
+            "description_key",
+            "ALTER TABLE miniapps ADD COLUMN description_key TEXT",
+        ),
+    ];
+    apply_column_migrations(pool, "miniapps", migrations).await
 }
 
 /// Idempotent `ALTER TABLE … ADD COLUMN …` for the `ssh_host_meta` table.

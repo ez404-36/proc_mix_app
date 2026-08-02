@@ -29,6 +29,40 @@ if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function scrollIntoView(): void {};
 }
 
+// jsdom does not implement Blob.prototype.arrayBuffer (nor File's inherited
+// copy). `IconPicker` reads an uploaded SVG/PNG through it to build the
+// base64 `data:` URI stored in `MiniApp.icon`, so any upload test would throw
+// `file.arrayBuffer is not a function`.
+//
+// Unlike the two stubs above, this is NOT a no-op: it is a faithful
+// implementation delegating to jsdom's working `FileReader`, so the bytes the
+// component encodes are the real bytes of the blob. Stubbing it out would
+// make the encoding path untestable, which is precisely the part that can be
+// wrong.
+if (
+  typeof Blob !== "undefined" &&
+  typeof Blob.prototype.arrayBuffer !== "function"
+) {
+  Blob.prototype.arrayBuffer = function arrayBuffer(
+    this: Blob,
+  ): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (result instanceof ArrayBuffer) {
+          resolve(result);
+        } else {
+          reject(new Error("FileReader did not produce an ArrayBuffer"));
+        }
+      };
+      reader.onerror = () =>
+        reject(reader.error ?? new Error("failed to read blob"));
+      reader.readAsArrayBuffer(this);
+    });
+  };
+}
+
 afterEach(() => {
   cleanup();
 });

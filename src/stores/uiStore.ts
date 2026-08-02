@@ -4,6 +4,7 @@ import type {
   CommandEditorTarget,
   CommandViewState,
   LibraryTab,
+  MiniAppViewState,
   ScheduleEditorTarget,
   ScheduleViewState,
   Theme,
@@ -29,6 +30,14 @@ const DEFAULT_COMMANDS_VIEW: CommandViewState = {
 };
 
 const DEFAULT_WORKFLOWS_VIEW: WorkflowViewState = {
+  sortKey: "createdAt",
+  sortDir: "desc",
+  mode: "tiles",
+  pageSize: 10,
+  grouped: false,
+};
+
+const DEFAULT_MINIAPPS_VIEW: MiniAppViewState = {
   sortKey: "createdAt",
   sortDir: "desc",
   mode: "tiles",
@@ -88,17 +97,40 @@ interface UIState {
    */
   scheduleEditorTarget: ScheduleEditorTarget | null;
   /**
+   * Target for the full-screen mini-app editor (`miniapp-editor` view).
+   * `null` means "create a new mini-app"; a string is an existing
+   * `MiniApp.id` to edit. Set by the Mini-Apps list's New / Edit actions
+   * right before navigating to the editor; read by the editor view to
+   * resolve the mini-app to edit. Transient — not persisted, mirroring
+   * `editorWorkflowId`.
+   */
+  miniappEditorId: string | null;
+  /**
+   * The mini-app a `miniapp-runner` view should open. Set right before
+   * navigating to the runner from the list's Run action. Transient — not
+   * persisted.
+   */
+  miniappRunnerId: string | null;
+  /**
    * Whether the open command editor has unsaved changes. Set by the
    * `CommandForm` via `onDirtyChange`. Read by `requestNavigation` to
    * decide whether leaving needs a confirmation. Transient.
    */
   commandEditorDirty: boolean;
   /**
-   * A navigation target deferred by `requestNavigation` because the
-   * command editor was dirty. The `CommandEditor` view watches this,
-   * shows an "unsaved changes" confirm, and either commits the
-   * navigation (`confirmPendingNavigation`) or clears it
-   * (`cancelPendingNavigation`). `null` when no navigation is pending.
+   * Whether the open mini-app editor has unsaved changes. Set by
+   * `MiniAppEditor` from its draft-vs-baseline fingerprint. Read by
+   * `requestNavigation` exactly like `commandEditorDirty`, so the ← button
+   * and every sidebar item raise the same unsaved-changes confirm.
+   * Transient.
+   */
+  miniappEditorDirty: boolean;
+  /**
+   * A navigation target deferred by `requestNavigation` because a guarded
+   * editor was dirty. The owning editor view watches this, shows an
+   * "unsaved changes" confirm, and either commits the navigation
+   * (`confirmPendingNavigation`) or clears it (`cancelPendingNavigation`).
+   * `null` when no navigation is pending.
    */
   pendingNavigation: View | null;
   paletteOpen: boolean;
@@ -133,6 +165,7 @@ interface UIState {
    */
   commandsView: CommandViewState;
   workflowsView: WorkflowViewState;
+  miniappsView: MiniAppViewState;
   schedulesView: ScheduleViewState;
   setView: (v: View) => void;
   setLibraryTab: (tab: LibraryTab) => void;
@@ -141,13 +174,17 @@ interface UIState {
   /** Update (or clear, with `null`) the live editor Script body. */
   setCommandEditorLiveScript: (script: string | null) => void;
   setScheduleEditorTarget: (target: ScheduleEditorTarget | null) => void;
+  setMiniappEditorId: (id: string | null) => void;
+  setMiniappRunnerId: (id: string | null) => void;
   setCommandEditorDirty: (dirty: boolean) => void;
+  setMiniappEditorDirty: (dirty: boolean) => void;
   /**
-   * Navigate to `v`, but if the command editor is currently open AND
-   * dirty, defer the navigation into `pendingNavigation` (so the view
-   * can confirm) instead of switching immediately. Use this for all
-   * user-initiated navigation that could abandon editor changes
-   * (sidebar buttons, in-view Cancel/back).
+   * Navigate to `v`, but if a GUARDED editor view (see
+   * {@link GUARDED_EDITOR_VIEWS}) is currently open AND dirty, defer the
+   * navigation into `pendingNavigation` (so the view can confirm) instead
+   * of switching immediately. Use this for all user-initiated navigation
+   * that could abandon editor changes (sidebar buttons, in-view
+   * Cancel/back).
    */
   requestNavigation: (v: View) => void;
   /** Commit the deferred navigation (user discarded changes). */
@@ -167,8 +204,45 @@ interface UIState {
   updateCommandsView: (patch: Partial<CommandViewState>) => void;
   /** Merge a partial patch into the Workflows list view preference. */
   updateWorkflowsView: (patch: Partial<WorkflowViewState>) => void;
+  /** Merge a partial patch into the Mini-Apps list view preference. */
+  updateMiniappsView: (patch: Partial<MiniAppViewState>) => void;
   /** Merge a partial patch into the Schedules list view preference. */
   updateSchedulesView: (patch: Partial<ScheduleViewState>) => void;
+}
+
+/**
+ * The full-screen editor views that guard navigation behind an
+ * unsaved-changes confirmation, mapped to the `UIState` flag that says
+ * whether that editor is currently dirty, and to the flags
+ * `confirmPendingNavigation` must clear when the user discards.
+ *
+ * A view absent from this registry always navigates immediately.
+ */
+const GUARDED_EDITOR_VIEWS = {
+  "command-editor": {
+    dirtyKey: "commandEditorDirty",
+    // Leaving the command editor also drops its target and any live script,
+    // so a later re-entry starts clean.
+    reset: {
+      commandEditorDirty: false,
+      commandEditorTarget: null,
+      commandEditorLiveScript: null,
+    },
+  },
+  "miniapp-editor": {
+    dirtyKey: "miniappEditorDirty",
+    reset: { miniappEditorDirty: false, miniappEditorId: null },
+  },
+} as const satisfies Record<
+  string,
+  { dirtyKey: keyof UIState; reset: Partial<UIState> }
+>;
+
+type GuardedEditorView = keyof typeof GUARDED_EDITOR_VIEWS;
+
+/** Whether `view` is one of the navigation-guarded editor views. */
+function isGuardedEditorView(view: View): view is GuardedEditorView {
+  return view in GUARDED_EDITOR_VIEWS;
 }
 
 interface PersistedUIState {
@@ -180,6 +254,7 @@ interface PersistedUIState {
   consolePosition: ConsoleDockPosition;
   commandsView: CommandViewState;
   workflowsView: WorkflowViewState;
+  miniappsView: MiniAppViewState;
   schedulesView: ScheduleViewState;
 }
 
@@ -192,7 +267,10 @@ export const useUIStore = create<UIState>()(
       commandEditorTarget: null,
       commandEditorLiveScript: null,
       scheduleEditorTarget: null,
+      miniappEditorId: null,
+      miniappRunnerId: null,
       commandEditorDirty: false,
+      miniappEditorDirty: false,
       pendingNavigation: null,
       paletteOpen: false,
       sidebarCollapsed: false,
@@ -203,6 +281,7 @@ export const useUIStore = create<UIState>()(
       consolePosition: "bottom",
       commandsView: DEFAULT_COMMANDS_VIEW,
       workflowsView: DEFAULT_WORKFLOWS_VIEW,
+      miniappsView: DEFAULT_MINIAPPS_VIEW,
       schedulesView: DEFAULT_SCHEDULES_VIEW,
       setView: (v) => set({ currentView: v }),
       setLibraryTab: (tab) => set({ libraryTab: tab }),
@@ -216,16 +295,20 @@ export const useUIStore = create<UIState>()(
         set({ commandEditorLiveScript: script }),
       setScheduleEditorTarget: (target) =>
         set({ scheduleEditorTarget: target }),
+      setMiniappEditorId: (id) => set({ miniappEditorId: id }),
+      setMiniappRunnerId: (id) => set({ miniappRunnerId: id }),
       setCommandEditorDirty: (dirty) => set({ commandEditorDirty: dirty }),
+      setMiniappEditorDirty: (dirty) => set({ miniappEditorDirty: dirty }),
       requestNavigation: (v) =>
         set((s) => {
-          // Guard only applies while the command editor is open AND
+          // Guard only applies while a GUARDED editor view is open AND
           // dirty, and only when actually leaving it. Same-view re-nav or
           // a clean editor navigates immediately.
+          const current = s.currentView;
           const leavingDirtyEditor =
-            s.currentView === "command-editor" &&
-            s.commandEditorDirty &&
-            v !== "command-editor";
+            isGuardedEditorView(current) &&
+            s[GUARDED_EDITOR_VIEWS[current].dirtyKey] === true &&
+            v !== current;
           if (leavingDirtyEditor) {
             return { pendingNavigation: v };
           }
@@ -234,14 +317,15 @@ export const useUIStore = create<UIState>()(
       confirmPendingNavigation: () =>
         set((s) => {
           if (s.pendingNavigation === null) return {};
+          // Leaving the editor — clear the flags that editor owns (dirty,
+          // target, any live script) so a later re-entry starts clean.
+          const reset = isGuardedEditorView(s.currentView)
+            ? GUARDED_EDITOR_VIEWS[s.currentView].reset
+            : {};
           return {
+            ...reset,
             currentView: s.pendingNavigation,
             pendingNavigation: null,
-            // Leaving the editor — clear its dirty flag, target, and any
-            // live script so a later re-entry starts clean.
-            commandEditorDirty: false,
-            commandEditorTarget: null,
-            commandEditorLiveScript: null,
           };
         }),
       cancelPendingNavigation: () => set({ pendingNavigation: null }),
@@ -259,6 +343,8 @@ export const useUIStore = create<UIState>()(
         set((s) => ({ commandsView: { ...s.commandsView, ...patch } })),
       updateWorkflowsView: (patch) =>
         set((s) => ({ workflowsView: { ...s.workflowsView, ...patch } })),
+      updateMiniappsView: (patch) =>
+        set((s) => ({ miniappsView: { ...s.miniappsView, ...patch } })),
       updateSchedulesView: (patch) =>
         set((s) => ({ schedulesView: { ...s.schedulesView, ...patch } })),
     }),
@@ -273,6 +359,7 @@ export const useUIStore = create<UIState>()(
         consolePosition: state.consolePosition,
         commandsView: state.commandsView,
         workflowsView: state.workflowsView,
+        miniappsView: state.miniappsView,
         schedulesView: state.schedulesView,
       }),
     },

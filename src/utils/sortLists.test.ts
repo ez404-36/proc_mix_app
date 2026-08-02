@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { Command, Schedule, Workflow } from "../types";
-import { sortCommands, sortSchedules, sortWorkflows } from "./sortLists";
+import type { Command, MiniApp, Schedule, Workflow } from "../types";
+import {
+  sortCommands,
+  sortMiniApps,
+  sortSchedules,
+  sortWorkflows,
+} from "./sortLists";
 
 function cmd(overrides: Partial<Command> = {}): Command {
   return {
@@ -28,6 +33,21 @@ function wf(overrides: Partial<Workflow> = {}): Workflow {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     runCount: 0,
+    ...overrides,
+  };
+}
+
+function miniApp(overrides: Partial<MiniApp> = {}): MiniApp {
+  return {
+    id: overrides.id ?? "m1",
+    name: "Dashboard",
+    widgets: [],
+    tags: [],
+    favorite: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    runCount: 0,
+    panelSize: { w: 400, h: 300 },
     ...overrides,
   };
 }
@@ -180,6 +200,40 @@ describe("sortWorkflows", () => {
     ];
     const sorted = sortWorkflows(items, { key: "createdAt", dir: "desc" });
     expect(sorted.map((w) => w.id)).toEqual(["m", "a", "z"]);
+  });
+});
+
+describe("sortMiniApps", () => {
+  it("sorts by name ascending", () => {
+    const items = [
+      miniApp({ id: "a", name: "Build" }),
+      miniApp({ id: "b", name: "Apply" }),
+    ];
+    const sorted = sortMiniApps(items, { key: "name", dir: "asc" });
+    expect(sorted.map((m) => m.name)).toEqual(["Apply", "Build"]);
+  });
+
+  it("sorts by createdAt descending", () => {
+    const items = [
+      miniApp({ id: "a", createdAt: "2026-01-01T00:00:00.000Z" }),
+      miniApp({ id: "b", createdAt: "2026-02-01T00:00:00.000Z" }),
+    ];
+    const sorted = sortMiniApps(items, { key: "createdAt", dir: "desc" });
+    expect(sorted.map((m) => m.id)).toEqual(["b", "a"]);
+  });
+
+  it("breaks equal-createdAt ties by name then id", () => {
+    const items = [
+      miniApp({ id: "z", name: "Same", createdAt: "2026-01-01T00:00:00.000Z" }),
+      miniApp({ id: "a", name: "Same", createdAt: "2026-01-01T00:00:00.000Z" }),
+      miniApp({
+        id: "m",
+        name: "Apple",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ];
+    const sorted = sortMiniApps(items, { key: "createdAt", dir: "desc" });
+    expect(sorted.map((m) => m.id)).toEqual(["m", "a", "z"]);
   });
 });
 

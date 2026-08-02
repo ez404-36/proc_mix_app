@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useCommandStore } from "../stores/commandStore";
+import { useMiniAppStore } from "../stores/miniappStore";
 import { useScheduleStore } from "../stores/scheduleStore";
 import { useWorkflowStore } from "../stores/workflowStore";
 import { getPlatform } from "../utils/platform";
@@ -44,7 +45,12 @@ export function useSeedBootstrap(): void {
       // errors swallowed inside `hydrateFromDb`.
       void useScheduleStore.getState().hydrateFromDb();
 
+      // Await the mini-app hydrate before the seed decision: the store's
+      // `initializeSeeds` reads `seedsInitialized` (flipped by `hydrateFromDb`
+      // when the table is non-empty), so a fire-and-forget hydrate could race
+      // the seeding and overwrite the freshly-seeded in-memory state.
       await useCommandStore.getState().hydrateFromDb();
+      await useMiniAppStore.getState().hydrateFromDb();
       if (cancelled) return;
 
       if (useCommandStore.getState().commands.length > 0) return;
@@ -53,6 +59,7 @@ export function useSeedBootstrap(): void {
       if (cancelled) return;
       const resolved: Platform = platform === "unknown" ? "linux" : platform;
       useCommandStore.getState().initializeSeeds(resolved);
+      useMiniAppStore.getState().initializeSeeds(resolved);
     })();
     return () => {
       cancelled = true;

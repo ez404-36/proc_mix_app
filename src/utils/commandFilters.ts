@@ -131,13 +131,31 @@ export function collectTagsFrom(
 /**
  * Collect the unique set of category names in use across `commands`,
  * sorted case-insensitively. Commands without a category (`categoryId`
- * undefined or blank) contribute nothing.
+ * undefined or blank) contribute nothing. Delegates to the variadic
+ * {@link collectCategoriesFrom} for the actual aggregation.
  */
 export function collectCategories(commands: ReadonlyArray<Command>): string[] {
+  return collectCategoriesFrom(commands);
+}
+
+/**
+ * Collect the unique set of category names across one OR MORE
+ * categorised-entity lists, sorted case-insensitively. Generalises
+ * {@link collectCategories} so the category-suggestion base can be SHARED
+ * between commands, workflows, and mini-apps (all carry an optional
+ * `categoryId`): pass every list and a category used by any entity is
+ * offered as a suggestion in every other editor. Blank/whitespace-only
+ * category ids are ignored.
+ */
+export function collectCategoriesFrom(
+  ...sources: ReadonlyArray<ReadonlyArray<{ categoryId?: string }>>
+): string[] {
   const seen = new Set<string>();
-  for (const cmd of commands) {
-    const cat = cmd.categoryId;
-    if (cat !== undefined && cat.trim() !== "") seen.add(cat);
+  for (const list of sources) {
+    for (const entity of list) {
+      const cat = entity.categoryId;
+      if (cat !== undefined && cat.trim() !== "") seen.add(cat);
+    }
   }
   return [...seen].sort((a, b) =>
     a.localeCompare(b, undefined, { sensitivity: "base" }),

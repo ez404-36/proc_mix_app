@@ -14,6 +14,11 @@ beforeEach(() => {
     toggleShortcut: DEFAULT_TOGGLE_SHORTCUT,
     language: "en",
     processCaptureEnabled: false,
+    commandEditorDirty: false,
+    commandEditorTarget: null,
+    miniappEditorDirty: false,
+    miniappEditorId: null,
+    pendingNavigation: null,
   });
   // Wipe persisted slice so tests can re-observe localStorage writes.
   if (typeof localStorage !== "undefined") localStorage.clear();
@@ -109,6 +114,90 @@ describe("uiStore.requestNavigation (command-editor dirty guard)", () => {
     expect(useUIStore.getState().currentView).toBe("command-editor");
     expect(useUIStore.getState().pendingNavigation).toBeNull();
     expect(useUIStore.getState().commandEditorDirty).toBe(true);
+  });
+
+  it("a dirty mini-app editor does NOT block leaving the command editor", () => {
+    useUIStore.setState({
+      currentView: "command-editor",
+      commandEditorDirty: false,
+      miniappEditorDirty: true,
+      pendingNavigation: null,
+    });
+    useUIStore.getState().requestNavigation("library");
+    expect(useUIStore.getState().currentView).toBe("library");
+    expect(useUIStore.getState().pendingNavigation).toBeNull();
+  });
+});
+
+describe("uiStore.requestNavigation (miniapp-editor dirty guard)", () => {
+  it("navigates immediately when the mini-app editor is clean", () => {
+    useUIStore.setState({
+      currentView: "miniapp-editor",
+      miniappEditorDirty: false,
+      pendingNavigation: null,
+    });
+    useUIStore.getState().requestNavigation("miniapps");
+    expect(useUIStore.getState().currentView).toBe("miniapps");
+    expect(useUIStore.getState().pendingNavigation).toBeNull();
+  });
+
+  it("defers navigation when leaving a dirty mini-app editor", () => {
+    useUIStore.setState({
+      currentView: "miniapp-editor",
+      miniappEditorDirty: true,
+      pendingNavigation: null,
+    });
+    useUIStore.getState().requestNavigation("miniapps");
+    expect(useUIStore.getState().currentView).toBe("miniapp-editor");
+    expect(useUIStore.getState().pendingNavigation).toBe("miniapps");
+  });
+
+  it("does not defer a same-view re-navigation", () => {
+    useUIStore.setState({
+      currentView: "miniapp-editor",
+      miniappEditorDirty: true,
+      pendingNavigation: null,
+    });
+    useUIStore.getState().requestNavigation("miniapp-editor");
+    expect(useUIStore.getState().currentView).toBe("miniapp-editor");
+    expect(useUIStore.getState().pendingNavigation).toBeNull();
+  });
+
+  it("confirmPendingNavigation clears the mini-app dirty flag and editor id", () => {
+    useUIStore.setState({
+      currentView: "miniapp-editor",
+      miniappEditorDirty: true,
+      miniappEditorId: "ma-1",
+      pendingNavigation: "miniapps",
+    });
+    useUIStore.getState().confirmPendingNavigation();
+    const s = useUIStore.getState();
+    expect(s.currentView).toBe("miniapps");
+    expect(s.pendingNavigation).toBeNull();
+    expect(s.miniappEditorDirty).toBe(false);
+    expect(s.miniappEditorId).toBeNull();
+  });
+
+  it("confirmPendingNavigation leaves the OTHER editor's state untouched", () => {
+    useUIStore.setState({
+      currentView: "miniapp-editor",
+      miniappEditorDirty: true,
+      miniappEditorId: "ma-1",
+      commandEditorTarget: { mode: "edit", commandId: "c-1" },
+      pendingNavigation: "miniapps",
+    });
+    useUIStore.getState().confirmPendingNavigation();
+    expect(useUIStore.getState().commandEditorTarget).toEqual({
+      mode: "edit",
+      commandId: "c-1",
+    });
+  });
+
+  it("setMiniappEditorDirty flips the dirty flag", () => {
+    useUIStore.getState().setMiniappEditorDirty(true);
+    expect(useUIStore.getState().miniappEditorDirty).toBe(true);
+    useUIStore.getState().setMiniappEditorDirty(false);
+    expect(useUIStore.getState().miniappEditorDirty).toBe(false);
   });
 });
 
@@ -281,6 +370,17 @@ describe("uiStore.setConsolePosition", () => {
 });
 
 describe("uiStore list-view preference setters", () => {
+  it("miniappsView has the correct default", () => {
+    const view = useUIStore.getState().miniappsView;
+    expect(view).toEqual({
+      sortKey: "createdAt",
+      sortDir: "desc",
+      mode: "tiles",
+      pageSize: 10,
+      grouped: false,
+    });
+  });
+
   it("updateCommandsView merges a partial patch", () => {
     useUIStore.getState().updateCommandsView({ mode: "table", pageSize: 25 });
     const view = useUIStore.getState().commandsView;
@@ -295,8 +395,28 @@ describe("uiStore list-view preference setters", () => {
     expect(useUIStore.getState().workflowsView.grouped).toBe(true);
   });
 
+  it("updateMiniappsView merges a partial patch", () => {
+    useUIStore.getState().updateMiniappsView({ mode: "table", pageSize: 25 });
+    const view = useUIStore.getState().miniappsView;
+    expect(view.mode).toBe("table");
+    expect(view.pageSize).toBe(25);
+    // Untouched keys are preserved from the default.
+    expect(view.sortKey).toBe("createdAt");
+  });
+
   it("updateSchedulesView merges a partial patch", () => {
     useUIStore.getState().updateSchedulesView({ sortDir: "asc" });
     expect(useUIStore.getState().schedulesView.sortDir).toBe("asc");
+  });
+
+  it("miniappsView survives the persisted-state round-trip", () => {
+    useUIStore.getState().updateMiniappsView({ sortKey: "name", mode: "compact" });
+    const raw = localStorage.getItem("procmix-ui");
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw as string) as {
+      state: { miniappsView: { sortKey: string; mode: string } };
+    };
+    expect(parsed.state.miniappsView.sortKey).toBe("name");
+    expect(parsed.state.miniappsView.mode).toBe("compact");
   });
 });

@@ -14,6 +14,7 @@ pub mod db;
 pub mod env_config;
 pub mod history;
 pub mod http_server;
+pub mod miniapps;
 pub mod plugin_state;
 pub mod schedules;
 pub mod sound;
