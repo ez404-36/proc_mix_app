@@ -36,7 +36,19 @@ import { CommandPalette } from "./components/CommandPalette";
 import { HttpServerPanel } from "./components/HttpServerPanel";
 import { EnvManager } from "./components/EnvManager";
 import { OutputPanel } from "./components/OutputPanel";
-import { TerminalIcon } from "./components/icons";
+import {
+  EnvIcon,
+  HistoryIcon,
+  HomeIcon,
+  LibraryIcon,
+  PluginsIcon,
+  RecordIcon,
+  SchedulerIcon,
+  SettingsIcon,
+  SidebarToggleIcon,
+  TerminalIcon,
+  ThemeIcon,
+} from "./components/icons";
 import { ContextMenuProvider } from "./components/ContextMenu";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { useUpdateStore } from "./stores/updateStore";
@@ -61,7 +73,7 @@ interface NavItem {
     | "nav.settings"
     | "nav.plugins"
     | "nav.env";
-  icon: string;
+  Icon: () => ReactElement;
 }
 
 // The "editor" view is intentionally absent: the workflow editor is opened
@@ -75,14 +87,14 @@ interface NavItem {
 // (see `Recorder.tsx` + `docs/process-capture.md`). We surface it rather
 // than hide it so the feature is discoverable.
 const NAV_ITEMS: NavItem[] = [
-  { view: "home", labelKey: "nav.home", icon: "⌂" },
-  { view: "library", labelKey: "nav.library", icon: "▤" },
-  { view: "scheduler", labelKey: "nav.scheduler", icon: "⏲" },
-  { view: "history", labelKey: "nav.history", icon: "⏱" },
-  { view: "recorder", labelKey: "nav.recorder", icon: "⏺" },
-  { view: "env", labelKey: "nav.env", icon: "⊞" },
-  { view: "plugins", labelKey: "nav.plugins", icon: "⧉" },
-  { view: "settings", labelKey: "nav.settings", icon: "⚙" },
+  { view: "home", labelKey: "nav.home", Icon: HomeIcon },
+  { view: "library", labelKey: "nav.library", Icon: LibraryIcon },
+  { view: "scheduler", labelKey: "nav.scheduler", Icon: SchedulerIcon },
+  { view: "history", labelKey: "nav.history", Icon: HistoryIcon },
+  { view: "recorder", labelKey: "nav.recorder", Icon: RecordIcon },
+  { view: "env", labelKey: "nav.env", Icon: EnvIcon },
+  { view: "plugins", labelKey: "nav.plugins", Icon: PluginsIcon },
+  { view: "settings", labelKey: "nav.settings", Icon: SettingsIcon },
 ];
 
 const THEME_CYCLE: Theme[] = ["light", "dark", "system"];
@@ -233,7 +245,9 @@ function App(): ReactElement {
                 )}
                 title={t(sidebarCollapsed ? "nav.expand" : "nav.collapse")}
               >
-                <span aria-hidden="true">{sidebarCollapsed ? "»" : "«"}</span>
+                <span aria-hidden="true" className="app-sidebar__nav-icon">
+                  <SidebarToggleIcon />
+                </span>
               </button>
             </div>
             <nav className="app-sidebar__nav">
@@ -247,7 +261,9 @@ function App(): ReactElement {
                   onClick={() => requestNavigation(item.view)}
                   title={sidebarCollapsed ? t(item.labelKey) : undefined}
                 >
-                  <span aria-hidden="true">{item.icon}</span>
+                  <span aria-hidden="true" className="app-sidebar__nav-icon">
+                    <item.Icon />
+                  </span>
                   {!sidebarCollapsed && <span>{t(item.labelKey)}</span>}
                 </button>
               ))}
@@ -282,9 +298,11 @@ function App(): ReactElement {
                     : undefined
                 }
               >
-                {sidebarCollapsed
-                  ? "◐"
-                  : t("nav.themeLabel", { label: themeLabel })}
+                {sidebarCollapsed ? (
+                  <ThemeIcon />
+                ) : (
+                  t("nav.themeLabel", { label: themeLabel })
+                )}
               </button>
               {!sidebarCollapsed && (
                 <div className="app-sidebar__hint">

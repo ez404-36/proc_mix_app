@@ -339,11 +339,11 @@ select {
   color: #ffffff;
 }
 
-/* One sanctioned exception to the sidebar's "Unicode glyph, not icons/
-   component" rule: the "Open console" tool button uses the shared
-   `TerminalIcon` (matching the Terminal feature's own iconography) instead
-   of a Unicode character. Sized/aligned like the Unicode glyph spans next
-   to it — `currentColor` picks up `.is-active`'s white automatically. */
+/* Sizing wrapper for every sidebar icon (nav items, collapse toggle, "Open
+   console" tool button, theme-cycle glyph) — all use `icons/` SVG
+   components, not raw Unicode characters (migrated off the old glyph
+   convention; see docs/ui-conventions.md Navigation section).
+   `currentColor` picks up `.is-active`'s white automatically. */
 .app-sidebar__nav-icon {
   display: inline-flex;
   align-items: center;
