@@ -71,4 +71,33 @@ describe("useExecutionBridge - backend-initiated run console tab", () => {
     expect(useExecutionStore.getState().panelOpen).toBe(true);
     expect(useTerminalStore.getState().panelMode).toBe("runs");
   });
+
+  it("forwards the started event's pid into the execution store", () => {
+    const { handler } = mountBridge();
+
+    handler({
+      kind: "started",
+      executionId: "exec-pid-1",
+      commandId: "cmd-1",
+      pid: 4242,
+    });
+
+    expect(useExecutionStore.getState().executions["exec-pid-1"].pid).toBe(
+      4242,
+    );
+  });
+
+  it("leaves pid undefined when the started event carries none", () => {
+    const { handler } = mountBridge();
+
+    handler({
+      kind: "started",
+      executionId: "exec-no-pid",
+      commandId: "cmd-1",
+    });
+
+    expect(
+      useExecutionStore.getState().executions["exec-no-pid"].pid,
+    ).toBeUndefined();
+  });
 });

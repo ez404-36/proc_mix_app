@@ -43,6 +43,7 @@ import { useUpdateStore } from "./stores/updateStore";
 import { useExecutionBridge } from "./hooks/useExecutionBridge";
 import { useWorkflowBridge } from "./hooks/useWorkflowBridge";
 import { useHttpServerBridge } from "./hooks/useHttpServerBridge";
+import { useMiniAppWindowBridge } from "./hooks/useMiniAppWindowBridge";
 import { useGlobalShortcut } from "./hooks/useGlobalShortcut";
 import { useI18nBridge } from "./hooks/useI18nBridge";
 import { useSeedBootstrap } from "./hooks/useSeedBootstrap";
@@ -157,6 +158,7 @@ function App(): ReactElement {
   useExecutionBridge();
   useWorkflowBridge();
   useHttpServerBridge();
+  useMiniAppWindowBridge();
   useGlobalShortcut();
   useI18nBridge();
   useSeedBootstrap();

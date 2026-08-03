@@ -19,6 +19,8 @@ const sampleLabels: TrayLabels = {
   favorites: "tray.favorites",
   favoritesEmpty: "tray.favoritesEmpty",
   favoritesMore: "tray.favoritesMore",
+  miniApps: "tray.miniApps",
+  miniAppsEmpty: "tray.miniAppsEmpty",
   notifyTitle: "tray.notifyTitle",
   notifySuccess: "tray.notifySuccess",
   notifyError: "tray.notifyError",

@@ -24,6 +24,8 @@ import type {
   HistoryEventKind,
   HistoryFilter,
   HistoryLogLine,
+  MiniApp,
+  MiniAppDeletedEvent,
   RunStatus,
 } from "../types";
 import type { SshHostDraft, SshSource } from "../types/sshHost";
@@ -40,6 +42,7 @@ function toWritableSource(source: string): SshSource | null {
 import {
   upsertCommandInDb,
 } from "../utils/commandRepository";
+import { saveMiniAppInDb } from "../utils/miniappRepository";
 import {
   clearHistoryInDb,
   deleteHistoryEventInDb,
@@ -52,6 +55,7 @@ import {
   type HistoryClearRange,
 } from "../utils/historyClearRange";
 import { useCommandStore } from "./commandStore";
+import { useMiniAppStore } from "./miniappStore";
 
 /**
  * UI-facing filter state. Mirrors `HistoryFilter` exactly with the
@@ -149,6 +153,12 @@ interface HistoryState {
   undoEdit: (eventId: string) => Promise<void>;
   restoreDeleted: (eventId: string) => Promise<void>;
   /**
+   * Restore a deleted mini-app from a `miniAppDeleted` event's snapshot.
+   * Mirrors {@link HistoryState.restoreDeleted} exactly, operating on
+   * `miniappStore` instead of `commandStore`.
+   */
+  restoreDeletedMiniApp: (eventId: string) => Promise<void>;
+  /**
    * Revert an SSH `edited` / `editedExternally` event by re-writing the
    * `snapshotBefore` state back to `~/.ssh/config` via `saveSshHost`. The
    * backend logs this as a fresh `sshHostEdited` event (the audit trail of the
@@ -213,6 +223,32 @@ function reapplySnapshotInStore(snapshot: Command): void {
   } else {
     useCommandStore.setState((s) => ({
       commands: [...s.commands, snapshot],
+      favorites: snapshot.favorite
+        ? [...new Set([...s.favorites, snapshot.id])]
+        : s.favorites,
+    }));
+  }
+}
+
+/**
+ * Update a single mini-app in the in-memory `miniappStore` AFTER the
+ * snapshot has been persisted via `saveMiniAppInDb`. Mirrors
+ * `reapplySnapshotInStore` exactly (verbatim snapshot, no fresh
+ * id/timestamps).
+ */
+function reapplyMiniAppSnapshotInStore(snapshot: MiniApp): void {
+  const state = useMiniAppStore.getState();
+  const exists = state.miniapps.some((m) => m.id === snapshot.id);
+  if (exists) {
+    useMiniAppStore.setState((s) => ({
+      miniapps: s.miniapps.map((m) => (m.id === snapshot.id ? snapshot : m)),
+      favorites: snapshot.favorite
+        ? [...new Set([...s.favorites, snapshot.id])]
+        : s.favorites.filter((f) => f !== snapshot.id),
+    }));
+  } else {
+    useMiniAppStore.setState((s) => ({
+      miniapps: [...s.miniapps, snapshot],
       favorites: snapshot.favorite
         ? [...new Set([...s.favorites, snapshot.id])]
         : s.favorites,
@@ -420,6 +456,52 @@ export const useHistoryStore = create<HistoryState>()((set, get) => ({
       Message.success(
         i18n.t("history.restoreSuccess", {
           defaultValue: "Command restored",
+        }),
+      );
+      void get().load();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Message.error(
+        `${i18n.t("history.restoreFailed", { defaultValue: "Restore failed" })}: ${msg}`,
+      );
+    }
+  },
+  restoreDeletedMiniApp: async (eventId) => {
+    let source: HistoryEvent | null;
+    try {
+      source = await getHistoryEventFromDb(eventId);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Message.error(
+        `${i18n.t("history.restoreFailed", { defaultValue: "Restore failed" })}: ${msg}`,
+      );
+      return;
+    }
+    if (source === null || source.kind !== "miniAppDeleted") {
+      Message.error(
+        i18n.t("history.restoreMissing", {
+          defaultValue: "Original delete event is no longer available",
+        }),
+      );
+      void get().load();
+      return;
+    }
+    const ev: MiniAppDeletedEvent = source;
+    try {
+      await saveMiniAppInDb(ev.snapshotBefore);
+      reapplyMiniAppSnapshotInStore(ev.snapshotBefore);
+      const restore: HistoryEvent = {
+        id: makeId(),
+        createdAt: nowIso(),
+        kind: "miniAppRestored",
+        miniappId: ev.miniappId,
+        miniappName: ev.snapshotBefore.name,
+        originalEventId: ev.id,
+      };
+      await recordHistoryEventInDb(restore);
+      Message.success(
+        i18n.t("history.restoreMiniAppSuccess", {
+          defaultValue: "Mini-app restored",
         }),
       );
       void get().load();

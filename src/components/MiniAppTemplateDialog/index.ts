@@ -1,0 +1,1 @@
+export { MiniAppTemplateDialog } from "./MiniAppTemplateDialog";

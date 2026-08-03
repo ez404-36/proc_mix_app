@@ -24,6 +24,7 @@ use sqlx::Row;
 use crate::core::executor::{CapturedLine, ExecutionTarget};
 use crate::core::extractor::ExtractedOutput;
 use crate::storage::commands::CommandRecord;
+use crate::storage::miniapps::MiniAppRecord;
 use crate::storage::workflows::WorkflowRecord;
 use crate::storage::DbPool;
 
@@ -211,6 +212,25 @@ pub enum HistoryEventPayload {
         command_id: String,
         command_name: String,
         /// Id of the original `command_edited` event that was undone.
+        original_event_id: String,
+    },
+    /// A mini-app removed from the `miniapps` table (v0.13.0). Mirrors
+    /// `CommandDeleted` exactly: carries the full snapshot so a later
+    /// `MiniAppRestored` can re-upsert it without any further IPC.
+    #[serde(rename_all = "camelCase")]
+    MiniAppDeleted {
+        miniapp_id: String,
+        miniapp_name: String,
+        snapshot_before: MiniAppRecord,
+    },
+    /// A previously-deleted mini-app re-created from its `MiniAppDeleted`
+    /// snapshot. Mirrors `CommandRestored`.
+    #[serde(rename_all = "camelCase")]
+    MiniAppRestored {
+        miniapp_id: String,
+        miniapp_name: String,
+        /// Id of the original `miniapp_deleted` event that this entry
+        /// reverts. Lets the UI mark the source record as consumed.
         original_event_id: String,
     },
     #[serde(rename_all = "camelCase")]
@@ -447,6 +467,8 @@ impl HistoryEventPayload {
             HistoryEventPayload::CommandRun { .. } => "commandRun",
             HistoryEventPayload::CommandRestored { .. } => "commandRestored",
             HistoryEventPayload::CommandReverted { .. } => "commandReverted",
+            HistoryEventPayload::MiniAppDeleted { .. } => "miniAppDeleted",
+            HistoryEventPayload::MiniAppRestored { .. } => "miniAppRestored",
             HistoryEventPayload::WorkflowCreated { .. } => "workflowCreated",
             HistoryEventPayload::WorkflowEdited { .. } => "workflowEdited",
             HistoryEventPayload::WorkflowDeleted { .. } => "workflowDeleted",
@@ -475,7 +497,9 @@ impl HistoryEventPayload {
             | HistoryEventPayload::CommandRun { command_id, .. }
             | HistoryEventPayload::CommandRestored { command_id, .. }
             | HistoryEventPayload::CommandReverted { command_id, .. } => Some(command_id),
-            HistoryEventPayload::WorkflowCreated { .. }
+            HistoryEventPayload::MiniAppDeleted { .. }
+            | HistoryEventPayload::MiniAppRestored { .. }
+            | HistoryEventPayload::WorkflowCreated { .. }
             | HistoryEventPayload::WorkflowEdited { .. }
             | HistoryEventPayload::WorkflowDeleted { .. }
             | HistoryEventPayload::WorkflowRun { .. }
@@ -487,6 +511,18 @@ impl HistoryEventPayload {
             | HistoryEventPayload::SshHostEditedExternally { .. }
             | HistoryEventPayload::SshHostDeleted { .. }
             | HistoryEventPayload::SshHostDeletedExternally { .. } => None,
+        }
+    }
+
+    /// Owning mini-app id for `miniApp*` variants; `None` for every other
+    /// kind. Not denormalised into a dedicated SQL column (no per-mini-app
+    /// history view exists yet, unlike `schedule_id`); surfaced as a typed
+    /// accessor should that change.
+    pub fn miniapp_id(&self) -> Option<&str> {
+        match self {
+            HistoryEventPayload::MiniAppDeleted { miniapp_id, .. }
+            | HistoryEventPayload::MiniAppRestored { miniapp_id, .. } => Some(miniapp_id),
+            _ => None,
         }
     }
 
@@ -529,6 +565,8 @@ impl HistoryEventPayload {
             | HistoryEventPayload::CommandRun { command_name, .. }
             | HistoryEventPayload::CommandRestored { command_name, .. }
             | HistoryEventPayload::CommandReverted { command_name, .. } => command_name,
+            HistoryEventPayload::MiniAppDeleted { miniapp_name, .. }
+            | HistoryEventPayload::MiniAppRestored { miniapp_name, .. } => miniapp_name,
             HistoryEventPayload::WorkflowCreated { workflow_name, .. }
             | HistoryEventPayload::WorkflowEdited { workflow_name, .. }
             | HistoryEventPayload::WorkflowDeleted { workflow_name, .. }
@@ -657,6 +695,8 @@ pub fn allowed_kinds() -> HashSet<&'static str> {
         "commandRun",
         "commandRestored",
         "commandReverted",
+        "miniAppDeleted",
+        "miniAppRestored",
         "workflowCreated",
         "workflowEdited",
         "workflowDeleted",
@@ -1408,6 +1448,27 @@ mod wire_format_tests {
         }
     }
 
+    fn sample_miniapp() -> MiniAppRecord {
+        MiniAppRecord {
+            id: "ma-1".into(),
+            name: "VPN".into(),
+            name_key: None,
+            description: None,
+            description_key: None,
+            icon: None,
+            widgets: vec![],
+            tags: vec![],
+            category_id: None,
+            favorite: false,
+            created_at: "2026-05-28T00:00:00Z".into(),
+            updated_at: "2026-05-28T00:00:00Z".into(),
+            last_run_at: None,
+            run_count: 0,
+            os: None,
+            panel_size: crate::storage::miniapps::PanelSizeRecord { w: 400.0, h: 320.0 },
+        }
+    }
+
     fn evt(payload: HistoryEventPayload) -> HistoryEvent {
         HistoryEvent {
             id: "evt-1".into(),
@@ -1612,6 +1673,37 @@ mod wire_format_tests {
         });
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["kind"], "commandReverted");
+        assert!(json.get("originalEventId").is_some());
+        assert!(json.get("original_event_id").is_none());
+    }
+
+    #[test]
+    fn miniapp_deleted_variant_wire_format() {
+        let e = evt(HistoryEventPayload::MiniAppDeleted {
+            miniapp_id: "ma-1".into(),
+            miniapp_name: "VPN".into(),
+            snapshot_before: sample_miniapp(),
+        });
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["kind"], "miniAppDeleted");
+        assert!(json.get("miniappId").is_some());
+        assert!(json.get("miniappName").is_some());
+        assert!(json.get("snapshotBefore").is_some());
+        // Negative — snake_case must NOT leak.
+        assert!(json.get("miniapp_id").is_none());
+        assert!(json.get("miniapp_name").is_none());
+        assert!(json.get("snapshot_before").is_none());
+    }
+
+    #[test]
+    fn miniapp_restored_variant_wire_format() {
+        let e = evt(HistoryEventPayload::MiniAppRestored {
+            miniapp_id: "ma-1".into(),
+            miniapp_name: "VPN".into(),
+            original_event_id: "src-evt".into(),
+        });
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["kind"], "miniAppRestored");
         assert!(json.get("originalEventId").is_some());
         assert!(json.get("original_event_id").is_none());
     }
@@ -2057,6 +2149,16 @@ mod wire_format_tests {
             HistoryEventPayload::CommandReverted {
                 command_id: "c1".into(),
                 command_name: "n1".into(),
+                original_event_id: "src".into(),
+            },
+            HistoryEventPayload::MiniAppDeleted {
+                miniapp_id: "ma-1".into(),
+                miniapp_name: "VPN".into(),
+                snapshot_before: sample_miniapp(),
+            },
+            HistoryEventPayload::MiniAppRestored {
+                miniapp_id: "ma-1".into(),
+                miniapp_name: "VPN".into(),
                 original_event_id: "src".into(),
             },
             HistoryEventPayload::WorkflowCreated {

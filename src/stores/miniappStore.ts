@@ -1,13 +1,11 @@
 import { Message } from "@arco-design/web-react";
 import { create } from "zustand";
 import type { MiniApp, PanelSize } from "../types";
-import type { Platform } from "../types/platform";
 import {
   deleteMiniAppInDb,
   listMiniAppsFromDb,
   saveMiniAppInDb,
 } from "../utils/miniappRepository";
-import { buildMiniAppSeedsForPlatform } from "./miniappSeeds";
 
 /**
  * Default main-panel size for a newly-created mini-app that omits `panelSize`
@@ -46,24 +44,10 @@ interface MiniAppState {
    */
   hydrated: boolean;
   /**
-   * Tracks whether the platform-aware seed entries have been materialized.
-   * The bootstrap hook fetches the host OS from Rust and then calls
-   * `initializeSeeds` exactly once at app startup. Mirrors the
-   * `seedsInitialized` flag in `commandStore`.
-   */
-  seedsInitialized: boolean;
-  /**
    * Load every mini-app from the Rust-backed SQLite store and replace the
    * in-memory state. Idempotent: calling twice yields the same result.
    */
   hydrateFromDb: () => Promise<void>;
-  /**
-   * Populate `miniapps` with the per-platform seed entries AND persist
-   * each one to SQLite via the same IPC path used for user-created
-   * mini-apps. Idempotent: a second call (or a call made after the user
-   * has already added their own mini-apps) is a no-op.
-   */
-  initializeSeeds: (platform: Platform) => void;
   /**
    * Persist a new mini-app and return its concrete materialised form
    * (with generated id + timestamps). Returning the value lets a future
@@ -125,40 +109,21 @@ function persistDelete(id: string): void {
   });
 }
 
-export const useMiniAppStore = create<MiniAppState>()((set, get) => ({
+export const useMiniAppStore = create<MiniAppState>()((set) => ({
   miniapps: [],
   favorites: [],
   hydrated: false,
-  seedsInitialized: false,
   hydrateFromDb: async () => {
     try {
       const miniapps = await listMiniAppsFromDb();
       const favorites = miniapps.filter((m) => m.favorite).map((m) => m.id);
-      // If there is already persisted data we consider seeds done; a second
-      // hydrate (e.g. after a refresh) must not re-trigger seeding.
-      set({
-        miniapps,
-        favorites,
-        hydrated: true,
-        seedsInitialized: miniapps.length > 0,
-      });
+      set({ miniapps, favorites, hydrated: true });
     } catch (err: unknown) {
       console.error("failed to hydrate mini-apps from db", err);
       // Still flip `hydrated` so the UI does not stay blank forever if the
       // first IPC call ever fails.
       set({ hydrated: true });
     }
-  },
-  initializeSeeds: (platform) => {
-    if (get().seedsInitialized) return;
-    const seeds = buildMiniAppSeedsForPlatform(platform);
-    // Reuse `addMiniApp` so each seed gets a fresh id, timestamps, and the
-    // same optimistic in-memory + fire-and-forget IPC persistence path used
-    // for user-created mini-apps. Favorites are kept in sync by `addMiniApp`.
-    for (const seed of seeds) {
-      get().addMiniApp(seed);
-    }
-    set({ seedsInitialized: true });
   },
   addMiniApp: (input) => {
     const ts = nowIso();

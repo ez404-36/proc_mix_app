@@ -12,8 +12,18 @@ import {
   duplicateCommand,
 } from "../../services/commandActions";
 import { deleteWorkflow as deleteWorkflowWithHistory } from "../../services/workflowActions";
+import {
+  createMiniApp,
+  deleteMiniApp as deleteMiniAppWithHistory,
+} from "../../services/miniappActions";
+import {
+  listOpenMiniAppWindows,
+  openMiniAppWindow,
+} from "../../services/miniappWindow";
 import { useCommandStore } from "../../stores/commandStore";
 import { useMiniAppStore } from "../../stores/miniappStore";
+import type { NewMiniAppInput } from "../../stores/miniappStore";
+import { useMiniAppWindowStore } from "../../stores/miniappWindowStore";
 import { buildMiniAppSeedsForPlatform } from "../../stores/miniappSeeds";
 import { useScheduleStore } from "../../stores/scheduleStore";
 import { useUIStore } from "../../stores/uiStore";
@@ -52,6 +62,7 @@ import { BlockedDeleteDialog } from "../BlockedDeleteDialog/BlockedDeleteDialog"
 import { CommandView } from "../CommandView";
 import { WorkflowView } from "../WorkflowView";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { MiniAppTemplateDialog } from "../MiniAppTemplateDialog";
 import {
   checkCommandBlockers,
   checkWorkflowBlockers,
@@ -70,6 +81,7 @@ import {
   EditIcon,
   PlusIcon,
   RunIcon,
+  SpinnerIcon,
   ViewIcon,
 } from "../icons";
 import { TargetBadge } from "../TargetBadge";
@@ -1484,6 +1496,14 @@ function MiniAppCard({
   const widgetCount = miniapp.widgets.length;
   const widgetLabel = t("miniapps.widgetsCount", { count: widgetCount });
 
+  // The Rust side already refuses to open a second OS window for the same
+  // mini-app id (`miniapp_window::open` focuses the existing one instead —
+  // see its unit tests). This mirror of that state is purely a UX signal:
+  // while running, the tile shows a loader + "Running" in place of the Run
+  // button and the button is disabled, so a click cannot even ATTEMPT a
+  // second `openMiniAppWindow` call.
+  const isRunning = useMiniAppWindowStore((s) => s.runningIds.has(miniapp.id));
+
   const handleFavoriteClick = (e: ReactMouseEvent<HTMLButtonElement>): void => {
     e.stopPropagation();
     onToggleFavorite(miniapp.id);
@@ -1491,6 +1511,7 @@ function MiniAppCard({
 
   const handleRunClick = (e: ReactMouseEvent<HTMLButtonElement>): void => {
     e.stopPropagation();
+    if (isRunning) return;
     onRun(miniapp);
   };
 
@@ -1534,13 +1555,14 @@ function MiniAppCard({
           <div className="list-tile__head-actions">
             <button
               type="button"
-              className="btn btn--run btn--icon"
+              className={`btn btn--run btn--icon${isRunning ? " is-running" : ""}`}
               onClick={handleRunClick}
               onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={t("miniapps.run")}
-              title={t("miniapps.run")}
+              disabled={isRunning}
+              aria-label={isRunning ? t("miniapps.running") : t("miniapps.run")}
+              title={isRunning ? t("miniapps.running") : t("miniapps.run")}
             >
-              <RunIcon />
+              {isRunning ? <SpinnerIcon /> : <RunIcon />}
             </button>
             <button
               type="button"
@@ -1590,9 +1612,14 @@ function MiniAppCard({
       </div>
       {!compact ? (
         <div className="list-tile__actions">
-          <button type="button" className="btn btn--run" onClick={handleRunClick}>
-            <RunIcon />
-            {t("miniapps.run")}
+          <button
+            type="button"
+            className={`btn btn--run${isRunning ? " is-running" : ""}`}
+            onClick={handleRunClick}
+            disabled={isRunning}
+          >
+            {isRunning ? <SpinnerIcon /> : <RunIcon />}
+            {isRunning ? t("miniapps.running") : t("miniapps.run")}
           </button>
           {/* The outlined variant tints its glyph via the `btn--edit-icon`
               wrapper — a bare glyph renders in the neutral label colour, which
@@ -1625,6 +1652,7 @@ function MiniAppTable({
   onEdit,
 }: MiniAppTableProps): ReactElement {
   const { t } = useTranslation();
+  const runningIds = useMiniAppWindowStore((s) => s.runningIds);
   return (
     <div
       className="table"
@@ -1647,42 +1675,47 @@ function MiniAppTable({
           {t("listView.sortByCreatedAt")}
         </span>
       </div>
-      {miniapps.map((miniapp) => (
-        <div
-          key={miniapp.id}
-          className="table__row table__row--body table__row--clickable"
-          role="row"
-          onClick={() => onEdit(miniapp)}
-          style={{ gridTemplateColumns: MINIAPP_TABLE_COLUMNS }}
-        >
-          <span className="table__cell table__cell--actions" role="cell">
-            <button
-              type="button"
-              className="btn btn--run btn--icon"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRun(miniapp);
-              }}
-              aria-label={t("miniapps.run")}
-              title={t("miniapps.run")}
-            >
-              <RunIcon />
-            </button>
-          </span>
-          <span className="table__cell" role="cell">
-            {miniapp.favorite ? "♥ " : ""}
-            {getMiniAppName(miniapp, t)}
-          </span>
-          <span className="table__cell table__cell--muted" role="cell">
-            {miniapp.categoryId !== undefined && miniapp.categoryId.trim() !== ""
-              ? miniapp.categoryId
-              : t("listView.uncategorized")}
-          </span>
-          <span className="table__cell table__cell--muted" role="cell">
-            {formatDate(miniapp.createdAt)}
-          </span>
-        </div>
-      ))}
+      {miniapps.map((miniapp) => {
+        const isRunning = runningIds.has(miniapp.id);
+        return (
+          <div
+            key={miniapp.id}
+            className="table__row table__row--body table__row--clickable"
+            role="row"
+            onClick={() => onEdit(miniapp)}
+            style={{ gridTemplateColumns: MINIAPP_TABLE_COLUMNS }}
+          >
+            <span className="table__cell table__cell--actions" role="cell">
+              <button
+                type="button"
+                className={`btn btn--run btn--icon${isRunning ? " is-running" : ""}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (isRunning) return;
+                  onRun(miniapp);
+                }}
+                disabled={isRunning}
+                aria-label={isRunning ? t("miniapps.running") : t("miniapps.run")}
+                title={isRunning ? t("miniapps.running") : t("miniapps.run")}
+              >
+                {isRunning ? <SpinnerIcon /> : <RunIcon />}
+              </button>
+            </span>
+            <span className="table__cell" role="cell">
+              {miniapp.favorite ? "♥ " : ""}
+              {getMiniAppName(miniapp, t)}
+            </span>
+            <span className="table__cell table__cell--muted" role="cell">
+              {miniapp.categoryId !== undefined && miniapp.categoryId.trim() !== ""
+                ? miniapp.categoryId
+                : t("listView.uncategorized")}
+            </span>
+            <span className="table__cell table__cell--muted" role="cell">
+              {formatDate(miniapp.createdAt)}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1692,11 +1725,13 @@ function MiniAppsTab(): ReactElement {
   const miniapps = useMiniAppStore((s) => s.miniapps);
   const hydrated = useMiniAppStore((s) => s.hydrated);
   const toggleFavorite = useMiniAppStore((s) => s.toggleFavorite);
-  const deleteMiniApp = useMiniAppStore((s) => s.deleteMiniApp);
-  const addMiniApp = useMiniAppStore((s) => s.addMiniApp);
+  // History-aware delete: routes through the `miniappActions` wrapper so a
+  // `miniAppDeleted` event is logged for the History view's restore flow.
+  // Never call `useMiniAppStore.getState().deleteMiniApp` directly from UI
+  // code — see services/miniappActions.ts.
+  const deleteMiniApp = deleteMiniAppWithHistory;
   const setView = useUIStore((s) => s.setView);
   const setMiniappEditorId = useUIStore((s) => s.setMiniappEditorId);
-  const setMiniappRunnerId = useUIStore((s) => s.setMiniappRunnerId);
   const miniappsView = useUIStore((s) => s.miniappsView);
   const updateMiniappsView = useUIStore((s) => s.updateMiniappsView);
 
@@ -1705,8 +1740,6 @@ function MiniAppsTab(): ReactElement {
   const [page, setPage] = useState<number>(1);
   // The mini-app staged for deletion (awaiting confirmation), or null.
   const [pendingDelete, setPendingDelete] = useState<MiniApp | null>(null);
-  // True while "Start from example" is resolving the host platform over IPC.
-  const [seeding, setSeeding] = useState<boolean>(false);
 
   // Hydrate the store from SQLite the first time the tab mounts. Mirrors the
   // command/workflow stores' bootstrap-hydrate contract, but the mini-app
@@ -1715,6 +1748,31 @@ function MiniAppsTab(): ReactElement {
   // an unguarded call here is safe under React Strict Mode and re-mounts.
   useEffect(() => {
     void useMiniAppStore.getState().hydrateFromDb();
+  }, []);
+
+  // Reconcile `miniappWindowStore` against the LIVE window registry every
+  // time this tab mounts. The `Opened`/`Closed` event stream
+  // (`useMiniAppWindowBridge`, mounted once for the app's lifetime) is
+  // normally sufficient, but cannot detect a webview whose renderer process
+  // crashed while the native OS window survived (WebView2 on Windows /
+  // WebKitGTK on Linux never fire `WindowEvent::Destroyed` in that case —
+  // see `platform::miniapp_window::open_miniapp_ids`'s doc comment). This
+  // reconciliation corrects any OTHER drift (a missed event, a startup
+  // race); it does not itself detect that specific crash scenario. A
+  // failed IPC call is swallowed — the event stream is still the primary
+  // source of truth, so leaving the store as-is on error is safe.
+  useEffect(() => {
+    let cancelled = false;
+    listOpenMiniAppWindows()
+      .then((liveIds) => {
+        if (!cancelled) useMiniAppWindowStore.getState().reconcile(liveIds);
+      })
+      .catch((err: unknown) => {
+        console.error("failed to reconcile open mini-app windows", err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const filtered = useMemo(
@@ -1759,45 +1817,31 @@ function MiniAppsTab(): ReactElement {
     setView("miniapp-editor");
   };
 
-  /**
-   * Materialise the built-in example panels for this host.
-   *
-   * The seeds are otherwise a ONE-SHOT startup step (`useSeedBootstrap` runs
-   * `initializeSeeds` only when the library is empty on first launch), so a
-   * user who deleted them — or who joined an install that already had
-   * commands — could never get a worked example back. This re-adds them on
-   * demand through the normal `addMiniApp` path, so each copy gets fresh ids
-   * and is persisted like any user-created mini-app.
-   */
-  const handleStartFromExample = (): void => {
-    if (seeding) return;
-    setSeeding(true);
-    void (async (): Promise<void> => {
-      try {
-        const detected = await getPlatform();
-        const platform: Platform = detected === "unknown" ? "linux" : detected;
-        const seeds = buildMiniAppSeedsForPlatform(platform);
-        for (const seed of seeds) addMiniApp(seed);
-        Message.success(t("miniapps.exampleAdded", { count: seeds.length }));
-      } catch (err: unknown) {
-        // Platform detection is the only thing that can throw here; surface it
-        // rather than leaving the button silently inert.
-        const message = err instanceof Error ? err.message : String(err);
-        Message.error(t("miniapps.exampleFailed", { message }));
-      } finally {
-        setSeeding(false);
-      }
-    })();
-  };
-
   const handleEdit = (miniapp: MiniApp): void => {
     setMiniappEditorId(miniapp.id);
     setView("miniapp-editor");
   };
 
   const handleRun = (miniapp: MiniApp): void => {
-    setMiniappRunnerId(miniapp.id);
-    setView("miniapp-runner");
+    // Mini-apps run in their OWN standalone OS window (one per id, any number
+    // open at once) rather than as an in-app view — see
+    // `services/miniappWindow.ts` / `platform::miniapp_window` (Rust). A
+    // window-open failure is surfaced as a toast rather than silently
+    // swallowed; the Library itself never navigates anywhere.
+    //
+    // Skip the IPC call entirely for an already-running mini-app — the
+    // Rust side would just focus the existing window (never a duplicate:
+    // `miniapp_window::open` checks `get_webview_window` first), but every
+    // Run entry point (tile button, context menu, table row) funnels through
+    // here, so this single check keeps them all from even attempting a
+    // pointless second `open_miniapp_window` round-trip.
+    if (useMiniAppWindowStore.getState().runningIds.has(miniapp.id)) return;
+    openMiniAppWindow(miniapp.id).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      Message.error(
+        t("miniapps.windowOpenFailed", { defaultValue: message, message }),
+      );
+    });
   };
 
   const requestDelete = (miniapp: MiniApp): void => {
@@ -1843,15 +1887,6 @@ function MiniAppsTab(): ReactElement {
             <button type="button" className="btn btn--primary" onClick={handleCreate}>
               <PlusIcon />
               {t("miniapps.createLabel")}
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={handleStartFromExample}
-              disabled={seeding}
-            >
-              <CopyIcon />
-              {t("miniapps.startFromExample")}
             </button>
           </div>
         </div>
@@ -1916,6 +1951,14 @@ export function Library(): ReactElement {
   const setEditorWorkflowId = useUIStore((s) => s.setEditorWorkflowId);
   const setMiniappEditorId = useUIStore((s) => s.setMiniappEditorId);
 
+  // Templates offered by the "From template" dialog, resolved for the host
+  // platform on demand (see `handleOpenTemplateDialog`) rather than at app
+  // startup — mini-apps have no seed step any more.
+  const [templateDialogOpen, setTemplateDialogOpen] = useState<boolean>(false);
+  const [templates, setTemplates] = useState<ReadonlyArray<NewMiniAppInput>>(
+    [],
+  );
+
   const tabs: ReadonlyArray<{ key: LibraryTab; labelKey: string }> = [
     { key: "commands", labelKey: "workflow.tabs.commands" },
     { key: "workflows", labelKey: "workflow.tabs.workflows" },
@@ -1936,6 +1979,38 @@ export function Library(): ReactElement {
   const handleNewMiniApp = (): void => {
     setMiniappEditorId(null);
     setView("miniapp-editor");
+  };
+
+  /**
+   * Open the "From template" dialog, resolving the host platform to build
+   * the offered list (`buildMiniAppSeedsForPlatform` — currently System Info
+   * on every platform, plus OpenVPN3 Control Panel on Linux).
+   */
+  const handleOpenTemplateDialog = (): void => {
+    void (async (): Promise<void> => {
+      try {
+        const detected = await getPlatform();
+        const platform: Platform = detected === "unknown" ? "linux" : detected;
+        setTemplates(buildMiniAppSeedsForPlatform(platform));
+        setTemplateDialogOpen(true);
+      } catch (err: unknown) {
+        // Platform detection is the only thing that can throw here; surface it
+        // rather than leaving the button silently inert.
+        const message = err instanceof Error ? err.message : String(err);
+        Message.error(t("miniapps.templateFailed", { message }));
+      }
+    })();
+  };
+
+  /**
+   * Add the selected template via the normal `createMiniApp` path, so it
+   * gets a fresh id/timestamps and is persisted exactly like a user-created
+   * mini-app — templates are a starting point, not a special kind.
+   */
+  const handleSelectTemplate = (template: NewMiniAppInput): void => {
+    createMiniApp(template);
+    setTemplateDialogOpen(false);
+    Message.success(t("miniapps.templateAdded"));
   };
 
   return (
@@ -1986,16 +2061,28 @@ export function Library(): ReactElement {
             {t("workflow.newLabel")}
           </button>
         ) : (
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={handleNewMiniApp}
-            aria-label={t("miniapps.create")}
-            title={t("miniapps.create")}
-          >
-            <PlusIcon />
-            {t("miniapps.createLabel")}
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={handleOpenTemplateDialog}
+              aria-label={t("miniapps.fromTemplate")}
+              title={t("miniapps.fromTemplate")}
+            >
+              <CopyIcon />
+              {t("miniapps.fromTemplate")}
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={handleNewMiniApp}
+              aria-label={t("miniapps.create")}
+              title={t("miniapps.create")}
+            >
+              <PlusIcon />
+              {t("miniapps.createLabel")}
+            </button>
+          </>
         )}
       </div>
 
@@ -2006,6 +2093,13 @@ export function Library(): ReactElement {
       ) : (
         <MiniAppsTab />
       )}
+
+      <MiniAppTemplateDialog
+        open={templateDialogOpen}
+        templates={templates}
+        onSelect={handleSelectTemplate}
+        onCancel={() => setTemplateDialogOpen(false)}
+      />
     </div>
   );
 }

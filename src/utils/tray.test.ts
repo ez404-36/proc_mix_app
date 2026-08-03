@@ -31,6 +31,8 @@ const fakeT = vi.fn((key: string, opts?: { name?: string }) => {
     "tray.favorites": "Избранное",
     "tray.favoritesEmpty": "Пусто",
     "tray.favoritesMore": "Ещё…",
+    "tray.miniApps": "Мини-приложения",
+    "tray.miniAppsEmpty": "Нет избранных мини-приложений",
     "tray.notifyTitle": "ProcMix",
     "tray.notifySuccess": `Готово: ${opts?.name ?? ""}`,
     "tray.notifyError": `Ошибка: ${opts?.name ?? ""}`,
@@ -54,6 +56,8 @@ describe("buildTrayLabels", () => {
       favorites: "Избранное",
       favoritesEmpty: "Пусто",
       favoritesMore: "Ещё…",
+      miniApps: "Мини-приложения",
+      miniAppsEmpty: "Нет избранных мини-приложений",
       notifyTitle: "ProcMix",
       notifySuccess: "Готово: {{name}}",
       notifyError: "Ошибка: {{name}}",
@@ -75,6 +79,8 @@ describe("buildTrayLabels", () => {
     // Labels without the product token pass through unchanged.
     expect(labels.favorites).toBe("Избранное");
     expect(labels.notifySuccess).toBe("Готово: {{name}}");
+    expect(labels.miniApps).toBe("Мини-приложения");
+    expect(labels.miniAppsEmpty).toBe("Нет избранных мини-приложений");
   });
 });
 
@@ -89,6 +95,8 @@ describe("updateTrayMenu", () => {
       favorites: "f",
       favoritesEmpty: "fe",
       favoritesMore: "fm",
+      miniApps: "ma",
+      miniAppsEmpty: "mae",
       notifyTitle: "nt",
       notifySuccess: "ns",
       notifyError: "ne",

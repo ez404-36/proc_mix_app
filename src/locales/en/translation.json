@@ -440,6 +440,7 @@
     "empty": "No mini-applications yet.",
     "emptyHint": "Create your first mini-application to build a custom control panel.",
     "run": "Run",
+    "running": "Running",
     "edit": "Edit",
     "delete": "Delete",
     "favorite": "Favorite",
@@ -473,6 +474,20 @@
         "probeFailed": "Status check did not succeed ({{status}})",
         "probeError": "Status check could not run",
         "unmatched": "Unmatched"
+      },
+      "processes": {
+        "title": "Active processes",
+        "pid": "PID {{pid}}",
+        "pidPending": "starting…",
+        "cancel": "Cancel"
+      },
+      "windowResolveFailed": "Could not open this mini-app window: {{message}}",
+      "closeConfirm": {
+        "title": "Close mini-app?",
+        "message_one": "This mini-app has {{count}} active process. Closing the window will not stop it unless you kill it below.",
+        "message_other": "This mini-app has {{count}} active processes. Closing the window will not stop them unless you kill them below.",
+        "killToggle": "Kill all child processes",
+        "confirm": "Close window"
       }
     },
     "editor": {
@@ -715,10 +730,11 @@
         "description": "Live uptime with disk and memory inspection buttons"
       }
     },
-    "startFromExample": "Start from example",
-    "exampleAdded_one": "Added {{count}} example mini-app.",
-    "exampleAdded_other": "Added {{count}} example mini-apps.",
-    "exampleFailed": "Could not add the example: {{message}}"
+    "fromTemplate": "From template",
+    "templateDialogTitle": "Choose a template",
+    "templateAdded": "Mini-app added from template.",
+    "templateFailed": "Could not add the template: {{message}}",
+    "windowOpenFailed": "Could not open the mini-app window: {{message}}"
   },
   "scheduler": {
     "title": "Scheduler",
@@ -1071,6 +1087,8 @@
     "favorites": "Favorites",
     "favoritesEmpty": "No favorites yet",
     "favoritesMore": "More… (open ProcMix)",
+    "miniApps": "Mini-Apps",
+    "miniAppsEmpty": "No favorite mini-apps yet",
     "notifyTitle": "ProcMix",
     "notifySuccess": "\"{{name}}\" finished successfully",
     "notifyError": "\"{{name}}\" failed",
@@ -1564,6 +1582,7 @@
     "undoMissing": "Cannot revert: original event not found",
     "restoreBtn": "Restore",
     "restoreSuccess": "Command restored",
+    "restoreMiniAppSuccess": "Mini-app restored",
     "restoreFailed": "Failed to restore command",
     "restoreMissing": "Cannot restore: original event not found",
     "recordFailed": "Failed to record history event",
@@ -1579,6 +1598,8 @@
       "commandRun": "Run",
       "commandRestored": "Restore",
       "commandReverted": "Undo edit",
+      "miniAppDeleted": "Delete",
+      "miniAppRestored": "Restore",
       "workflowCreated": "Create",
       "workflowEdited": "Edit",
       "workflowDeleted": "Delete",
@@ -1600,6 +1621,8 @@
       "commandRun": "Ran command \"{{name}}\"",
       "commandRestored": "Restored command \"{{name}}\"",
       "commandReverted": "Reverted edit of command \"{{name}}\"",
+      "miniAppDeleted": "Deleted mini-app \"{{name}}\"",
+      "miniAppRestored": "Restored mini-app \"{{name}}\"",
       "workflowCreated": "Created workflow \"{{name}}\"",
       "workflowEdited": "Edited workflow \"{{name}}\"",
       "workflowDeleted": "Deleted workflow \"{{name}}\"",

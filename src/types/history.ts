@@ -11,6 +11,7 @@
 
 import type { Command } from "./command";
 import type { ExtractedResult } from "./execution";
+import type { MiniApp } from "./miniapp";
 import type { Workflow } from "./workflow";
 
 /**
@@ -30,6 +31,8 @@ export type HistoryEventKind =
   | "commandRun"
   | "commandRestored"
   | "commandReverted"
+  | "miniAppDeleted"
+  | "miniAppRestored"
   | "workflowCreated"
   | "workflowEdited"
   | "workflowDeleted"
@@ -167,6 +170,22 @@ export interface CommandRevertedEvent extends HistoryEventBase {
   commandId: string;
   commandName: string;
   /** Id of the `commandEdited` event this entry undoes. */
+  originalEventId: string;
+}
+
+export interface MiniAppDeletedEvent extends HistoryEventBase {
+  kind: "miniAppDeleted";
+  miniappId: string;
+  miniappName: string;
+  /** Full snapshot of the deleted mini-app — used by restore. */
+  snapshotBefore: MiniApp;
+}
+
+export interface MiniAppRestoredEvent extends HistoryEventBase {
+  kind: "miniAppRestored";
+  miniappId: string;
+  miniappName: string;
+  /** Id of the `miniAppDeleted` event this entry reverts. */
   originalEventId: string;
 }
 
@@ -376,6 +395,8 @@ export type HistoryEvent =
   | CommandRunEvent
   | CommandRestoredEvent
   | CommandRevertedEvent
+  | MiniAppDeletedEvent
+  | MiniAppRestoredEvent
   | WorkflowCreatedEvent
   | WorkflowEditedEvent
   | WorkflowDeletedEvent
@@ -405,6 +426,9 @@ export function historyEventSubjectName(event: HistoryEvent): string {
     case "commandRestored":
     case "commandReverted":
       return event.commandName;
+    case "miniAppDeleted":
+    case "miniAppRestored":
+      return event.miniappName;
     case "workflowCreated":
     case "workflowEdited":
     case "workflowDeleted":
@@ -438,6 +462,9 @@ export function historyEventSubjectId(event: HistoryEvent): string {
     case "commandRestored":
     case "commandReverted":
       return event.commandId;
+    case "miniAppDeleted":
+    case "miniAppRestored":
+      return event.miniappId;
     case "workflowCreated":
     case "workflowEdited":
     case "workflowDeleted":

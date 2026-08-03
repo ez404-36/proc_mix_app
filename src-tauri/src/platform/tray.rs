@@ -18,6 +18,15 @@ const TRAY_ID: &str = "main-tray";
 /// is the entity's logical id. Parsed by [`parse_favorite_id`].
 const FAVORITE_ID_PREFIX: &str = "tray-fav:";
 
+/// Prefix of a Mini-Apps-submenu item id. The full id is
+/// `tray-miniapp:<id>`. Unlike a favorite command/workflow (which is FIRED
+/// headlessly via `launch::fire_favorite`), a mini-app favorite OPENS its
+/// standalone runner window — parsed by [`parse_miniapp_favorite_id`] and
+/// dispatched straight to `miniapp_window::open`, bypassing the main window
+/// entirely (per the feature's requirement: mini-apps launchable from the
+/// tray without opening ProcMix).
+const MINIAPP_FAVORITE_ID_PREFIX: &str = "tray-miniapp:";
+
 /// Upper bound on how many favorites the submenu lists. A favorites list longer
 /// than this is capped and a trailing "More… (open ProcMix)" item is shown so
 /// the menu stays usable. Mirrors the shell-integration cap (Stage 2).
@@ -125,6 +134,13 @@ pub struct TrayLabels {
     /// Trailing item shown when the favorites list is capped at
     /// [`MAX_FAVORITE_ITEMS`]; opens the main window.
     pub favorites_more: String,
+    /// Title of the "Mini-Apps" submenu, listing favorite mini-apps. Each
+    /// item opens that mini-app's standalone runner window directly —
+    /// bypassing the main window entirely, unlike a favorite command/workflow
+    /// (which fires headlessly).
+    pub mini_apps: String,
+    /// Disabled placeholder item shown when there are no favorite mini-apps.
+    pub mini_apps_empty: String,
     /// Title of the quick-launch outcome notification.
     pub notify_title: String,
     /// Notification body for a successful launch (`{{name}}` → entity name).
@@ -146,6 +162,8 @@ pub fn default_labels() -> TrayLabels {
         favorites: "Favorites".to_string(),
         favorites_empty: "No favorites yet".to_string(),
         favorites_more: "More… (open ProcMix)".to_string(),
+        mini_apps: "Mini-Apps".to_string(),
+        mini_apps_empty: "No favorite mini-apps yet".to_string(),
         notify_title: dev_tag("ProcMix"),
         notify_success: "\"{{name}}\" finished successfully".to_string(),
         notify_error: "\"{{name}}\" failed".to_string(),
@@ -173,6 +191,17 @@ fn dev_tag(label: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct FavoriteEntry {
     pub kind: LaunchKind,
+    pub id: String,
+    pub name: String,
+}
+
+/// A favorite mini-app rendered as one item in the tray's "Mini-Apps"
+/// submenu. Simpler than [`FavoriteEntry`] — a mini-app has no `LaunchKind`
+/// (it isn't fired headlessly; clicking it opens its standalone runner
+/// window), so this is just an id/name pair. `id` round-trips through the
+/// menu item id (`tray-miniapp:<id>`).
+#[derive(Debug, Clone)]
+pub struct MiniAppFavoriteEntry {
     pub id: String,
     pub name: String,
 }
@@ -231,6 +260,26 @@ async fn load_favorites(pool: &DbPool) -> Vec<FavoriteEntry> {
     out
 }
 
+/// Load the favorite mini-apps for the tray "Mini-Apps" submenu. Same
+/// failure handling as [`load_favorites`]: a DB error is logged and treated
+/// as "no favorite mini-apps".
+async fn load_miniapp_favorites(pool: &DbPool) -> Vec<MiniAppFavoriteEntry> {
+    match crate::storage::miniapps::list_all(pool).await {
+        Ok(list) => list
+            .into_iter()
+            .filter(|m| m.favorite)
+            .map(|m| MiniAppFavoriteEntry {
+                id: m.id,
+                name: m.name,
+            })
+            .collect(),
+        Err(e) => {
+            tracing::error!("tray: failed to load favorite mini-apps: {e}");
+            Vec::new()
+        }
+    }
+}
+
 /// Build the favorites submenu from the resolved favorite list. An empty list
 /// renders a single disabled placeholder; a list longer than
 /// [`MAX_FAVORITE_ITEMS`] is capped with a trailing "More…" item that opens the
@@ -275,16 +324,51 @@ fn build_favorites_submenu<R: Runtime>(
     Ok(submenu)
 }
 
+/// Build the "Mini-Apps" submenu from the resolved favorite list. An empty
+/// list renders a single disabled placeholder; a list longer than
+/// [`MAX_FAVORITE_ITEMS`] is silently capped (no trailing "More…" item —
+/// unlike [`build_favorites_submenu`], there is no single Library screen to
+/// send the user to for "the rest"; they open the Mini-Apps tab manually).
+fn build_miniapps_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    labels: &TrayLabels,
+    miniapp_favorites: &[MiniAppFavoriteEntry],
+) -> tauri::Result<Submenu<R>> {
+    let submenu = Submenu::with_id(app, "tray-miniapps", &labels.mini_apps, true)?;
+
+    if miniapp_favorites.is_empty() {
+        let empty = MenuItem::with_id(
+            app,
+            "tray-miniapp-empty",
+            &labels.mini_apps_empty,
+            false,
+            None::<&str>,
+        )?;
+        submenu.append(&empty)?;
+        return Ok(submenu);
+    }
+
+    for fav in miniapp_favorites.iter().take(MAX_FAVORITE_ITEMS) {
+        let item_id = format!("{MINIAPP_FAVORITE_ID_PREFIX}{}", fav.id);
+        let item = MenuItem::with_id(app, &item_id, &fav.name, true, None::<&str>)?;
+        submenu.append(&item)?;
+    }
+
+    Ok(submenu)
+}
+
 pub fn build_menu<R: Runtime>(
     app: &AppHandle<R>,
     labels: &TrayLabels,
     favorites: &[FavoriteEntry],
+    miniapp_favorites: &[MiniAppFavoriteEntry],
 ) -> tauri::Result<Menu<R>> {
     let show = MenuItem::with_id(app, "tray-show", &labels.show, true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "tray-hide", &labels.hide, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "tray-quit", &labels.quit, true, None::<&str>)?;
     let favorites_menu = build_favorites_submenu(app, labels, favorites)?;
-    Menu::with_items(app, &[&favorites_menu, &show, &hide, &quit])
+    let miniapps_menu = build_miniapps_submenu(app, labels, miniapp_favorites)?;
+    Menu::with_items(app, &[&favorites_menu, &miniapps_menu, &show, &hide, &quit])
 }
 
 pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -292,14 +376,19 @@ pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     store_labels(&labels);
     // The pool is managed before the tray is built (see `lib.rs` setup), so the
     // favorites are available here. A failed load yields an empty submenu.
-    let favorites = match app.try_state::<DbPool>() {
+    let (favorites, miniapp_favorites) = match app.try_state::<DbPool>() {
         Some(pool) => {
             let pool = pool.inner().clone();
-            tauri::async_runtime::block_on(async move { load_favorites(&pool).await })
+            tauri::async_runtime::block_on(async move {
+                (
+                    load_favorites(&pool).await,
+                    load_miniapp_favorites(&pool).await,
+                )
+            })
         }
-        None => Vec::new(),
+        None => (Vec::new(), Vec::new()),
     };
-    let menu = build_menu(app, &labels, &favorites)?;
+    let menu = build_menu(app, &labels, &favorites, &miniapp_favorites)?;
 
     let icon = app
         .default_window_icon()
@@ -326,36 +415,43 @@ pub async fn apply_labels<R: Runtime>(
     let tray = app
         .tray_by_id(TRAY_ID)
         .ok_or_else(|| tauri::Error::AssetNotFound(format!("tray icon '{}' not found", TRAY_ID)))?;
-    let favorites = match app.try_state::<DbPool>() {
+    let (favorites, miniapp_favorites) = match app.try_state::<DbPool>() {
         Some(pool) => {
             let pool = pool.inner().clone();
-            load_favorites(&pool).await
+            (
+                load_favorites(&pool).await,
+                load_miniapp_favorites(&pool).await,
+            )
         }
-        None => Vec::new(),
+        None => (Vec::new(), Vec::new()),
     };
-    let menu = build_menu(app, labels, &favorites)?;
+    let menu = build_menu(app, labels, &favorites, &miniapp_favorites)?;
     tray.set_menu(Some(menu))?;
     tray.set_tooltip(Some(&labels.tooltip))?;
     Ok(())
 }
 
 /// Rebuild ONLY the tray menu's favorites (keeping the cached labels), called
-/// after a command / workflow mutation changes the favorite set. Async because
-/// it reads the DB; a failure to read is logged and leaves the menu unchanged.
+/// after a command / workflow / mini-app mutation changes the favorite set.
+/// Async because it reads the DB; a failure to read is logged and leaves the
+/// menu unchanged.
 pub async fn rebuild_favorites<R: Runtime>(app: &AppHandle<R>) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         // Tray not built yet (very early startup) — nothing to refresh.
         return;
     };
     let labels = labels_snapshot();
-    let favorites = match app.try_state::<DbPool>() {
+    let (favorites, miniapp_favorites) = match app.try_state::<DbPool>() {
         Some(pool) => {
             let pool = pool.inner().clone();
-            load_favorites(&pool).await
+            (
+                load_favorites(&pool).await,
+                load_miniapp_favorites(&pool).await,
+            )
         }
-        None => Vec::new(),
+        None => (Vec::new(), Vec::new()),
     };
-    match build_menu(app, &labels, &favorites) {
+    match build_menu(app, &labels, &favorites, &miniapp_favorites) {
         Ok(menu) => {
             if let Err(e) = tray.set_menu(Some(menu)) {
                 tracing::error!("tray: failed to apply rebuilt favorites menu: {e}");
@@ -376,6 +472,19 @@ fn parse_favorite_id(menu_id: &str) -> Option<(LaunchKind, String)> {
     }
     let kind = LaunchKind::parse_kind(kind_str)?;
     Some((kind, id.to_string()))
+}
+
+/// Parse a Mini-Apps-submenu item id (`tray-miniapp:<id>`) into the mini-app
+/// id. Returns `None` for any other menu id or an empty id. Unlike
+/// [`parse_favorite_id`] there is no `<kind>` segment to split on — the whole
+/// remainder after the prefix IS the id (a mini-app id, like a command/
+/// workflow id, may itself contain hyphens but never a literal `:`).
+fn parse_miniapp_favorite_id(menu_id: &str) -> Option<String> {
+    let id = menu_id.strip_prefix(MINIAPP_FAVORITE_ID_PREFIX)?;
+    if id.is_empty() {
+        return None;
+    }
+    Some(id.to_string())
 }
 
 fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
@@ -400,7 +509,22 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
         "tray-fav-more" | "tray-fav-empty" => {
             let _ = show_main_window(app);
         }
+        // The Mini-Apps submenu's empty placeholder is disabled (never
+        // clickable), but handled defensively as a no-op rather than falling
+        // through to the mini-app-id parse below.
+        "tray-miniapp-empty" => {}
         other => {
+            if let Some(miniapp_id) = parse_miniapp_favorite_id(other) {
+                // Opens the mini-app's OWN standalone window directly — the
+                // main window is never shown. Best-effort: a window-build
+                // failure is logged, not surfaced (no notification channel
+                // fits "couldn't open a window" the way it fits a command's
+                // success/failure).
+                if let Err(e) = crate::platform::miniapp_window::open(app, &miniapp_id) {
+                    tracing::error!("tray: failed to open mini-app window: {e}");
+                }
+                return;
+            }
             if let Some((kind, entity_id)) = parse_favorite_id(other) {
                 spawn_launch(app, kind, entity_id, LaunchSource::Tray, None);
             }
@@ -671,5 +795,21 @@ mod tests {
         assert_eq!(parse_favorite_id("tray-fav:command:"), None);
         // Unknown kind.
         assert_eq!(parse_favorite_id("tray-fav:schedule:x"), None);
+    }
+
+    #[test]
+    fn parse_miniapp_favorite_id_accepts_a_bare_id() {
+        assert_eq!(
+            parse_miniapp_favorite_id("tray-miniapp:3fa85f64-5717-4562-b3fc-2c963f66afa6"),
+            Some("3fa85f64-5717-4562-b3fc-2c963f66afa6".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_miniapp_favorite_id_rejects_non_miniapp_and_empty_ids() {
+        assert_eq!(parse_miniapp_favorite_id("tray-show"), None);
+        assert_eq!(parse_miniapp_favorite_id("tray-fav:command:x"), None);
+        assert_eq!(parse_miniapp_favorite_id("tray-miniapp-empty"), None);
+        assert_eq!(parse_miniapp_favorite_id("tray-miniapp:"), None);
     }
 }

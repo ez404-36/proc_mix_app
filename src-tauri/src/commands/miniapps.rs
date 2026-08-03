@@ -56,15 +56,37 @@ pub async fn get_miniapp(
 
 #[tauri::command]
 pub async fn save_miniapp(
+    app: AppHandle,
     pool: State<'_, DbPool>,
     miniapp: storage_miniapps::MiniAppRecord,
 ) -> Result<(), String> {
-    storage_miniapps::upsert(pool.inner(), &miniapp).await
+    storage_miniapps::upsert(pool.inner(), &miniapp).await?;
+    // A favorite toggle / rename must be reflected in the tray "Mini-Apps"
+    // submenu — mirrors `upsert_command`/`upsert_workflow`.
+    crate::platform::tray::rebuild_favorites(&app).await;
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_miniapp(pool: State<'_, DbPool>, id: String) -> Result<(), String> {
-    storage_miniapps::delete(pool.inner(), &id).await
+pub async fn delete_miniapp(
+    app: AppHandle,
+    pool: State<'_, DbPool>,
+    id: String,
+) -> Result<(), String> {
+    storage_miniapps::delete(pool.inner(), &id).await?;
+    crate::platform::tray::rebuild_favorites(&app).await;
+    Ok(())
+}
+
+/// Open (or focus) the standalone runner window for mini-app `id`. Called by
+/// the Library's "Run" action AND by the tray's "Mini-Apps" submenu — both
+/// entry points converge on the same window-per-id lifecycle
+/// (`platform::miniapp_window::open`), so a mini-app already open in its own
+/// window is simply focused rather than duplicated regardless of which path
+/// triggered it.
+#[tauri::command]
+pub fn open_miniapp_window(app: AppHandle, id: String) -> Result<(), String> {
+    crate::platform::miniapp_window::open(&app, &id)
 }
 
 /// Input for a headless status probe: what to run plus optional variable

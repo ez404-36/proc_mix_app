@@ -829,6 +829,27 @@ select {
   border-color: #0e9f6e;
 }
 
+/* "Running" state for a mini-app tile's Run button: the leading icon swaps
+   to `SpinnerIcon` (see `Library.tsx`) and spins in place. The button stays
+   filled/green (still reads as "this is running", not "this is broken") —
+   only `.btn:disabled`'s global opacity dims it, same as any other disabled
+   button. */
+.btn--run.is-running svg {
+  animation: btn-run-spin 0.9s linear infinite;
+}
+
+@keyframes btn-run-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn--run.is-running svg {
+    animation: none;
+  }
+}
+
 /* Outlined "Edit" button for workflow list cards: a non-filled counterpart to
    the solid `btn--run`. Mirrors the CommandForm outlined action buttons — a
    primary-colored border + matching icon, but the LABEL keeps the button's
@@ -9754,12 +9775,61 @@ body.is-editor-fullscreen .output-panel {
   margin-top: 8px;
 }
 
+/* ---- Mini-App "From template" dialog ------------------------------------- */
+/* Lays its list + title directly inside `.command-form--confirm` (like
+   ConfirmDialog), so it needs the same edge padding as the title/message. Row
+   styling mirrors CommandPalette's `.palette__item` (name + description,
+   hover highlight) rather than a form control — this is a clickable list, not
+   a selector. */
+.miniapp-template-dialog__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 12px 0 0;
+  padding: 0 12px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.miniapp-template-dialog__item {
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.miniapp-template-dialog__item:hover {
+  background: var(--color-bg);
+}
+
+.miniapp-template-dialog__item-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.miniapp-template-dialog__item-desc {
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
 /* ---- Mini-Apps runner ---------------------------------------------------- */
 /* Runtime widget panel for a single mini-app (the `miniapp-runner` view).
    The panel is a relative canvas: each widget is placed at its absolute
    `layout` x/y inside a `.miniapp-runner__widget-slot`, whose inline style
    sets left/top/width/height. The slot centers its widget, and the widget
    card fills the slot. Tokens only — no hardcoded colours. */
+
+/* Root of the standalone Mini-App window (`MiniAppWindowApp`) — that window
+   has no `.app-main` shell (no sidebar/console), so this supplies the same
+   edge padding `.app-main` gives the in-app view. */
+.miniapp-window {
+  height: 100%;
+  overflow: auto;
+  padding: 24px 28px;
+}
 
 .miniapp-runner__panel {
   position: relative;
@@ -9994,6 +10064,87 @@ body.is-editor-fullscreen .output-panel {
 .miniapp-widget__browse,
 .miniapp-widget__open,
 .miniapp-widget__reveal {
+  flex-shrink: 0;
+}
+
+/* ---- Mini-App active processes panel ------------------------------------- */
+/* Lists every OS process the mini-app currently has in flight (one row per
+   concurrently-running widget action — a mini-app can spawn several at once).
+   Sits below the widget panel in `MiniAppRunner`; renders nothing when
+   nothing is running (see the component's early-return). */
+.miniapp-processes {
+  margin-top: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.miniapp-processes__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.miniapp-processes__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.miniapp-processes__count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.miniapp-processes__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.miniapp-processes__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+}
+
+.miniapp-processes__item + .miniapp-processes__item {
+  border-top: 1px solid var(--color-border);
+}
+
+.miniapp-processes__spinner {
+  display: flex;
+  color: var(--app-color-run);
+}
+
+.miniapp-processes__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.miniapp-processes__pid {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.miniapp-processes__cancel {
   flex-shrink: 0;
 }
 

@@ -139,7 +139,6 @@ function resetStores(miniapp: MiniApp | null): void {
     miniapps: miniapp === null ? [] : [miniapp],
     favorites: [],
     hydrated: true,
-    seedsInitialized: true,
   });
   useCommandStore.setState({ commands: [] });
   useUIStore.setState({

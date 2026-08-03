@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { Message } from "@arco-design/web-react";
 import { useTranslation } from "react-i18next";
+import { useExecutionStore } from "../../stores/executionStore";
 import { useMiniAppStore } from "../../stores/miniappStore";
 import { useUIStore } from "../../stores/uiStore";
 import type { MiniApp } from "../../types";
@@ -10,6 +11,8 @@ import {
   type StatusWidgetConfig,
 } from "../../services/miniappStatusPoller";
 import { ArrowLeftIcon } from "../icons";
+import { HoverTooltip } from "../HoverTooltip";
+import { MiniAppActiveProcesses } from "./MiniAppActiveProcesses";
 import { MiniAppWidget } from "./MiniAppWidget";
 import { renderIcon } from "../../utils/iconRenderer";
 import { resolveArtifactValues } from "../../utils/resolveArtifactValues";
@@ -89,22 +92,44 @@ function buildStatusConfigs(
   return configs;
 }
 
+export interface MiniAppRunnerProps {
+  /**
+   * The mini-app id to render. Supplied by `MiniAppWindowApp` when this
+   * component is mounted inside its own standalone OS window (each window
+   * has its own JS runtime, hence its own `uiStore` instance with no shared
+   * `miniappRunnerId` to read). Falls back to `useUIStore.miniappRunnerId`
+   * when omitted — the legacy in-app-view path this component predates.
+   */
+  miniappId?: string;
+  /**
+   * True when this component is mounted inside its own standalone window
+   * (`MiniAppWindowApp`) rather than as an in-app view swap. The header's
+   * "back" button is hidden in this mode — the native window chrome
+   * (minimize/close) is the only way to leave, so there is nothing to
+   * navigate "back" to.
+   */
+  standalone?: boolean;
+}
+
 /**
  * Runtime view for a single Mini-App (`miniapp-runner`). Resolves the
- * mini-app by `miniappRunnerId` from the UI store, renders its widget panel,
- * drives the shared status poller for status/toggle-with-status widgets, and
- * bumps the mini-app's run count whenever a button/toggle action fires.
+ * mini-app by id, renders its widget panel, drives the shared status poller
+ * for status/toggle-with-status widgets, and bumps the mini-app's run count
+ * whenever a button/toggle action fires.
  *
- * Mirrors the `ScheduleEditor` / `CommandEditor` full-screen view contract:
- * the id to open comes from `useUIStore.miniappRunnerId` (set by the list's
- * Run action), and leaving is an explicit navigation back to the Mini-Apps
- * list. An invalid id (deleted mini-app, stale route) shows an error state
- * with a back action rather than bouncing automatically, so the user sees
- * what happened.
+ * Mini-apps run in their OWN standalone OS window (`MiniAppWindowApp`,
+ * `standalone: true`) — this component itself is window-agnostic and does
+ * not open/close windows; see `MiniAppWindowApp`'s `onCloseRequested` guard
+ * for the "kill active child processes?" confirmation shown when the window
+ * is closed while the mini-app has running processes.
  */
-export function MiniAppRunner(): ReactElement {
+export function MiniAppRunner({
+  miniappId,
+  standalone = false,
+}: MiniAppRunnerProps): ReactElement {
   const { t } = useTranslation();
-  const miniappRunnerId = useUIStore((s) => s.miniappRunnerId);
+  const uiMiniappRunnerId = useUIStore((s) => s.miniappRunnerId);
+  const miniappRunnerId = miniappId ?? uiMiniappRunnerId;
   const setView = useUIStore((s) => s.setView);
   const setLibraryTab = useUIStore((s) => s.setLibraryTab);
   const setMiniappRunnerId = useUIStore((s) => s.setMiniappRunnerId);
@@ -224,6 +249,52 @@ export function MiniAppRunner(): ReactElement {
     new Map(),
   );
 
+  // Active-processes tracking: a mini-app can trigger MULTIPLE concurrent
+  // widget runs (one process per click — nothing here assumes at most one
+  // in flight), so this is `executionId -> widgetId`, not a single slot.
+  // Populated by each widget's `onExecutionStarted` the moment its run
+  // actually starts spawning; pruned below once the execution store reports
+  // the run is no longer active (finished / errored / cancelled).
+  const [executionWidgets, setExecutionWidgets] = useState<
+    Record<string, string>
+  >({});
+  const executions = useExecutionStore((s) => s.executions);
+
+  const handleExecutionStarted = (
+    widgetId: string,
+    executionId: string,
+  ): void => {
+    setExecutionWidgets((prev) => ({ ...prev, [executionId]: widgetId }));
+  };
+
+  // Drop any tracked execution id whose run has left the store (cleared /
+  // never registered) or reached a terminal status — otherwise the panel
+  // would keep showing a finished run forever. Runs on every execution
+  // store change; a no-op (same reference returned) when nothing tracked
+  // here actually changed status, so this doesn't fight the state below.
+  useEffect(() => {
+    setExecutionWidgets((prev) => {
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const [execId, widgetId] of Object.entries(prev)) {
+        const exec = executions[execId];
+        if (exec && (exec.status === "running" || exec.status === "pending")) {
+          next[execId] = widgetId;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [executions]);
+
+  // Reset the tracked map when the user opens a different mini-app — stale
+  // execution ids from a previously-open mini-app must never leak into
+  // this one's panel.
+  useEffect(() => {
+    setExecutionWidgets({});
+  }, [miniapp?.id]);
+
   useEffect(() => {
     const timers = persistTimersRef.current;
     return () => {
@@ -302,6 +373,24 @@ export function MiniAppRunner(): ReactElement {
   );
   const statusResults = useMiniAppStatusPolling(statusConfigs);
 
+  // Resolve `executionWidgets` (execution id -> widget id) into the display
+  // entries the active-processes panel renders. Only `button`/`toggle`
+  // widgets ever populate `executionWidgets` (the only kinds that call
+  // `onExecutionStarted`), so every lookup here is expected to resolve; a
+  // widget removed from the mini-app mid-run (editor open in another window)
+  // falls back to the raw id rather than dropping the row silently.
+  const activeProcessEntries = useMemo(() => {
+    const widgets = miniapp?.widgets ?? [];
+    return Object.entries(executionWidgets).map(([executionId, widgetId]) => {
+      const widget = widgets.find((w) => w.id === widgetId);
+      const widgetLabel =
+        widget && (widget.kind === "button" || widget.kind === "toggle")
+          ? resolveArtifactValues(widget.label, valuesMap, artifactNames)
+          : widgetId;
+      return { executionId, widgetLabel };
+    });
+  }, [executionWidgets, miniapp, valuesMap, artifactNames]);
+
   // The panel's primary dimensions come from `miniapp.panelSize` (set in the
   // editor). This content-driven height is a floor so a widget placed beyond
   // the configured `panelSize.h` is never clipped: the rendered panel is the
@@ -341,15 +430,17 @@ export function MiniAppRunner(): ReactElement {
       <div>
         <header className="view-header">
           <div className="miniapp-runner__title-wrap">
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={handleBack}
-              aria-label={t("miniapps.runner.back")}
-              title={t("miniapps.runner.back")}
-            >
-              <ArrowLeftIcon />
-            </button>
+            {!standalone ? (
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={handleBack}
+                aria-label={t("miniapps.runner.back")}
+                title={t("miniapps.runner.back")}
+              >
+                <ArrowLeftIcon />
+              </button>
+            ) : null}
             <div>
               <h1 className="view-title">{t("miniapps.runner.notFoundTitle")}</h1>
               <p className="view-subtitle">{t("miniapps.runner.notFoundHint")}</p>
@@ -373,23 +464,31 @@ export function MiniAppRunner(): ReactElement {
     <div>
       <header className="view-header">
         <div className="miniapp-runner__title-wrap">
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={handleBack}
-            aria-label={t("miniapps.runner.back")}
-            title={t("miniapps.runner.back")}
-          >
-            <ArrowLeftIcon />
-          </button>
+          {!standalone ? (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={handleBack}
+              aria-label={t("miniapps.runner.back")}
+              title={t("miniapps.runner.back")}
+            >
+              <ArrowLeftIcon />
+            </button>
+          ) : null}
           <div>
-            <h1 className="view-title">
-              {renderIcon(miniapp.icon, 20, "view-title__icon")}
-              {displayName}
-            </h1>
             {description !== undefined ? (
-              <p className="view-subtitle">{description}</p>
-            ) : null}
+              <HoverTooltip label={description}>
+                <h1 className="view-title">
+                  {renderIcon(miniapp.icon, 20, "view-title__icon")}
+                  {displayName}
+                </h1>
+              </HoverTooltip>
+            ) : (
+              <h1 className="view-title">
+                {renderIcon(miniapp.icon, 20, "view-title__icon")}
+                {displayName}
+              </h1>
+            )}
           </div>
         </div>
       </header>
@@ -419,6 +518,9 @@ export function MiniAppRunner(): ReactElement {
                 widget={widget}
                 statusResult={statusResults[widget.id]}
                 onActionComplete={handleActionComplete}
+                onExecutionStarted={(executionId) =>
+                  handleExecutionStarted(widget.id, executionId)
+                }
                 artifactValues={artifactValues}
                 onArtifactChange={updateArtifactValue}
                 artifactNames={artifactNames}
@@ -431,6 +533,8 @@ export function MiniAppRunner(): ReactElement {
           ))}
         </div>
       )}
+
+      <MiniAppActiveProcesses entries={activeProcessEntries} />
     </div>
   );
 }

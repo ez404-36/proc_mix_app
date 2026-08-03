@@ -69,6 +69,7 @@ interface RenderOptions {
   artifactValues?: Record<string, string>;
   onArtifactChange?: (name: string, value: string) => void;
   onActionComplete?: () => void;
+  onExecutionStarted?: (executionId: string) => void;
   /** Artifact widgets whose specs the panel synthesizes for every action. */
   artifactWidgets?: WidgetSpec[];
   /** Defaults to `true` (the editor's bordered-card look), matching the
@@ -88,6 +89,7 @@ function renderWidget(widget: WidgetSpec, opts: RenderOptions = {}): void {
       widget={widget}
       statusResult={opts.statusResult}
       onActionComplete={opts.onActionComplete}
+      onExecutionStarted={opts.onExecutionStarted}
       artifactValues={values}
       onArtifactChange={opts.onArtifactChange ?? (() => {})}
       artifactNames={new Set(Object.keys(values))}
@@ -271,6 +273,30 @@ describe("MiniAppWidget — button", () => {
     });
 
     expect(onActionComplete).not.toHaveBeenCalled();
+  });
+
+  it("fires onExecutionStarted with the execution id once the run starts", async () => {
+    vi.mocked(triggerCommandRun).mockResolvedValueOnce("exec-42");
+    const onExecutionStarted = vi.fn();
+    renderWidget(buttonWidget(), { onExecutionStarted });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    });
+
+    expect(onExecutionStarted).toHaveBeenCalledWith("exec-42");
+  });
+
+  it("does not fire onExecutionStarted when the run was cancelled", async () => {
+    vi.mocked(triggerCommandRun).mockResolvedValueOnce(null);
+    const onExecutionStarted = vi.fn();
+    renderWidget(buttonWidget(), { onExecutionStarted });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    });
+
+    expect(onExecutionStarted).not.toHaveBeenCalled();
   });
 
   it("is disabled and shows 'Running…' while a run is in flight", async () => {

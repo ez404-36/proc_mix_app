@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "miniapp",
+  "description": "Capability for standalone Mini-App runner windows (`miniapp-<id>`, one per running mini-app — glob-matched since any number can be open at once). Grants core IPC (every app-defined command — execute_command, save_miniapp, run_miniapp_status_probe, etc. — needs no separate per-command entry, same as the main window and the quick-prompt dialog) plus the window controls a user-closable/minimizable runner window needs: close, minimize/unminimize, is-minimized, focus, and start-dragging. `allow-destroy` is required too — the JS SDK's `onCloseRequested` wrapper calls the window's own `destroy()` internally (a separate IPC command from `close()`) whenever the handler does not call `event.preventDefault()`, so the close-without-confirmation path needs it even though this component's own code never calls `.destroy()` directly. Does NOT get the main window's plugin permissions (updater, global-shortcut, autostart, window-state, notification, etc.) — a mini-app window is a lightweight satellite, not a second main window.",
+  "windows": ["miniapp-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-minimize",
+    "core:window:allow-unminimize",
+    "core:window:allow-is-minimized",
+    "core:window:allow-set-focus",
+    "core:window:allow-start-dragging",
+    "opener:default"
+  ]
+}

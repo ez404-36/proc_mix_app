@@ -13,7 +13,7 @@
 // and is invisible to any test that only asserts on rendered markup.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 
 vi.mock("../../utils/miniappRepository", () => ({
   listMiniAppsFromDb: vi.fn().mockResolvedValue([]),
@@ -31,6 +31,10 @@ vi.mock("../../utils/commandRepository", () => ({
 
 vi.mock("../../services/commandRunner", () => ({
   triggerCommandRun: vi.fn().mockResolvedValue("exec-1"),
+}));
+
+vi.mock("../../utils/executor", () => ({
+  cancelExecution: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -56,9 +60,11 @@ import {
   type StatusWidgetConfig,
 } from "../../services/miniappStatusPoller";
 import { useCommandStore } from "../../stores/commandStore";
+import { useExecutionStore } from "../../stores/executionStore";
 import { useMiniAppStore } from "../../stores/miniappStore";
 import { useUIStore } from "../../stores/uiStore";
 import type { MiniApp, MiniAppWidget } from "../../types";
+import { cancelExecution } from "../../utils/executor";
 import { listMiniAppsFromDb } from "../../utils/miniappRepository";
 import { MiniAppRunner } from "./MiniAppRunner";
 
@@ -128,7 +134,6 @@ function stageMiniApp(miniapp: MiniApp | null): void {
     miniapps: miniapp === null ? [] : [miniapp],
     favorites: [],
     hydrated: true,
-    seedsInitialized: true,
   });
   useCommandStore.setState({ commands: [] });
   useUIStore.setState({
@@ -163,10 +168,12 @@ function stagePollerResults(results: Record<string, StatusResult>): void {
 beforeEach(() => {
   vi.mocked(useMiniAppStatusPolling).mockImplementation(() => ({}));
   stageMiniApp(null);
+  useExecutionStore.setState({ executions: {}, recentIds: [] });
 });
 
 afterEach(() => {
   stageMiniApp(null);
+  useExecutionStore.setState({ executions: {}, recentIds: [] });
   vi.clearAllMocks();
 });
 
@@ -194,7 +201,7 @@ describe("MiniAppRunner — header", () => {
     ).toBe(DATA_URI_ICON);
   });
 
-  it("renders a seed mini-app's TRANSLATED name and description", async () => {
+  it("renders a seed mini-app's TRANSLATED name, and its description on title hover", async () => {
     stageMiniApp(
       makeMiniApp({
         name: "raw literal name",
@@ -206,11 +213,19 @@ describe("MiniAppRunner — header", () => {
 
     expect(screen.getByText("System Info")).toBeTruthy();
     expect(
-      screen.getByText("Live uptime with disk and memory inspection buttons"),
-    ).toBeTruthy();
+      screen.queryByText("Live uptime with disk and memory inspection buttons"),
+    ).toBeNull();
+
+    act(() => {
+      fireEvent.mouseEnter(screen.getByText("System Info").closest("h1")!);
+    });
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip.textContent).toBe(
+      "Live uptime with disk and memory inspection buttons",
+    );
   });
 
-  it("resolves ${artifact} references in the description", async () => {
+  it("resolves ${artifact} references in the description, shown on title hover", async () => {
     stageMiniApp(
       makeMiniApp({
         description: "Config at ${configPath}",
@@ -219,7 +234,13 @@ describe("MiniAppRunner — header", () => {
     );
     await renderRunner();
 
-    expect(screen.getByText("Config at /etc/a.ovpn")).toBeTruthy();
+    expect(screen.queryByText("Config at /etc/a.ovpn")).toBeNull();
+
+    act(() => {
+      fireEvent.mouseEnter(screen.getByText("VPN Panel").closest("h1")!);
+    });
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip.textContent).toBe("Config at /etc/a.ovpn");
   });
 
   it("Back clears the runner id and returns to the list", async () => {
@@ -233,6 +254,47 @@ describe("MiniAppRunner — header", () => {
     expect(useUIStore.getState().currentView).toBe("library");
     expect(useUIStore.getState().libraryTab).toBe("miniapps");
     expect(useUIStore.getState().miniappRunnerId).toBeNull();
+  });
+});
+
+describe("MiniAppRunner — standalone window mode", () => {
+  it("resolves the mini-app from the miniappId prop, ignoring the shared uiStore id", async () => {
+    // The shared `uiStore.miniappRunnerId` is left null/stale — a standalone
+    // window has no reason to touch the MAIN window's store.
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp({ widgets: [buttonWidget()] })],
+      favorites: [],
+      hydrated: true,
+    });
+    useCommandStore.setState({ commands: [] });
+    useUIStore.setState({ miniappRunnerId: null });
+    vi.mocked(listMiniAppsFromDb).mockResolvedValue(
+      useMiniAppStore.getState().miniapps,
+    );
+
+    await act(async () => {
+      render(<MiniAppRunner miniappId="ma-1" standalone />);
+    });
+
+    expect(screen.getByText("VPN Panel")).toBeTruthy();
+  });
+
+  it("hides the Back button, when standalone — the native window chrome is the only way out", async () => {
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp({ widgets: [buttonWidget()] })],
+      favorites: [],
+      hydrated: true,
+    });
+    useCommandStore.setState({ commands: [] });
+    vi.mocked(listMiniAppsFromDb).mockResolvedValue(
+      useMiniAppStore.getState().miniapps,
+    );
+
+    await act(async () => {
+      render(<MiniAppRunner miniappId="ma-1" standalone />);
+    });
+
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
   });
 });
 
@@ -807,5 +869,142 @@ describe("MiniAppRunner — hydration", () => {
     await renderRunner();
 
     expect(listMiniAppsFromDb).toHaveBeenCalled();
+  });
+});
+
+describe("MiniAppRunner — active processes panel", () => {
+  it("renders nothing when nothing is running", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    expect(document.querySelector(".miniapp-processes")).toBeNull();
+  });
+
+  it("shows a row with the widget's label after clicking a button", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    });
+
+    const panel = document.querySelector(".miniapp-processes");
+    expect(panel).not.toBeNull();
+    expect(within(panel as HTMLElement).getByText("Connect")).toBeTruthy();
+  });
+
+  it("shows the PID once the execution store reports one", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    });
+
+    // Before the `started` event lands, the row shows a pending placeholder.
+    expect(screen.getByText("starting…")).toBeTruthy();
+
+    act(() => {
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+      useExecutionStore.setState((s) => ({
+        executions: {
+          ...s.executions,
+          "exec-1": { ...s.executions["exec-1"], pid: 4242 },
+        },
+      }));
+    });
+
+    expect(screen.getByText("PID 4242")).toBeTruthy();
+  });
+
+  it("tracks MULTIPLE concurrent processes — one row per running widget", async () => {
+    vi.mocked(triggerCommandRun)
+      .mockResolvedValueOnce("exec-a")
+      .mockResolvedValueOnce("exec-b");
+    stageMiniApp(
+      makeMiniApp({
+        widgets: [
+          buttonWidget({ id: "w-1", label: "Connect A" }),
+          buttonWidget({
+            id: "w-2",
+            label: "Connect B",
+            action: { kind: "inline", name: "Connect B", script: "vpn up b" },
+          }),
+        ],
+      }),
+    );
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect A/ }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect B/ }));
+    });
+
+    const panel = document.querySelector(".miniapp-processes") as HTMLElement;
+    expect(panel.querySelectorAll(".miniapp-processes__item")).toHaveLength(2);
+    expect(within(panel).getByText("Connect A")).toBeTruthy();
+    expect(within(panel).getByText("Connect B")).toBeTruthy();
+  });
+
+  it("removes the row once the execution reaches a terminal status", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    });
+    expect(document.querySelector(".miniapp-processes")).not.toBeNull();
+
+    act(() => {
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+      useExecutionStore.getState().finishExecution("exec-1", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 10,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+    });
+
+    expect(document.querySelector(".miniapp-processes")).toBeNull();
+  });
+
+  it("Cancel invokes cancelExecution with the row's execution id", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    });
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Cancel" }),
+      );
+    });
+
+    expect(cancelExecution).toHaveBeenCalledWith("exec-1");
+  });
+
+  it("clears tracked processes when switching to a different mini-app", async () => {
+    stageMiniApp(makeMiniApp({ id: "ma-1", widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    });
+    expect(document.querySelector(".miniapp-processes")).not.toBeNull();
+
+    stageMiniApp(makeMiniApp({ id: "ma-2", widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    expect(document.querySelector(".miniapp-processes")).toBeNull();
   });
 });

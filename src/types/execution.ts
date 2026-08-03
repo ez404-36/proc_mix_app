@@ -160,6 +160,16 @@ export interface Execution {
   commandId?: string;
   commandName: string;
   /**
+   * OS process id of the spawned child, captured from the `started` event
+   * (`StartedEvent.pid`). Absent for a workflow aggregate (`isWorkflow`,
+   * which has no single underlying process) or when the platform/spawn path
+   * could not report one. Surfaced primarily by the Mini-App runner's active
+   * processes panel — a mini-app can trigger several concurrent widget runs,
+   * each spawning its own OS process, so this is per-execution, never a
+   * single "the" pid for the whole mini-app.
+   */
+  pid?: number;
+  /**
    * Marks this as the aggregated process for a whole workflow run (its `id`
    * is the workflow `run_id`). Drives panel behavior: the Cancel button
    * cancels the WORKFLOW (not a single command execution), and the Re-run

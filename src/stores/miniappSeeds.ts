@@ -121,8 +121,9 @@ function buildOpenvpn3Seed(): NewMiniAppInput {
       // padding needs at least ~48-56px to avoid visually clipping against
       // the card's rounded corners (see `MIN_WIDGET_H_BY_KIND` in
       // `MiniAppEditor.tsx`).
-      layout: { x: 16, y: 100, w: 124, h: 56 },
+      layout: { x: 16, y: 100, w: 128, h: 56 },
       label: "Connect",
+      icon: "⚡",
       action: {
         kind: "inline",
         name: "Connect",
@@ -132,8 +133,9 @@ function buildOpenvpn3Seed(): NewMiniAppInput {
     {
       id: makeWidgetId(),
       kind: "button",
-      layout: { x: 152, y: 100, w: 132, h: 56 },
+      layout: { x: 152, y: 96, w: 136, h: 56 },
       label: "Disconnect",
+      icon: "❌",
       action: {
         kind: "inline",
         name: "Disconnect",
@@ -143,6 +145,7 @@ function buildOpenvpn3Seed(): NewMiniAppInput {
         script:
           'openvpn3 session-manage --config "$(basename "${configPath}" .ovpn)" --disconnect',
       },
+      style: { color: "var(--color-text-muted)", variant: "outline" },
     },
     {
       id: makeWidgetId(),
@@ -156,6 +159,7 @@ function buildOpenvpn3Seed(): NewMiniAppInput {
       // empty value substitutes as an empty string rather than erroring.
       value: "",
       variant: "path",
+      persist: true,
     },
   ];
 
@@ -165,14 +169,15 @@ function buildOpenvpn3Seed(): NewMiniAppInput {
     description:
       "Manage OpenVPN3 connections with status, connect, and disconnect",
     descriptionKey: "miniapps.seeds.openvpn3.description",
+    icon: "🌐",
     widgets,
     tags: ["network", "vpn", "seed"],
     favorite: false,
     os: ["linux"],
     // Compact panel sized to fit the 4 widgets (status 268×72 at 16,16; two
-    // 56px-tall buttons on a row ending at x≈284,y≈156; artifact 268×56 at
-    // y=168 → bottom 224) with the same ~28px margin the panel always had.
-    panelSize: { w: 320, h: 252 },
+    // 56px-tall buttons on a row ending at x≈288,y≈152; artifact 268×56 at
+    // y=168 → bottom 224) with the same ~16px margin the panel always had.
+    panelSize: { w: 320, h: 240 },
   };
 }
 

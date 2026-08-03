@@ -19,7 +19,12 @@ import type { Platform } from "../types/platform";
  *      created exactly once per machine — subsequent restarts skip
  *      this branch and just load the persisted rows.
  *
- * Safe to mount once at the App level. Both `hydrateFromDb` and
+ * Mini-apps have no seed step: their store is hydrated in parallel like
+ * workflows/schedules, and the built-in examples are offered on demand via
+ * the Library's "From template" menu (`miniappSeeds.ts`) instead of being
+ * auto-created on first launch.
+ *
+ * Safe to mount once at the App level. `hydrateFromDb` and
  * `initializeSeeds` are idempotent so a React Strict Mode double-
  * invocation is a no-op for the second pass.
  */
@@ -45,12 +50,10 @@ export function useSeedBootstrap(): void {
       // errors swallowed inside `hydrateFromDb`.
       void useScheduleStore.getState().hydrateFromDb();
 
-      // Await the mini-app hydrate before the seed decision: the store's
-      // `initializeSeeds` reads `seedsInitialized` (flipped by `hydrateFromDb`
-      // when the table is non-empty), so a fire-and-forget hydrate could race
-      // the seeding and overwrite the freshly-seeded in-memory state.
+      // Mini-apps have no seed step either — hydrate in parallel too.
+      void useMiniAppStore.getState().hydrateFromDb();
+
       await useCommandStore.getState().hydrateFromDb();
-      await useMiniAppStore.getState().hydrateFromDb();
       if (cancelled) return;
 
       if (useCommandStore.getState().commands.length > 0) return;
@@ -59,7 +62,6 @@ export function useSeedBootstrap(): void {
       if (cancelled) return;
       const resolved: Platform = platform === "unknown" ? "linux" : platform;
       useCommandStore.getState().initializeSeeds(resolved);
-      useMiniAppStore.getState().initializeSeeds(resolved);
     })();
     return () => {
       cancelled = true;

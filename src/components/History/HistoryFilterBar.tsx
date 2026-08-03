@@ -39,9 +39,9 @@ const KIND_GROUPS: ReadonlyArray<{
 }> = [
   { labelKey: "history.kindLabels.commandCreated",  kinds: ["commandCreated", "workflowCreated"] },
   { labelKey: "history.kindLabels.commandEdited",   kinds: ["commandEdited", "workflowEdited"] },
-  { labelKey: "history.kindLabels.commandDeleted",  kinds: ["commandDeleted", "workflowDeleted"] },
+  { labelKey: "history.kindLabels.commandDeleted",  kinds: ["commandDeleted", "workflowDeleted", "miniAppDeleted"] },
   { labelKey: "history.kindLabels.commandRun",      kinds: ["commandRun", "workflowRun", "scheduledRun"] },
-  { labelKey: "history.kindLabels.commandRestored", kinds: ["commandRestored"] },
+  { labelKey: "history.kindLabels.commandRestored", kinds: ["commandRestored", "miniAppRestored"] },
   { labelKey: "history.kindLabels.commandReverted", kinds: ["commandReverted"] },
   {
     labelKey: "history.kindLabels.ssh",

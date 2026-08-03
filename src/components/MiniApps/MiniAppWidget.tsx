@@ -86,6 +86,16 @@ export interface MiniAppWidgetProps extends ArtifactContext {
    */
   onActionComplete?: () => void;
   /**
+   * Fired with the execution id the moment `triggerCommandRun` resolves
+   * (i.e. the run actually started spawning) — same firing rule as
+   * {@link onActionComplete}, but carries the id so the runner can track
+   * which OS process belongs to which widget for the active-processes panel.
+   * A single widget can fire this MULTIPLE times over its lifetime (each
+   * click/toggle is its own execution); the runner is responsible for
+   * de-duplicating/clearing finished entries, not this component.
+   */
+  onExecutionStarted?: (executionId: string) => void;
+  /**
    * Whether the widget's root renders the bordered/background "card" chrome.
    * Defaults to `true` (the editor canvas's WYSIWYG preview relies on this
    * default to keep showing selection/drag affordances). The Runner passes
@@ -184,6 +194,7 @@ async function runWidgetAction(
   artifactSpecs: ReadonlyArray<ArtifactSpecSource>,
   onActionComplete?: () => void,
   variableValues?: Record<string, string>,
+  onExecutionStarted?: (executionId: string) => void,
 ): Promise<void> {
   const cmd = resolveActionCommand(action, commands, artifactSpecs);
   if (cmd === null) {
@@ -196,6 +207,7 @@ async function runWidgetAction(
     });
     if (executionId !== null) {
       onActionComplete?.();
+      onExecutionStarted?.(executionId);
     }
   } catch (err) {
     // Defensive only — `triggerCommandRun` already surfaces a toast for
@@ -241,11 +253,13 @@ function buttonStyleFor(style: WidgetStyle | undefined): CSSProperties | undefin
 interface ButtonWidgetProps extends ArtifactContext {
   widget: Extract<WidgetSpec, { kind: "button" }>;
   onActionComplete?: () => void;
+  onExecutionStarted?: (executionId: string) => void;
 }
 
 function ButtonWidget({
   widget,
   onActionComplete,
+  onExecutionStarted,
   artifactNames,
   valuesMap,
   executionValues,
@@ -281,6 +295,7 @@ function ButtonWidget({
           artifactSpecs,
           onActionComplete,
           executionValues,
+          onExecutionStarted,
         );
       } finally {
         setIsRunning(false);
@@ -320,12 +335,14 @@ interface ToggleWidgetProps extends ArtifactContext {
   widget: Extract<WidgetSpec, { kind: "toggle" }>;
   statusResult?: StatusResult;
   onActionComplete?: () => void;
+  onExecutionStarted?: (executionId: string) => void;
 }
 
 function ToggleWidget({
   widget,
   statusResult,
   onActionComplete,
+  onExecutionStarted,
   artifactNames,
   valuesMap,
   executionValues,
@@ -392,6 +409,7 @@ function ToggleWidget({
           artifactSpecs,
           onActionComplete,
           executionValues,
+          onExecutionStarted,
         );
       } finally {
         setPendingAction(null);
@@ -790,6 +808,7 @@ export function MiniAppWidget({
   widget,
   statusResult,
   onActionComplete,
+  onExecutionStarted,
   artifactValues,
   onArtifactChange,
   artifactNames,
@@ -818,6 +837,7 @@ export function MiniAppWidget({
         <ButtonWidget
           widget={widget}
           onActionComplete={onActionComplete}
+          onExecutionStarted={onExecutionStarted}
           {...sharedContext}
         />
       );
@@ -829,6 +849,7 @@ export function MiniAppWidget({
           widget={widget}
           statusResult={statusResult}
           onActionComplete={onActionComplete}
+          onExecutionStarted={onExecutionStarted}
           {...sharedContext}
         />
       );

@@ -38,6 +38,11 @@ import {
   recordToCommand,
 } from "./commandRepository";
 import {
+  type MiniAppRecord,
+  miniappToRecord,
+  recordToMiniApp,
+} from "./miniappRepository";
+import {
   type WorkflowRecord,
   recordToWorkflow,
   workflowToRecord,
@@ -47,7 +52,7 @@ import { nullToUndef, omitWhenUndefined } from "./repositoryHelpers";
 // Re-export so tests (and the rare consumer that needs the wire shape
 // of a snapshot, e.g. eventToWire callers building a payload by hand)
 // can reach the type without dual-importing from the entity repositories.
-export type { CommandRecord, WorkflowRecord };
+export type { CommandRecord, MiniAppRecord, WorkflowRecord };
 
 const SCHEDULED_RUN_STATUSES: ReadonlySet<ScheduledRunStatus> =
   new Set<ScheduledRunStatus>([
@@ -156,6 +161,20 @@ type WireReverted = WireBase & {
   originalEventId: string;
 };
 
+type WireMiniAppDeleted = WireBase & {
+  kind: "miniAppDeleted";
+  miniappId: string;
+  miniappName: string;
+  snapshotBefore: MiniAppRecord;
+};
+
+type WireMiniAppRestored = WireBase & {
+  kind: "miniAppRestored";
+  miniappId: string;
+  miniappName: string;
+  originalEventId: string;
+};
+
 type WireWorkflowCreated = WireBase & {
   kind: "workflowCreated";
   workflowId: string;
@@ -240,6 +259,8 @@ export type WireHistoryEvent =
   | WireRun
   | WireRestored
   | WireReverted
+  | WireMiniAppDeleted
+  | WireMiniAppRestored
   | WireWorkflowCreated
   | WireWorkflowEdited
   | WireWorkflowDeleted
@@ -333,6 +354,24 @@ export function wireToEvent(w: WireHistoryEvent): HistoryEvent {
         kind: w.kind,
         commandId: w.commandId,
         commandName: w.commandName,
+        originalEventId: w.originalEventId,
+      };
+    case "miniAppDeleted":
+      return {
+        id: w.id,
+        createdAt: w.createdAt,
+        kind: w.kind,
+        miniappId: w.miniappId,
+        miniappName: w.miniappName,
+        snapshotBefore: recordToMiniApp(w.snapshotBefore),
+      };
+    case "miniAppRestored":
+      return {
+        id: w.id,
+        createdAt: w.createdAt,
+        kind: w.kind,
+        miniappId: w.miniappId,
+        miniappName: w.miniappName,
         originalEventId: w.originalEventId,
       };
     case "workflowCreated":
@@ -503,6 +542,24 @@ export function eventToWire(e: HistoryEvent): WireHistoryEvent {
         kind: e.kind,
         commandId: e.commandId,
         commandName: e.commandName,
+        originalEventId: e.originalEventId,
+      };
+    case "miniAppDeleted":
+      return {
+        id: e.id,
+        createdAt: e.createdAt,
+        kind: e.kind,
+        miniappId: e.miniappId,
+        miniappName: e.miniappName,
+        snapshotBefore: miniappToRecord(e.snapshotBefore),
+      };
+    case "miniAppRestored":
+      return {
+        id: e.id,
+        createdAt: e.createdAt,
+        kind: e.kind,
+        miniappId: e.miniappId,
+        miniappName: e.miniappName,
         originalEventId: e.originalEventId,
       };
     case "workflowCreated":

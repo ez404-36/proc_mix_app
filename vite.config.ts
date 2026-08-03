@@ -10,19 +10,26 @@ export default defineConfig(async () => ({
   plugins: [react()],
 
   build: {
-    // Two HTML entry points ship in the bundle:
-    //   - `index.html`  → the main ProcMix window (sidebar, views, …).
-    //   - `prompt.html` → the small "quick-launch" prompt dialog window
-    //     (v0.12.0). It is a SEPARATE webview opened on demand by the tray /
-    //     shell quick-launch when a favorite command needs variable / admin
-    //     input, so the main window never has to be shown. It mounts only the
-    //     prompt modals, not the full App.
-    // Tauri's `frontendDist` points at `../dist`, so both emitted HTML files
-    // are packaged and addressable as `index.html` / `prompt.html`.
+    // Three HTML entry points ship in the bundle:
+    //   - `index.html`          → the main ProcMix window (sidebar, views, …).
+    //   - `prompt.html`         → the small "quick-launch" prompt dialog
+    //     window (v0.12.0). It is a SEPARATE webview opened on demand by the
+    //     tray / shell quick-launch when a favorite command needs variable /
+    //     admin input, so the main window never has to be shown. It mounts
+    //     only the prompt modals, not the full App.
+    //   - `miniapp-runner.html` → a standalone Mini-App runner window
+    //     (`miniapp-<id>` label, one per running mini-app — any number can be
+    //     open at once). Opened from the Library's "Run" action or the
+    //     tray's "Mini-Apps" submenu, bypassing the main window entirely. It
+    //     mounts only the runner + its prompt singletons, not the full App.
+    // Tauri's `frontendDist` points at `../dist`, so every emitted HTML file
+    // is packaged and addressable as `index.html` / `prompt.html` /
+    // `miniapp-runner.html`.
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
         prompt: resolve(__dirname, "prompt.html"),
+        miniappRunner: resolve(__dirname, "miniapp-runner.html"),
       },
       output: {
         // Split the heavy vendor libraries into their own chunks so they are

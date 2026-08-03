@@ -9,6 +9,10 @@ export interface TrayLabels {
   favorites: string;
   favoritesEmpty: string;
   favoritesMore: string;
+  /** Title of the "Mini-Apps" submenu. */
+  miniApps: string;
+  /** Disabled placeholder item shown when there are no favorite mini-apps. */
+  miniAppsEmpty: string;
   notifyTitle: string;
   notifySuccess: string;
   notifyError: string;
@@ -40,6 +44,8 @@ export function buildTrayLabels(t: TFunction): TrayLabels {
     favorites: t("tray.favorites"),
     favoritesEmpty: t("tray.favoritesEmpty"),
     favoritesMore: t("tray.favoritesMore"),
+    miniApps: t("tray.miniApps"),
+    miniAppsEmpty: t("tray.miniAppsEmpty"),
     notifyTitle: t("tray.notifyTitle"),
     // Keep `{{name}}` literal — the backend interpolates the entity name.
     notifySuccess: t("tray.notifySuccess", { name: "{{name}}" }),
@@ -72,6 +78,11 @@ function withDevSuffix(labels: TrayLabels): TrayLabels {
     favorites: tag(labels.favorites),
     favoritesEmpty: tag(labels.favoritesEmpty),
     favoritesMore: tag(labels.favoritesMore),
+    // Neither label embeds the literal "ProcMix" token, so no tagging is
+    // needed — passed through unchanged (still routed through this function
+    // so a future label change can't silently skip the dev-tag pass).
+    miniApps: labels.miniApps,
+    miniAppsEmpty: labels.miniAppsEmpty,
     notifyTitle: tag(labels.notifyTitle),
     notifySuccess: tag(labels.notifySuccess),
     notifyError: tag(labels.notifyError),

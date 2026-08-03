@@ -21,7 +21,6 @@ const hydrateSchedules = vi
 const hydrateMiniApps = vi
   .fn<() => Promise<void>>()
   .mockResolvedValue(undefined);
-const initializeMiniAppSeeds = vi.fn<(platform: Platform) => void>();
 
 const getPlatformMock = vi.fn<() => Promise<PlatformOrUnknown>>();
 const loadAvailableShellsMock = vi.fn<() => Promise<void>>();
@@ -49,7 +48,6 @@ vi.mock("../stores/miniappStore", () => ({
   useMiniAppStore: {
     getState: () => ({
       hydrateFromDb: hydrateMiniApps,
-      initializeSeeds: initializeMiniAppSeeds,
     }),
   },
 }));
@@ -68,14 +66,13 @@ beforeEach(() => {
   hydrateWorkflows.mockReset().mockResolvedValue(undefined);
   hydrateSchedules.mockReset().mockResolvedValue(undefined);
   hydrateMiniApps.mockReset().mockResolvedValue(undefined);
-  initializeMiniAppSeeds.mockReset();
   getPlatformMock.mockReset();
   loadAvailableShellsMock.mockReset().mockResolvedValue(undefined);
   commandsValue = [];
 });
 
 describe("useSeedBootstrap - hydration fan-out", () => {
-  it("should kick off shell detection and hydrate all three stores on mount", async () => {
+  it("should kick off shell detection and hydrate every store on mount", async () => {
     // Arrange: empty command set → seed path (also resolves the platform).
     commandsValue = [];
     getPlatformMock.mockResolvedValue("linux");
@@ -112,7 +109,6 @@ describe("useSeedBootstrap - existing commands", () => {
     // Assert: the seed branch was never entered.
     expect(getPlatformMock).not.toHaveBeenCalled();
     expect(initializeSeeds).not.toHaveBeenCalled();
-    expect(initializeMiniAppSeeds).not.toHaveBeenCalled();
   });
 });
 
@@ -130,8 +126,6 @@ describe("useSeedBootstrap - seeding when empty", () => {
       expect(initializeSeeds).toHaveBeenCalledWith("macos");
     });
     expect(getPlatformMock).toHaveBeenCalledTimes(1);
-    // The mini-app store is seeded with the same resolved platform.
-    expect(initializeMiniAppSeeds).toHaveBeenCalledWith("macos");
   });
 
   it("should fall back to 'linux' when the platform resolves to 'unknown'", async () => {

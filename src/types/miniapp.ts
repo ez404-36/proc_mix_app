@@ -176,3 +176,15 @@ export interface MiniApp {
 }
 
 export type MiniAppView = "miniapps" | "miniapp-editor" | "miniapp-runner";
+
+/**
+ * Lifecycle event for a mini-app's standalone runner window, streamed on the
+ * `miniapp-window-event` Tauri channel. Mirrors the Rust `MiniAppWindowEvent`
+ * enum (`platform::miniapp_window`) — `tag: "kind"`, camelCase fields. Every
+ * open webview receives it, so the main window's Library tile (and, in the
+ * mini-app's own window, nothing — it never subscribes) can track which
+ * mini-apps currently have an open window.
+ */
+export type MiniAppWindowEvent =
+  | { kind: "opened"; id: string }
+  | { kind: "closed"; id: string };

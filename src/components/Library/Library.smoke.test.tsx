@@ -52,6 +52,14 @@ vi.mock("../../services/workflowRunner", () => ({
   triggerWorkflowRun: (...args: unknown[]) => triggerWorkflowRun(...args),
 }));
 
+const openMiniAppWindow = vi.fn().mockResolvedValue(undefined);
+const listOpenMiniAppWindows = vi.fn().mockResolvedValue([]);
+vi.mock("../../services/miniappWindow", () => ({
+  openMiniAppWindow: (...args: unknown[]) => openMiniAppWindow(...args),
+  listOpenMiniAppWindows: (...args: unknown[]) =>
+    listOpenMiniAppWindows(...args),
+}));
+
 vi.mock("@arco-design/web-react", () => ({
   Message: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }));
@@ -60,6 +68,7 @@ import "../../i18n";
 import { ContextMenuProvider } from "../ContextMenu";
 import { useCommandStore } from "../../stores/commandStore";
 import { useMiniAppStore } from "../../stores/miniappStore";
+import { useMiniAppWindowStore } from "../../stores/miniappWindowStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import type { Command, MiniApp, MiniAppWidget, Workflow } from "../../types";
@@ -135,8 +144,8 @@ function resetStores(): void {
     miniapps: [],
     favorites: [],
     hydrated: true,
-    seedsInitialized: true,
   });
+  useMiniAppWindowStore.setState({ runningIds: new Set() });
   useUIStore.setState({
     libraryTab: "commands",
     editorWorkflowId: null,
@@ -191,6 +200,7 @@ HTMLElement.prototype.scrollIntoView = (): void => {};
 beforeEach(() => {
   resetStores();
   triggerWorkflowRun.mockClear();
+  listOpenMiniAppWindows.mockReset().mockResolvedValue([]);
 });
 afterEach(() => {
   resetStores();
@@ -506,13 +516,76 @@ describe("Library Commands tab — editor navigation", () => {
   });
 });
 
+describe("Library Mini-Apps tab — window-state reconciliation", () => {
+  it("calls listOpenMiniAppWindows on mount and reconciles the running-tile state", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp()],
+      favorites: [],
+      hydrated: true,
+    });
+    // The event stream never told us "ma-1" is running (e.g. the main
+    // window's listener was still attaching when the tray opened it), but
+    // the live window registry says it is — reconciliation must pick this
+    // up on mount rather than requiring an event.
+    listOpenMiniAppWindows.mockResolvedValue(["ma-1"]);
+    await renderLibraryWithMiniApps();
+
+    expect(listOpenMiniAppWindows).toHaveBeenCalledTimes(1);
+    expect(useMiniAppWindowStore.getState().runningIds.has("ma-1")).toBe(
+      true,
+    );
+    expect(
+      within(cardFor("VPN Panel")).getByRole("button", { name: "Running" }),
+    ).toBeTruthy();
+  });
+
+  it("clears a stale running id the event stream never cleaned up", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp()],
+      favorites: [],
+      hydrated: true,
+    });
+    // The store THINKS ma-1 is still running (e.g. a missed `Closed` event),
+    // but the live registry says no such window exists any more.
+    useMiniAppWindowStore.setState({ runningIds: new Set(["ma-1"]) });
+    listOpenMiniAppWindows.mockResolvedValue([]);
+    await renderLibraryWithMiniApps();
+
+    expect(useMiniAppWindowStore.getState().runningIds.has("ma-1")).toBe(
+      false,
+    );
+    expect(
+      within(cardFor("VPN Panel")).getByRole("button", { name: "Run" }),
+    ).toBeTruthy();
+  });
+
+  it("a failed reconciliation IPC call does not crash the tab or clear existing state", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp()],
+      favorites: [],
+      hydrated: true,
+    });
+    useMiniAppWindowStore.setState({ runningIds: new Set(["ma-1"]) });
+    listOpenMiniAppWindows.mockRejectedValue(new Error("ipc down"));
+    await renderLibraryWithMiniApps();
+
+    // The event-stream-derived state is left exactly as it was — a failed
+    // reconciliation must never regress to "nothing is running".
+    expect(useMiniAppWindowStore.getState().runningIds.has("ma-1")).toBe(
+      true,
+    );
+  });
+});
+
 describe("Library Mini-Apps tab", () => {
   it("switches to the Mini-Apps tab from the tab strip", async () => {
     useMiniAppStore.setState({
       miniapps: [makeMiniApp()],
       favorites: [],
       hydrated: true,
-      seedsInitialized: true,
     });
     await renderLibraryWithMiniApps();
 
@@ -533,7 +606,7 @@ describe("Library Mini-Apps tab", () => {
 
     expect(screen.getByText("No mini-applications yet.")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Start from example" }),
+      screen.getByRole("button", { name: "From template" }),
     ).toBeTruthy();
   });
 
@@ -548,7 +621,6 @@ describe("Library Mini-Apps tab", () => {
       ],
       favorites: [],
       hydrated: true,
-      seedsInitialized: true,
     });
     await renderLibraryWithMiniApps();
 
@@ -559,24 +631,70 @@ describe("Library Mini-Apps tab", () => {
     expect(within(card).getByText("vpn")).toBeTruthy();
   });
 
-  it("Run opens the runner for that mini-app", async () => {
+  it("Run opens the mini-app's standalone window instead of navigating", async () => {
     useUIStore.setState({ libraryTab: "miniapps" });
     useMiniAppStore.setState({
       miniapps: [makeMiniApp()],
       favorites: [],
       hydrated: true,
-      seedsInitialized: true,
     });
+    const priorView = useUIStore.getState().currentView;
     await renderLibraryWithMiniApps();
 
-    act(() => {
+    await act(async () => {
       fireEvent.click(
         within(cardFor("VPN Panel")).getByRole("button", { name: "Run" }),
       );
     });
 
-    expect(useUIStore.getState().currentView).toBe("miniapp-runner");
-    expect(useUIStore.getState().miniappRunnerId).toBe("ma-1");
+    expect(openMiniAppWindow).toHaveBeenCalledWith("ma-1");
+    // The Library itself never navigates — the mini-app runs in its own OS
+    // window, opened via `services/miniappWindow.ts` (mocked above).
+    expect(useUIStore.getState().currentView).toBe(priorView);
+  });
+
+  it("shows a disabled loader + 'Running' label instead of Run for an already-open mini-app", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp()],
+      favorites: [],
+      hydrated: true,
+    });
+    // The mount-time reconciliation (see the describe block above) would
+    // otherwise overwrite this seeded state with its own empty default —
+    // agree with it so this test exercises the running-tile rendering, not
+    // reconciliation itself.
+    listOpenMiniAppWindows.mockResolvedValue(["ma-1"]);
+    useMiniAppWindowStore.setState({ runningIds: new Set(["ma-1"]) });
+    await renderLibraryWithMiniApps();
+
+    const card = cardFor("VPN Panel");
+    expect(within(card).queryByRole("button", { name: "Run" })).toBeNull();
+    const runningButton = within(card).getByRole("button", {
+      name: "Running",
+    });
+    expect(runningButton).toBeTruthy();
+    expect((runningButton as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("clicking the disabled Running button never calls openMiniAppWindow again", async () => {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [makeMiniApp()],
+      favorites: [],
+      hydrated: true,
+    });
+    listOpenMiniAppWindows.mockResolvedValue(["ma-1"]);
+    useMiniAppWindowStore.setState({ runningIds: new Set(["ma-1"]) });
+    await renderLibraryWithMiniApps();
+
+    act(() => {
+      fireEvent.click(
+        within(cardFor("VPN Panel")).getByRole("button", { name: "Running" }),
+      );
+    });
+
+    expect(openMiniAppWindow).not.toHaveBeenCalled();
   });
 
   it("Edit opens the editor for that mini-app", async () => {
@@ -585,7 +703,6 @@ describe("Library Mini-Apps tab", () => {
       miniapps: [makeMiniApp()],
       favorites: [],
       hydrated: true,
-      seedsInitialized: true,
     });
     await renderLibraryWithMiniApps();
 
@@ -608,7 +725,6 @@ describe("Library Mini-Apps tab", () => {
       miniapps: [makeMiniApp({ id: "ma-1" })],
       favorites: [],
       hydrated: true,
-      seedsInitialized: true,
     });
     await renderLibraryWithMiniApps();
 
@@ -628,7 +744,6 @@ describe("Library Mini-Apps tab", () => {
       miniapps: [makeMiniApp()],
       favorites: [],
       hydrated: true,
-      seedsInitialized: true,
     });
     await renderLibraryWithMiniApps();
 
@@ -656,7 +771,6 @@ describe("Library Mini-Apps tab", () => {
       miniapps: [makeMiniApp({ favorite: false })],
       favorites: [],
       hydrated: true,
-      seedsInitialized: true,
     });
     await renderLibraryWithMiniApps();
 
@@ -681,7 +795,6 @@ describe("Library Mini-Apps tab", () => {
       ],
       favorites: [],
       hydrated: true,
-      seedsInitialized: true,
     });
     await renderLibraryWithMiniApps();
 

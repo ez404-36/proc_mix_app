@@ -16,6 +16,7 @@ import { type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useCommandStore } from "../../stores/commandStore";
 import { useHistoryStore } from "../../stores/historyStore";
+import { useMiniAppStore } from "../../stores/miniappStore";
 import type { HistoryEvent } from "../../types";
 import {
   historyEventSubjectId,
@@ -52,6 +53,7 @@ function actionGroup(kind: HistoryEvent["kind"]): ActionGroup {
       return "edit";
     case "commandDeleted":
     case "workflowDeleted":
+    case "miniAppDeleted":
       return "delete";
     case "commandRun":
     case "workflowRun":
@@ -59,6 +61,7 @@ function actionGroup(kind: HistoryEvent["kind"]): ActionGroup {
     case "quickLaunch":
       return "run";
     case "commandRestored":
+    case "miniAppRestored":
       return "restore";
     case "sshHostAdded":
     case "sshHostDiscovered":
@@ -87,9 +90,11 @@ function ActionIcon({ kind }: { kind: HistoryEvent["kind"] }): ReactElement {
       return <EditIcon />;
     case "commandReverted":
     case "commandRestored":
+    case "miniAppRestored":
       return <RestoreIcon />;
     case "commandDeleted":
     case "workflowDeleted":
+    case "miniAppDeleted":
       return <TrashIcon />;
     case "commandRun":
     case "workflowRun":
@@ -194,6 +199,7 @@ export function HistoryRow({
   const { t } = useTranslation();
   const undoEdit = useHistoryStore((s) => s.undoEdit);
   const restoreDeleted = useHistoryStore((s) => s.restoreDeleted);
+  const restoreDeletedMiniApp = useHistoryStore((s) => s.restoreDeletedMiniApp);
   const undoSshEdit = useHistoryStore((s) => s.undoSshEdit);
   // Subscribe to *just* the existence boolean — using a selector that
   // returns a primitive prevents re-rendering when unrelated commands
@@ -203,9 +209,13 @@ export function HistoryRow({
   const commandExists = useCommandStore((s) =>
     s.commands.some((c) => c.id === subjectId),
   );
+  const miniAppExists = useMiniAppStore((s) =>
+    s.miniapps.some((m) => m.id === subjectId),
+  );
 
   const showUndo = event.kind === "commandEdited" && commandExists;
   const showRestore = event.kind === "commandDeleted" && !commandExists;
+  const showRestoreMiniApp = event.kind === "miniAppDeleted" && !miniAppExists;
   // SSH edits (in ProcMix or external) can be reverted by re-writing the
   // prior snapshot, but only when its source is writable (OpenSSH user config).
   const showSshUndo =
@@ -322,6 +332,15 @@ export function HistoryRow({
           type="button"
           className="btn btn--ghost"
           onClick={() => void restoreDeleted(event.id)}
+        >
+          {t("history.restoreBtn")}
+        </button>
+      )}
+      {showRestoreMiniApp && (
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => void restoreDeletedMiniApp(event.id)}
         >
           {t("history.restoreBtn")}
         </button>

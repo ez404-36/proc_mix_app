@@ -69,6 +69,64 @@ describe("executionStore.startExecution", () => {
     expect(exec.commandId).toBe("cmd-real");
   });
 
+  it("should store the pid when supplied", () => {
+    useExecutionStore
+      .getState()
+      .startExecution(
+        "e1",
+        "cmd-1",
+        "Hello",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        4242,
+      );
+    expect(useExecutionStore.getState().executions["e1"].pid).toBe(4242);
+  });
+
+  it("should leave pid undefined when not supplied", () => {
+    useExecutionStore.getState().startExecution("e1", "cmd-1", "Hello");
+    expect(useExecutionStore.getState().executions["e1"].pid).toBeUndefined();
+  });
+
+  it("should keep the FIRST pid across a restart (idempotent merge, mirrors commandId/script)", () => {
+    useExecutionStore
+      .getState()
+      .startExecution(
+        "e1",
+        "cmd-1",
+        "Hello",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        111,
+      );
+    useExecutionStore
+      .getState()
+      .startExecution(
+        "e1",
+        "cmd-1",
+        "Hello",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        222,
+      );
+    expect(useExecutionStore.getState().executions["e1"].pid).toBe(111);
+  });
+
   it("should accept a fallback name when the existing name was empty", () => {
     // Manually seed an execution with an empty name to exercise the
     // `commandName ||` branch.
