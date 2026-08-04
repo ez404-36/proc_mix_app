@@ -729,7 +729,7 @@
       },
       "systemInfo": {
         "name": "System Info",
-        "description": "Live uptime with disk and memory inspection buttons"
+        "description": "Live uptime and CPU load with disk, memory, and system-details buttons"
       }
     },
     "fromTemplate": "From template",

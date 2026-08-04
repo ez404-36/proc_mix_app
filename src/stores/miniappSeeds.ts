@@ -265,24 +265,106 @@ const MEMORY_SCRIPTS: Record<Platform, SeedScript> = {
 };
 
 /**
- * Cross-platform demo mini-app: a polled uptime indicator plus two read-only
- * inspection buttons. It exists so macOS and Windows users are not left with
- * an empty Mini-Apps list (the `openvpn3` seed is Linux-only), and it doubles
- * as a minimal, safe reference panel — every script is read-only and needs no
- * elevation.
+ * Instantaneous CPU load probe per platform, normalized to a single "NN%
+ * busy" line so the status widget's `raw` mapping shows a compact, consistent
+ * badge regardless of host OS. Polled every 5s (much shorter than the other
+ * two probes) since load is only useful as a near-real-time reading.
+ *
+ *   - linux:   `top -bn1` prints one `%Cpu(s):` summary line with user (2nd
+ *              field) and system (4th field) percentages; busy = their sum.
+ *   - macos:   `top -l 1 -n 0` prints a `CPU usage: NN% user, NN% sys, NN%
+ *              idle` line with no process rows (`-n 0`); busy = 100 - idle
+ *              (field 7, trailing `%` stripped).
+ *   - windows: `Win32_Processor.LoadPercentage` is already the OS's own
+ *              busy-percent per logical processor; averaged across all of
+ *              them for one whole-machine figure.
+ */
+const CPU_LOAD_SCRIPTS: Record<Platform, SeedScript> = {
+  linux: {
+    script: "top -bn1 | awk '/^%Cpu/ {printf \"%.0f%% busy\\n\", $2+$4}'",
+    shell: "bash",
+  },
+  macos: {
+    script:
+      "top -l 1 -n 0 | awk '/CPU usage/ {gsub(\"%\", \"\", $7); " +
+      'printf "%.0f%% busy\\n", 100-$7}\'',
+    shell: "zsh",
+  },
+  windows: {
+    script:
+      "Get-CimInstance Win32_Processor | " +
+      "Measure-Object -Property LoadPercentage -Average | " +
+      'ForEach-Object { "{0:N0}% busy" -f $_.Average }',
+    shell: "powershell",
+  },
+};
+
+/**
+ * Static system summary (host, OS, CPU model + core count) per platform —
+ * one read-only button so users can quickly check what machine they're on
+ * without leaving the panel.
+ */
+const SYSTEM_DETAILS_SCRIPTS: Record<Platform, SeedScript> = {
+  linux: {
+    script:
+      'echo "Host: $(hostname)"; echo "OS: $(uname -srm)"; ' +
+      'echo "CPU: $(grep -m1 "model name" /proc/cpuinfo | cut -d: -f2 | ' +
+      'xargs) ($(nproc) cores)"',
+    shell: "bash",
+  },
+  macos: {
+    script:
+      'echo "Host: $(hostname)"; ' +
+      'echo "OS: $(sw_vers -productName) $(sw_vers -productVersion) ' +
+      '($(uname -m))"; ' +
+      'echo "CPU: $(sysctl -n machdep.cpu.brand_string) ' +
+      '($(sysctl -n hw.ncpu) cores)"',
+    shell: "zsh",
+  },
+  windows: {
+    script:
+      "Get-CimInstance Win32_OperatingSystem | " +
+      "Select-Object Caption, Version, CSName | Format-List; " +
+      "Get-CimInstance Win32_Processor | " +
+      "Select-Object Name, NumberOfCores | Format-List",
+    shell: "powershell",
+  },
+};
+
+/**
+ * Cross-platform demo mini-app: polled uptime + CPU load indicators plus
+ * read-only disk, memory, and system-details inspection buttons. It exists
+ * so macOS and Windows users are not left with an empty Mini-Apps list (the
+ * `openvpn3` seed is Linux-only), and it doubles as a minimal, safe reference
+ * panel — every script is read-only and needs no elevation.
  */
 function buildSystemInfoSeed(platform: Platform): NewMiniAppInput {
   const uptime = UPTIME_SCRIPTS[platform];
   const disk = DISK_SCRIPTS[platform];
   const memory = MEMORY_SCRIPTS[platform];
+  const cpuLoad = CPU_LOAD_SCRIPTS[platform];
+  const systemDetails = SYSTEM_DETAILS_SCRIPTS[platform];
   const widgets: MiniAppWidget[] = [
     {
       id: makeWidgetId(),
       kind: "status",
-      layout: { x: 16, y: 16, w: 268, h: 72 },
+      layout: { x: 16, y: 16, w: 130, h: 72 },
       label: "Uptime",
       source: { kind: "inline", script: uptime.script, shell: uptime.shell },
       intervalMs: 60000,
+      mapping: { mode: "raw" },
+    },
+    {
+      id: makeWidgetId(),
+      kind: "status",
+      layout: { x: 154, y: 16, w: 130, h: 72 },
+      label: "CPU load",
+      source: {
+        kind: "inline",
+        script: cpuLoad.script,
+        shell: cpuLoad.shell,
+      },
+      intervalMs: 5000,
       mapping: { mode: "raw" },
     },
     {
@@ -311,20 +393,34 @@ function buildSystemInfoSeed(platform: Platform): NewMiniAppInput {
         shell: memory.shell,
       },
     },
+    {
+      id: makeWidgetId(),
+      kind: "button",
+      layout: { x: 16, y: 168, w: 268, h: 56 },
+      label: "System details",
+      action: {
+        kind: "inline",
+        name: "System details",
+        script: systemDetails.script,
+        shell: systemDetails.shell,
+      },
+    },
   ];
 
   return {
     name: "System Info",
     nameKey: "miniapps.seeds.systemInfo.name",
-    description: "Live uptime with disk and memory inspection buttons",
+    description:
+      "Live uptime and CPU load with disk, memory, and system-details buttons",
     descriptionKey: "miniapps.seeds.systemInfo.description",
+    icon: "🖥️",
     widgets,
     tags: ["system", "seed"],
     favorite: false,
     // No `os` restriction — every platform gets a working variant.
-    // Buttons now end at y=100+56=156; panel bumped from 180 to 192 to keep
-    // the same ~36px bottom margin the panel always had.
-    panelSize: { w: 320, h: 192 },
+    // Buttons now end at y=168+56=224; panel bumped from 192 to 256 to keep
+    // the same ~32px bottom margin the panel always had.
+    panelSize: { w: 320, h: 256 },
   };
 }
 

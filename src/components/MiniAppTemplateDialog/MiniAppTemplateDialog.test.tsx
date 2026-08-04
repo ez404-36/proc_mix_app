@@ -8,7 +8,7 @@ import { MiniAppTemplateDialog } from "./MiniAppTemplateDialog";
 function template(overrides: Partial<NewMiniAppInput> = {}): NewMiniAppInput {
   return {
     name: "System Info",
-    description: "Live uptime with disk and memory inspection buttons",
+    description: "Live uptime and CPU load with disk, memory, and system-details buttons",
     widgets: [],
     tags: [],
     favorite: false,
@@ -57,7 +57,7 @@ describe("MiniAppTemplateDialog", () => {
     renderDialog();
     expect(screen.getByText("System Info")).toBeTruthy();
     expect(
-      screen.getByText("Live uptime with disk and memory inspection buttons"),
+      screen.getByText("Live uptime and CPU load with disk, memory, and system-details buttons"),
     ).toBeTruthy();
     expect(screen.getByText("OpenVPN3 Control Panel")).toBeTruthy();
     expect(screen.getByText("VPN")).toBeTruthy();
@@ -114,7 +114,7 @@ describe("MiniAppTemplateDialog", () => {
     });
     expect(screen.getByText("System Info")).toBeTruthy();
     expect(
-      screen.getByText("Live uptime with disk and memory inspection buttons"),
+      screen.getByText("Live uptime and CPU load with disk, memory, and system-details buttons"),
     ).toBeTruthy();
     expect(screen.queryByText("raw literal")).toBeNull();
   });
