@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useExecutionStore } from "../../stores/executionStore";
 import { useMiniAppStore } from "../../stores/miniappStore";
 import { useUIStore } from "../../stores/uiStore";
-import type { MiniApp } from "../../types";
+import type { MiniApp, StatusSource } from "../../types";
 import {
   useMiniAppStatusPolling,
   type StatusWidgetConfig,
@@ -16,7 +16,11 @@ import { MiniAppActiveProcesses } from "./MiniAppActiveProcesses";
 import { MiniAppWidget } from "./MiniAppWidget";
 import { renderIcon } from "../../utils/iconRenderer";
 import { resolveArtifactValues } from "../../utils/resolveArtifactValues";
-import { collectArtifactSpecSources } from "../../utils/miniappInlineCommand";
+import {
+  collectArtifactSpecSources,
+  mergeArtifactVariableSpecs,
+  type ArtifactSpecSource,
+} from "../../utils/miniappInlineCommand";
 import {
   getMiniAppDescription,
   getMiniAppName,
@@ -47,6 +51,37 @@ const PANEL_BOTTOM_PADDING = 24;
 const PERSIST_DEBOUNCE_MS = 600;
 
 /**
+ * Merge the panel's artifact specs into a `StatusSource`'s own declared
+ * `variables` — the status-probe counterpart of `withArtifactVariableSpecs`
+ * (used for widget actions). Only `inline` sources carry a script that can
+ * reference `${artifactName}`; a `commandRef` source resolves its variables
+ * server-side against the REFERENCED command's own declared `variables`,
+ * which this function does not have access to and must not touch.
+ *
+ * WHY THIS EXISTS (root cause, not a guard): without a synthesized spec, a
+ * probe script referencing `${configPath}` has NO fallback default. Rust's
+ * `core/parser.rs::lookup` only falls back to a `VariableSpec.defaultValue`
+ * when the run's `variableValues` map has no entry for the name — with no
+ * spec at all, a missing entry is a hard `ParseError::MissingVariable`. On
+ * first mount there is a real window where this triggers even for a
+ * correctly-configured artifact: the poller's first probe can fire before
+ * `MiniAppRunner`'s artifact-value-init effect has committed `artifactValues`
+ * state, so `variableValues` is still `{}`. A synthesized spec makes that
+ * transient gap degrade to the artifact's editor-configured default (an
+ * empty string for an unset `.ovpn` path) instead of surfacing as a status
+ * probe error — the same missing-value handling actions already get.
+ */
+function withStatusArtifactVariableSpecs(
+  source: StatusSource,
+  artifacts: ReadonlyArray<ArtifactSpecSource>,
+): StatusSource {
+  if (source.kind !== "inline" || artifacts.length === 0) return source;
+  const variables = mergeArtifactVariableSpecs(source.variables, artifacts);
+  if (variables.length === (source.variables?.length ?? 0)) return source;
+  return { ...source, variables };
+}
+
+/**
  * Build the poller config list for a mini-app: every `status` widget, plus
  * every `toggle` widget that carries a `status` source. Buttons, artifacts,
  * and status-less toggles contribute nothing. The list is rebuilt each
@@ -60,17 +95,22 @@ const PERSIST_DEBOUNCE_MS = 600;
  * from the poller's config-signature diff (see `miniappStatusPoller`) so a
  * value edit does NOT tear down + rebuild the polling lifecycle — only the
  * next tick reads the fresh map.
+ *
+ * `artifacts` synthesizes a `VariableSpec` fallback per artifact into each
+ * `inline` source's own `variables` — see
+ * {@link withStatusArtifactVariableSpecs}.
  */
 function buildStatusConfigs(
   miniapp: MiniApp,
   variableValues: Readonly<Record<string, string>>,
+  artifacts: ReadonlyArray<ArtifactSpecSource>,
 ): StatusWidgetConfig[] {
   const configs: StatusWidgetConfig[] = [];
   for (const w of miniapp.widgets) {
     if (w.kind === "status") {
       configs.push({
         widgetId: w.id,
-        source: w.source,
+        source: withStatusArtifactVariableSpecs(w.source, artifacts),
         intervalMs:
           w.intervalMs > 0 ? w.intervalMs : DEFAULT_STATUS_INTERVAL_MS,
         mapping: w.mapping,
@@ -79,7 +119,7 @@ function buildStatusConfigs(
     } else if (w.kind === "toggle" && w.status !== undefined) {
       configs.push({
         widgetId: w.id,
-        source: w.status.source,
+        source: withStatusArtifactVariableSpecs(w.status.source, artifacts),
         intervalMs:
           (w.status.intervalMs ?? DEFAULT_STATUS_INTERVAL_MS) > 0
             ? (w.status.intervalMs ?? DEFAULT_STATUS_INTERVAL_MS)
@@ -368,10 +408,14 @@ export function MiniAppRunner({
   // keeps the lifecycle stable (and `variableValues` is excluded from that
   // signature so typing into an artifact input does not reset polling).
   const statusConfigs = useMemo(
-    () => (miniapp ? buildStatusConfigs(miniapp, executionValues) : []),
-    [miniapp, executionValues],
+    () =>
+      miniapp
+        ? buildStatusConfigs(miniapp, executionValues, artifactSpecs)
+        : [],
+    [miniapp, executionValues, artifactSpecs],
   );
-  const statusResults = useMiniAppStatusPolling(statusConfigs);
+  const { results: statusResults, refresh: refreshStatus } =
+    useMiniAppStatusPolling(statusConfigs);
 
   // Resolve `executionWidgets` (execution id -> widget id) into the display
   // entries the active-processes panel renders. Only `button`/`toggle`
@@ -521,6 +565,7 @@ export function MiniAppRunner({
                 onExecutionStarted={(executionId) =>
                   handleExecutionStarted(widget.id, executionId)
                 }
+                onRefreshStatus={() => refreshStatus(widget.id)}
                 artifactValues={artifactValues}
                 onArtifactChange={updateArtifactValue}
                 artifactNames={artifactNames}

@@ -162,11 +162,17 @@ function latestPollerConfigs(): StatusWidgetConfig[] {
 
 /** Stage the results the mocked poller hands back on the next render. */
 function stagePollerResults(results: Record<string, StatusResult>): void {
-  vi.mocked(useMiniAppStatusPolling).mockImplementation(() => results);
+  vi.mocked(useMiniAppStatusPolling).mockImplementation(() => ({
+    results,
+    refresh: vi.fn(),
+  }));
 }
 
 beforeEach(() => {
-  vi.mocked(useMiniAppStatusPolling).mockImplementation(() => ({}));
+  vi.mocked(useMiniAppStatusPolling).mockImplementation(() => ({
+    results: {},
+    refresh: vi.fn(),
+  }));
   stageMiniApp(null);
   useExecutionStore.setState({ executions: {}, recentIds: [] });
 });
@@ -213,7 +219,7 @@ describe("MiniAppRunner — header", () => {
 
     expect(screen.getByText("System Info")).toBeTruthy();
     expect(
-      screen.queryByText("Live uptime with disk and memory inspection buttons"),
+      screen.queryByText("Live uptime and CPU load with disk, memory, and system-details buttons"),
     ).toBeNull();
 
     act(() => {
@@ -221,7 +227,7 @@ describe("MiniAppRunner — header", () => {
     });
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip.textContent).toBe(
-      "Live uptime with disk and memory inspection buttons",
+      "Live uptime and CPU load with disk, memory, and system-details buttons",
     );
   });
 

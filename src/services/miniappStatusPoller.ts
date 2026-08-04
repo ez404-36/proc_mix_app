@@ -15,7 +15,7 @@
 // The actual IPC lives in `utils/miniappRepository.runStatusProbe`; this hook
 // never calls `invoke` directly (project convention).
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { StatusMapping, StatusSource } from "../types";
 import { runStatusProbe } from "../utils/miniappRepository";
@@ -96,6 +96,27 @@ export const STATUS_UNMATCHED_KEY = "miniapps.runner.status.unmatched";
  *  show verbatim as an unmatched status label. Anything longer or multi-line
  *  falls back to the generic {@link STATUS_UNMATCHED_KEY} label instead. */
 const UNMATCHED_RAW_DISPLAY_LIMIT = 60;
+
+/**
+ * Return value of {@link useMiniAppStatusPolling}: the per-widget results plus
+ * an imperative refresh trigger.
+ */
+export interface StatusPolling {
+  /** Latest `StatusResult` per widget id. */
+  results: Record<string, StatusResult>;
+  /**
+   * Re-probe `widgetId` immediately, cancelling its pending timer and
+   * rearming the schedule from the fresh result. Used after a toggle's
+   * on/off action runs, so the switch's real position is re-read at once
+   * instead of after up to a full `intervalMs` of showing a stale value.
+   *
+   * A no-op when the widget has no polling config, when a probe for it is
+   * already in flight (the in-flight one will settle and reschedule), or
+   * while the document is hidden. Stable across renders — safe to pass
+   * straight into a child component's props.
+   */
+  refresh: (widgetId: string) => void;
+}
 
 /** A single widget's polling configuration handed to the hook. */
 export interface StatusWidgetConfig {
@@ -324,6 +345,12 @@ function configSignature(configs: StatusWidgetConfig[]): string {
  *   - Each widget is probed immediately on mount, then re-probed on a
  *     self-rescheduling timer whose delay is the configured interval
  *     (clamped to {@link MIN_INTERVAL_MS}).
+ *   - `state: "loading"` is only ever reported for a widget's FIRST probe
+ *     (no result yet). A re-poll of an already-settled widget keeps
+ *     reporting its last known result until the new probe settles — so a
+ *     status-backed toggle's position (or any other display) never flashes
+ *     to an "unknown" state on every tick just because a routine re-check is
+ *     in flight.
  *   - CONSECUTIVE FAILURES BACK OFF: the delay doubles per failure up to
  *     {@link MAX_BACKOFF_MS}, and resets on the first success. A widget
  *     pointing at a deleted command therefore stops hammering the executor.
@@ -337,10 +364,13 @@ function configSignature(configs: StatusWidgetConfig[]): string {
  * The hook accepts a fresh array on every render (parents typically rebuild
  * it from widget data) — internally it diffs by {@link configSignature} so
  * the lifecycle only resets on a real change.
+ *
+ * Returns the `widgetId → StatusResult` map plus {@link StatusPolling.refresh},
+ * an imperative "re-probe this widget NOW" trigger — see its own doc comment.
  */
 export function useMiniAppStatusPolling(
   configs: StatusWidgetConfig[],
-): Record<string, StatusResult> {
+): StatusPolling {
   const [results, setResults] = useState<Record<string, StatusResult>>({});
 
   // Ref mirror of the latest configs so the interval callbacks always read
@@ -350,6 +380,12 @@ export function useMiniAppStatusPolling(
   useEffect(() => {
     configsRef.current = configs;
   });
+
+  // Ref holding the CURRENT effect instance's `runProbe`, so `refresh` (a
+  // stable callback handed to widgets) always reaches the live polling
+  // lifecycle rather than closing over a torn-down one. Reassigned by the
+  // effect below on every (re)start and cleared on teardown.
+  const runProbeRef = useRef<((widgetId: string) => void) | null>(null);
 
   // The lifecycle keys off the serialized signature, not the array identity.
   const signature = configSignature(configs);
@@ -401,10 +437,20 @@ export function useMiniAppStatusPolling(
       if (inFlight.has(config.widgetId)) return;
       inFlight.add(config.widgetId);
 
-      setResults((prev) => ({
-        ...prev,
-        [config.widgetId]: { state: "loading" },
-      }));
+      // Only flash the `loading` badge for the WIDGET'S FIRST EVER probe
+      // (no prior result yet). A RE-poll of an already-settled widget keeps
+      // showing its last known result while the new probe is in flight —
+      // flipping to `loading` on every tick would otherwise blank a
+      // status-backed toggle's position (and any other display) for the
+      // ~1-2s a shell probe takes, every `intervalMs`, forever. The real
+      // value still updates the moment the probe settles below; this only
+      // suppresses the transient "unknown" flash for a value that was
+      // already known.
+      setResults((prev) =>
+        prev[config.widgetId] === undefined
+          ? { ...prev, [config.widgetId]: { state: "loading" } }
+          : prev,
+      );
 
       void (async (): Promise<void> => {
         let next: StatusResult;
@@ -466,11 +512,30 @@ export function useMiniAppStatusPolling(
       }
     };
 
+    // Publish THIS lifecycle's probe runner for the stable `refresh` callback
+    // below. Looking the config up here (rather than closing over one) keeps
+    // an imperative refresh on the same "always read the freshest config"
+    // contract as a scheduled tick.
+    runProbeRef.current = (widgetId: string): void => {
+      const fresh = configsRef.current.find((c) => c.widgetId === widgetId);
+      if (fresh === undefined) return;
+      // Drop the armed timer first so the forced probe REPLACES the pending
+      // tick rather than racing it — `runProbe` rearms via `scheduleNext`
+      // once it settles.
+      const existing = timers.get(widgetId);
+      if (existing !== undefined) {
+        clearTimeout(existing);
+        timers.delete(widgetId);
+      }
+      runProbe(fresh);
+    };
+
     startAll();
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       cancelled = true;
+      runProbeRef.current = null;
       stopAll();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
@@ -479,5 +544,12 @@ export function useMiniAppStatusPolling(
     // other than `signature` are read inside, so exhaustive-deps stays quiet.
   }, [signature]);
 
-  return results;
+  // Stable identity across renders (empty dep list) — it dereferences the ref
+  // at CALL time, so it always reaches the live lifecycle even though the
+  // effect re-creates `runProbe` whenever the config signature changes.
+  const refresh = useCallback((widgetId: string): void => {
+    runProbeRef.current?.(widgetId);
+  }, []);
+
+  return { results, refresh };
 }

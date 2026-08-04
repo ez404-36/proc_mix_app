@@ -467,6 +467,8 @@
         "enterValue": "Enter value"
       },
       "brokenCommand": "Linked command is missing",
+      "toggleTurningOn": "Turning on…",
+      "toggleTurningOff": "Turning off…",
       "toggleUnverified": "unverified",
       "toggleUnverifiedHint": "The switch position is not verified against the real state. Configure a status source and its “on” value to make it accurate.",
       "duplicateArtifacts": "Duplicate artifact names: {{names}}. Inputs sharing a name share one value.",

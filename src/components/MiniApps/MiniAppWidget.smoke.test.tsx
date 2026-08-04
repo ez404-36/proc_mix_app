@@ -13,6 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 
 vi.mock("../../services/commandRunner", () => ({
   triggerCommandRun: vi.fn().mockResolvedValue("exec-1"),
@@ -70,6 +71,7 @@ interface RenderOptions {
   onArtifactChange?: (name: string, value: string) => void;
   onActionComplete?: () => void;
   onExecutionStarted?: (executionId: string) => void;
+  onRefreshStatus?: () => void;
   /** Artifact widgets whose specs the panel synthesizes for every action. */
   artifactWidgets?: WidgetSpec[];
   /** Defaults to `true` (the editor's bordered-card look), matching the
@@ -82,14 +84,18 @@ interface RenderOptions {
  * `artifactValues` doubles as the execution map (that is exactly what the
  * runner does) and as the display-resolution source.
  */
-function renderWidget(widget: WidgetSpec, opts: RenderOptions = {}): void {
+function widgetElement(
+  widget: WidgetSpec,
+  opts: RenderOptions,
+): ReactElement {
   const values = opts.artifactValues ?? {};
-  render(
+  return (
     <MiniAppWidget
       widget={widget}
       statusResult={opts.statusResult}
       onActionComplete={opts.onActionComplete}
       onExecutionStarted={opts.onExecutionStarted}
+      onRefreshStatus={opts.onRefreshStatus}
       artifactValues={values}
       onArtifactChange={opts.onArtifactChange ?? (() => {})}
       artifactNames={new Set(Object.keys(values))}
@@ -97,8 +103,29 @@ function renderWidget(widget: WidgetSpec, opts: RenderOptions = {}): void {
       executionValues={values}
       artifactSpecs={collectArtifactSpecSources(opts.artifactWidgets ?? [])}
       bordered={opts.bordered}
-    />,
+    />
   );
+}
+
+function renderWidget(widget: WidgetSpec, opts: RenderOptions = {}): void {
+  render(widgetElement(widget, opts));
+}
+
+/**
+ * Like {@link renderWidget}, but returns a `rerender` that feeds the SAME
+ * component instance a fresh `statusResult` — the only way to exercise state
+ * (like a toggle's optimistic position) that must survive across polls.
+ */
+function renderWidgetWithRerender(
+  widget: WidgetSpec,
+  opts: RenderOptions = {},
+): { rerender: (next: WidgetSpec, nextOpts?: RenderOptions) => void } {
+  const view = render(widgetElement(widget, opts));
+  return {
+    rerender: (next: WidgetSpec, nextOpts: RenderOptions = {}) => {
+      view.rerender(widgetElement(next, nextOpts));
+    },
+  };
 }
 
 beforeEach(() => {
@@ -550,6 +577,258 @@ describe("MiniAppWidget — toggle", () => {
     ).not.toBeNull();
   });
 
+  it("a status-backed switch flips IMMEDIATELY and HOLDS while the probe still reports the old state", async () => {
+    // `triggerCommandRun` resolves on SPAWN, long before the underlying tool
+    // (and therefore the probe) can observe the new state. The switch must
+    // stay where the user put it instead of snapping back the instant the
+    // spawn returns.
+    const { rerender } = renderWidgetWithRerender(
+      toggleWidget({ status: statusConfig("Connected") }),
+      { statusResult: { state: "ok", label: "Disconnected", rawValue: "down" } },
+    );
+    const toggle = screen.getByRole("switch", { name: "VPN" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+
+    // Spawn has resolved; the probe still says "Disconnected" — yet the
+    // switch holds the user's requested ON position.
+    rerender(toggleWidget({ status: statusConfig("Connected") }), {
+      statusResult: { state: "ok", label: "Disconnected", rawValue: "down" },
+    });
+    expect(
+      screen.getByRole("switch", { name: "VPN" }).getAttribute("aria-checked"),
+    ).toBe("true");
+  });
+
+  it("hands the real probe result back control once it CONFIRMS the new state", async () => {
+    const { rerender } = renderWidgetWithRerender(
+      toggleWidget({ status: statusConfig("Connected") }),
+      { statusResult: { state: "ok", label: "Disconnected", rawValue: "down" } },
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+    });
+
+    await act(async () => {
+      rerender(toggleWidget({ status: statusConfig("Connected") }), {
+        statusResult: { state: "ok", label: "Connected", rawValue: "up" },
+      });
+    });
+
+    expect(
+      screen.getByRole("switch", { name: "VPN" }).getAttribute("aria-checked"),
+    ).toBe("true");
+  });
+
+  it("self-corrects to the real state when the action never takes effect", async () => {
+    // The optimistic position must never become a permanent lie: if the probe
+    // still disagrees once the grace window expires, the real state wins.
+    vi.useFakeTimers();
+    try {
+      renderWidget(toggleWidget({ status: statusConfig("Connected") }), {
+        statusResult: {
+          state: "ok",
+          label: "Disconnected",
+          rawValue: "down",
+        },
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+      });
+      expect(
+        screen.getByRole("switch", { name: "VPN" }).getAttribute("aria-checked"),
+      ).toBe("true");
+
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      expect(
+        screen.getByRole("switch", { name: "VPN" }).getAttribute("aria-checked"),
+      ).toBe("false");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("requests an immediate status re-probe once the action settles", async () => {
+    const onRefreshStatus = vi.fn();
+    renderWidget(toggleWidget({ status: statusConfig("Connected") }), {
+      statusResult: { state: "ok", label: "Disconnected", rawValue: "down" },
+      onRefreshStatus,
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+    });
+
+    expect(onRefreshStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a spinner for the WHOLE transition, not just the spawn", async () => {
+    // `triggerCommandRun` resolves on spawn (milliseconds), long before the
+    // real state changes. The loader must span the entire unconfirmed window
+    // — otherwise it flashes invisibly and the user stares at the stale
+    // pre-click status while the action is still taking effect.
+    const { rerender } = renderWidgetWithRerender(
+      toggleWidget({ status: statusConfig("Connected") }),
+      { statusResult: { state: "ok", label: "Disconnected", rawValue: "down" } },
+    );
+    expect(document.querySelector(".miniapp-widget__badge--loading")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+    });
+
+    // Spawn already resolved, yet the spinner is still up because the probe
+    // has not confirmed the new state.
+    expect(
+      document.querySelector(".miniapp-widget__badge--loading"),
+    ).not.toBeNull();
+    expect(screen.queryByText("Disconnected")).toBeNull();
+
+    // The confirming probe lands → spinner gives way to the real status.
+    await act(async () => {
+      rerender(toggleWidget({ status: statusConfig("Connected") }), {
+        statusResult: { state: "ok", label: "Connected", rawValue: "up" },
+      });
+    });
+
+    expect(document.querySelector(".miniapp-widget__badge--loading")).toBeNull();
+    expect(screen.getByText("Connected")).toBeTruthy();
+  });
+
+  it("toggling BACK mid-transition re-arms the transition instead of settling early", async () => {
+    // Real state is OFF. Click ON (transition starts), then click back to OFF
+    // before any fresh probe lands. The STALE probe still reports
+    // "Disconnected", which coincidentally matches the second click's target
+    // — but it ran BEFORE that action, so it must not be accepted as
+    // confirmation. The widget must stay in transition until a genuinely new
+    // probe settles it.
+    const stale: StatusResult = {
+      state: "ok",
+      label: "Disconnected",
+      rawValue: "down",
+    };
+    const { rerender } = renderWidgetWithRerender(
+      toggleWidget({ status: statusConfig("Connected") }),
+      { statusResult: stale },
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+    });
+    expect(
+      screen.getByRole("switch", { name: "VPN" }).getAttribute("aria-checked"),
+    ).toBe("true");
+
+    // Toggle back. Same stale result object is still the latest one.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+    });
+    await act(async () => {
+      rerender(toggleWidget({ status: statusConfig("Connected") }), {
+        statusResult: stale,
+      });
+    });
+
+    expect(
+      screen.getByRole("switch", { name: "VPN" }).getAttribute("aria-checked"),
+    ).toBe("false");
+    expect(
+      document.querySelector(".miniapp-widget__badge--loading"),
+    ).not.toBeNull();
+
+    // A genuinely NEW probe (new object identity) confirming OFF settles it.
+    await act(async () => {
+      rerender(toggleWidget({ status: statusConfig("Connected") }), {
+        statusResult: { state: "ok", label: "Disconnected", rawValue: "down" },
+      });
+    });
+
+    expect(document.querySelector(".miniapp-widget__badge--loading")).toBeNull();
+    expect(
+      screen.getByRole("switch", { name: "VPN" }).getAttribute("aria-checked"),
+    ).toBe("false");
+  });
+
+  it("restarts the grace window on the second click instead of inheriting the first deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      renderWidget(toggleWidget({ status: statusConfig("Connected") }), {
+        statusResult: {
+          state: "ok",
+          label: "Disconnected",
+          rawValue: "down",
+        },
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+      });
+      // Burn most of the first click's window.
+      await act(async () => {
+        vi.advanceTimersByTime(25_000);
+      });
+
+      // Toggle back — this must get a FULL fresh window, not the 5s left over.
+      await act(async () => {
+        fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(25_000);
+      });
+
+      // Still transitioning: 25s < the full 30s window.
+      expect(
+        document.querySelector(".miniapp-widget__badge--loading"),
+      ).not.toBeNull();
+
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(
+        document.querySelector(".miniapp-widget__badge--loading"),
+      ).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs the OFF action when toggled back mid-transition", async () => {
+    renderWidget(toggleWidget({ status: statusConfig("Connected") }), {
+      statusResult: { state: "ok", label: "Disconnected", rawValue: "down" },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+    });
+
+    const scripts = vi
+      .mocked(triggerCommandRun)
+      .mock.calls.map(([cmd]) => cmd.script);
+    expect(scripts).toEqual(["vpn up", "vpn down"]);
+  });
+
+  it("never spins for a routine background re-poll", () => {
+    // The poller keeps reporting the last settled result rather than a
+    // `loading` flash, so the only spinner a user sees is one their click
+    // caused — never one a background tick caused.
+    renderWidget(toggleWidget({ status: statusConfig("Connected") }), {
+      statusResult: { state: "loading" },
+    });
+
+    expect(document.querySelector(".miniapp-widget__badge--loading")).toBeNull();
+  });
+
   it("is disabled and marked broken when an action references a missing command", () => {
     renderWidget(
       toggleWidget({
@@ -636,11 +915,17 @@ describe("MiniAppWidget — status", () => {
     ).not.toBeNull();
   });
 
-  it("renders a loading badge while a probe is in flight", () => {
+  it("shows the neutral idle placeholder — NOT a spinner — while a probe runs", () => {
     renderWidget(statusWidget(), { statusResult: { state: "loading" } });
 
+    // A status widget must never render a spinner: the poller only ever
+    // reports `loading` for a widget's FIRST probe (every re-poll keeps the
+    // last settled result), so a spinner here would be a purposeless flash on
+    // panel open. The only spinner in the runtime belongs to a toggle whose
+    // own on/off action is in flight.
+    expect(document.querySelector(".miniapp-widget__badge--loading")).toBeNull();
     expect(
-      document.querySelector(".miniapp-widget__badge--loading"),
+      document.querySelector(".miniapp-widget__badge--idle"),
     ).not.toBeNull();
   });
 

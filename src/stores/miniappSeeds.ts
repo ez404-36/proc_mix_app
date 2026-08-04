@@ -1,4 +1,4 @@
-import type { MiniAppWidget } from "../types";
+import type { MiniAppWidget, StatusMapping } from "../types";
 import type { Platform } from "../types/platform";
 import type { NewMiniAppInput } from "./miniappStore";
 
@@ -24,134 +24,183 @@ interface SeedScript {
 
 /**
  * Linux-only demo mini-app modelled on the `openvpn3` CLI. It exercises every
- * widget kind — a polled status indicator, two action buttons, and a path
+ * widget kind — a polled status indicator, a status-backed toggle, and a path
  * artifact — so it doubles as a reference panel for the widget system.
  *
- * CLI syntax (verified against upstream openvpn3-linux):
+ * CLI syntax (verified against upstream openvpn3-linux, including LIVE
+ * end-to-end testing of every command below against a real openvpn3 daemon —
+ * not just documentation):
  *   - list sessions:  `openvpn3 sessions-list`
  *   - connect:        `openvpn3 session-start --config <path>`
- *   - disconnect:     `openvpn3 session-manage --config <name> --disconnect`
+ *   - disconnect:     `openvpn3 session-manage --config <path> --disconnect`
  *
- * `session-manage --disconnect` identifies the session by CONFIG NAME, not by
- * file path, and the config name defaults to the `.ovpn` file's basename
- * (without extension) at `session-start` time. Rather than asking the user to
- * type/remember a second value that must stay in sync with the file they
- * picked, the Disconnect script derives it from the same `configPath`
- * artifact via `basename`. This assumes the common case of a single active
- * session per profile name — `session-manage` itself errors with "More than
- * one session..." if that's ambiguous, or "No sessions..." if none match,
- * which is expected CLI behaviour, not a bug in this seed.
+ * CRITICAL, VERIFIED LIVE (this invalidated an earlier version of this
+ * seed): `session-manage --config` matches the EXACT STRING passed to
+ * `session-start --config`, byte for byte — it is NOT a "profile name"
+ * derived from the file's basename, and it does NOT accept a basename-only
+ * or extension-stripped form even when that happens to be a session's only
+ * distinguishing token. `session-start --config "/etc/openvpn/bundled.ovpn"`
+ * followed by `session-manage --config "bundled" --disconnect` FAILS with
+ * "No sessions started with the configuration profile name was found" —
+ * only `session-manage --config "/etc/openvpn/bundled.ovpn" --disconnect`
+ * (the identical string) succeeds. So BOTH the Disconnect action and the
+ * status probe below use `${configPath}` VERBATIM, never `basename`'d.
  *
- * The Connect button's script references `${configPath}`, the NAME of the
- * artifact widget below it. At run time the runner routes the artifact's
- * current value through `RunOptions.variableValues`, and the widget layer
- * synthesizes a `VariableSpec` from the artifact so an empty/dropped value
- * degrades to the artifact's default instead of failing.
+ * Connect/Disconnect are a SINGLE status-backed `toggle` widget, not two
+ * independent buttons. Two independent buttons let a user click Connect
+ * again while already connected — ProcMix has no session dedup of its own
+ * (see `docs/plans/plan-mini-prilozhenia-mini-apps-v-procmix.md`), so a
+ * second click just fires a second, redundant `session-start`. A toggle
+ * whose position is DERIVED from the real probed state cannot be clicked
+ * "the wrong way": once connected it renders ON, and a click on an ON
+ * switch always runs `offAction` (Disconnect), never `onAction` (Connect)
+ * again — see `resolveToggleOnState` / `ToggleWidget.runToggle`.
+ *
+ * The status probe extracts each session's `Config name:` value from
+ * `sessions-list` and compares it for EXACT EQUALITY against `${configPath}`
+ * — never a substring/`grep` match — before that session's `Status:` line is
+ * ever considered a candidate. This is the second, independent reason
+ * `basename`-derived matching was wrong (the first being Disconnect above):
+ * an EARLIER version of this probe used `grep "Config name:.*<fragment>"`,
+ * where the trailing `.*` after ANY fragment — even the single character the
+ * user is mid-typing, e.g. "b" — matches as a SUBSTRING of an unrelated
+ * session's full config path (`/etc/openvpn/bundled.ovpn` contains "b"),
+ * showing "Connected" for a config the user never even finished typing.
+ * Exact-equality comparison (implemented in `awk`, matching the WHOLE
+ * `Config name:` value after stripping the leading label and the
+ * "(Config not available)" suffix openvpn3 appends when a profile was later
+ * removed) closes that gap entirely: no possible `configPath` value can ever
+ * partially match a DIFFERENT session's config path. This also matters when
+ * the user has multiple mini-app panels open for different `.ovpn` files —
+ * each panel's own exact-equality probe can only ever report on ITS OWN
+ * session, never bleed into a different panel's.
+ *
+ * The probe must always `echo` SOMETHING and exit 0, never a bare non-zero
+ * exit — a non-`"succeeded"` probe result is ALWAYS rendered as
+ * `state: "error"` by `applyStatusMapping` regardless of the `StatusMapping`
+ * rules (mapping rules only ever classify a SUCCESSFUL probe's output
+ * string). So "no config selected" and "config selected but no matching
+ * session" both `echo "Disconnected"` and exit 0 — mapped by a normal rule
+ * to a neutral "Disconnected" label — rather than ever surfacing as the
+ * generic, scary "Проверка статуса не удалась (failed)" error badge.
+ *
+ * The Connect/Disconnect actions and the status probe all reference
+ * `${configPath}`, the NAME of the artifact widget below them. At run time
+ * the runner routes the artifact's current value through
+ * `RunOptions.variableValues`, and the widget layer synthesizes a
+ * `VariableSpec` from the artifact so an empty/dropped value degrades to the
+ * artifact's default instead of failing.
  *
  * The artifact's own `value` is therefore an EMPTY DEFAULT — never
  * `"${configPath}"`, which would be a self-reference that renders the literal
  * template into the script.
  *
- * The status widget uses `matchMode: "contains"` against the raw, multi-line
- * `sessions-list` output — no script-side grep/cleanup needed. Real output is
- * a block like:
- *   ...
- *         Status: Connection, Client connected
- *   ...
- * so a `contains` rule for the literal string "Client connected" matches
- * regardless of what surrounds it on that line. `sessions-list` itself exits
- * 0 and prints "No sessions available" on an empty session list, so no
- * `|| echo ...` fallback is needed (the old fallback was papering over the
- * wrong subcommand name, not a real gap); `2>&1` folds stderr into the probed
- * text so error output (e.g. `openvpn3` missing) is visible/matchable too.
+ * The status mapping uses `matchMode: "contains"` against the script's own
+ * emitted lines — no further script-side cleanup needed (the exact-equality
+ * work happens inside the probe script itself, described above; the mapping
+ * rules only ever see the WINNING line, never raw `sessions-list` text).
  */
 function buildOpenvpn3Seed(): NewMiniAppInput {
+  const statusMapping: StatusMapping = {
+    mode: "mapped",
+    rules: [
+      {
+        match: "Client connected",
+        matchMode: "contains",
+        label: "Connected",
+        color: "var(--color-success)",
+      },
+      {
+        match: "Client connecting",
+        matchMode: "contains",
+        label: "Connecting",
+        color: "var(--app-color-edit)",
+      },
+      {
+        match: "Client reconnect",
+        matchMode: "contains",
+        label: "Reconnecting",
+        color: "var(--app-color-edit)",
+      },
+      {
+        match: "Client authentication failed",
+        matchMode: "contains",
+        label: "Auth failed",
+        color: "var(--color-danger)",
+      },
+      {
+        // Emitted by the status script itself (see below) whenever no
+        // config is selected yet, or the selected config has no matching
+        // session in `sessions-list` — the ordinary "not connected" state,
+        // not a probe failure. Matched LAST so a real openvpn3 status line
+        // that happens to also contain this word (unlikely, but the rule
+        // order is the tie-breaker) never shadows it.
+        match: "Disconnected",
+        matchMode: "contains",
+        label: "Disconnected",
+        color: "var(--color-text-muted)",
+      },
+    ],
+  };
+  // The status probe openvpn3 CLI invocation shared by the status widget and
+  // the toggle's own status source (see the seed doc comment above for the
+  // full rationale). Exits early with "Disconnected" when no config is
+  // selected; otherwise scans `sessions-list` for a session whose
+  // `Config name:` value is EXACTLY `${configPath}` (never a substring
+  // match) and prints that session's `Status:` line, falling back to
+  // "Disconnected" when none matches. Always echoes something and exits 0.
+  const statusScript =
+    'cfg="${configPath}"; [ -z "$cfg" ] && { echo "Disconnected"; exit 0; }; ' +
+    'result="$(openvpn3 sessions-list 2>&1 | awk -v want="$cfg" \'' +
+    '/Config name:/{line=$0; sub(/^[^:]*:[ \\t]*/,"",line); ' +
+    'sub(/[ \\t]*\\(Config not available\\)[ \\t]*$/,"",line); ' +
+    'sub(/[ \\t]+$/,"",line); matched=(line==want)?1:0; next} ' +
+    'matched && /Status:/{print; matched=0}\')"; ' +
+    '[ -z "$result" ] && echo "Disconnected" || echo "$result"';
   const widgets: MiniAppWidget[] = [
     {
       id: makeWidgetId(),
       kind: "status",
       layout: { x: 16, y: 16, w: 268, h: 72 },
       label: "Connection Status",
-      source: {
-        kind: "inline",
-        script: "openvpn3 sessions-list 2>&1",
-      },
+      source: { kind: "inline", script: statusScript },
       intervalMs: 10000,
-      mapping: {
-        mode: "mapped",
-        rules: [
-          {
-            match: "Client connected",
-            matchMode: "contains",
-            label: "Connected",
-            color: "var(--color-success)",
-          },
-          {
-            match: "Client connecting",
-            matchMode: "contains",
-            label: "Connecting",
-            color: "var(--app-color-edit)",
-          },
-          {
-            match: "Client reconnect",
-            matchMode: "contains",
-            label: "Reconnecting",
-            color: "var(--app-color-edit)",
-          },
-          {
-            match: "Client authentication failed",
-            matchMode: "contains",
-            label: "Auth failed",
-            color: "var(--color-danger)",
-          },
-          {
-            match: "No sessions available",
-            matchMode: "contains",
-            label: "Disconnected",
-            color: "var(--color-danger)",
-          },
-        ],
-      },
+      mapping: statusMapping,
     },
     {
       id: makeWidgetId(),
-      kind: "button",
-      // h:56 (not the old 44) — the editor's per-kind minimum for button/
-      // toggle widgets; a `.btn` inside the card's `.miniapp-widget--button`
-      // padding needs at least ~48-56px to avoid visually clipping against
-      // the card's rounded corners (see `MIN_WIDGET_H_BY_KIND` in
+      kind: "toggle",
+      // h:56 — the editor's per-kind minimum for button/toggle widgets; a
+      // `.toggle-switch` inside the card's `.miniapp-widget--button` padding
+      // needs at least ~48-56px to avoid visually clipping against the
+      // card's rounded corners (see `MIN_WIDGET_H_BY_KIND` in
       // `MiniAppEditor.tsx`).
-      layout: { x: 16, y: 100, w: 128, h: 56 },
-      label: "Connect",
-      icon: "⚡",
-      action: {
+      layout: { x: 16, y: 100, w: 268, h: 56 },
+      label: "VPN Connection",
+      onAction: {
         kind: "inline",
         name: "Connect",
         script: 'openvpn3 session-start --config "${configPath}"',
       },
-    },
-    {
-      id: makeWidgetId(),
-      kind: "button",
-      layout: { x: 152, y: 96, w: 136, h: 56 },
-      label: "Disconnect",
-      icon: "❌",
-      action: {
+      offAction: {
         kind: "inline",
         name: "Disconnect",
-        // Derives the session's config NAME from the config PATH artifact
-        // (basename without the `.ovpn` extension) — see the seed doc comment
-        // above for why this is preferred over a second, hand-typed artifact.
-        script:
-          'openvpn3 session-manage --config "$(basename "${configPath}" .ovpn)" --disconnect',
+        // Passes `${configPath}` VERBATIM — `session-manage --config`
+        // requires the EXACT string given to `session-start --config`, not
+        // a basename/profile-name derivation. See the seed doc comment above
+        // (verified live against a real openvpn3 daemon).
+        script: 'openvpn3 session-manage --config "${configPath}" --disconnect',
       },
-      style: { color: "var(--color-text-muted)", variant: "outline" },
+      status: {
+        source: { kind: "inline", script: statusScript },
+        intervalMs: 10000,
+        mapping: statusMapping,
+        onValue: "Connected",
+      },
     },
     {
       id: makeWidgetId(),
       kind: "artifact",
-      // y shifted from 156 to 168 (+12, matching the buttons' +12 height
-      // bump) to keep the same 12px gap below the now-taller button row.
       layout: { x: 16, y: 168, w: 268, h: 56 },
       name: "configPath",
       label: "Config File (.ovpn)",
@@ -174,9 +223,9 @@ function buildOpenvpn3Seed(): NewMiniAppInput {
     tags: ["network", "vpn", "seed"],
     favorite: false,
     os: ["linux"],
-    // Compact panel sized to fit the 4 widgets (status 268×72 at 16,16; two
-    // 56px-tall buttons on a row ending at x≈288,y≈152; artifact 268×56 at
-    // y=168 → bottom 224) with the same ~16px margin the panel always had.
+    // Compact panel sized to fit the 3 widgets (status 268×72 at 16,16;
+    // toggle 268×56 at y=100; artifact 268×56 at y=168 → bottom 224) with the
+    // same ~16px margin the panel always had.
     panelSize: { w: 320, h: 240 },
   };
 }

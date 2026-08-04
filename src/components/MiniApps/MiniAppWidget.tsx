@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, ReactElement } from "react";
 import { Message } from "@arco-design/web-react";
 import { useTranslation } from "react-i18next";
@@ -95,6 +95,14 @@ export interface MiniAppWidgetProps extends ArtifactContext {
    * de-duplicating/clearing finished entries, not this component.
    */
   onExecutionStarted?: (executionId: string) => void;
+  /**
+   * Force an immediate status re-probe for THIS widget, bypassing the rest of
+   * its polling interval (see `StatusPolling.refresh`). Only `toggle` widgets
+   * call it — right after an on/off action settles — so the switch's real
+   * position is confirmed at once instead of after up to a full interval.
+   * Absent in the editor preview, where nothing is polled.
+   */
+  onRefreshStatus?: () => void;
   /**
    * Whether the widget's root renders the bordered/background "card" chrome.
    * Defaults to `true` (the editor canvas's WYSIWYG preview relies on this
@@ -331,11 +339,22 @@ function ButtonWidget({
   );
 }
 
+/**
+ * How long a toggle keeps showing the position the user just asked for while
+ * waiting for the real state to catch up (see `optimisticOn` in
+ * {@link ToggleWidget}). Generous enough to cover a slow connect/disconnect
+ * plus a poll interval, short enough that a genuinely failed action visibly
+ * self-corrects rather than leaving the switch stuck in a lie.
+ */
+const OPTIMISTIC_TOGGLE_GRACE_MS = 30_000;
+
 interface ToggleWidgetProps extends ArtifactContext {
   widget: Extract<WidgetSpec, { kind: "toggle" }>;
   statusResult?: StatusResult;
   onActionComplete?: () => void;
   onExecutionStarted?: (executionId: string) => void;
+  /** Force an immediate status re-probe for this widget (see `StatusPolling`). */
+  onRefreshStatus?: () => void;
 }
 
 function ToggleWidget({
@@ -343,6 +362,7 @@ function ToggleWidget({
   statusResult,
   onActionComplete,
   onExecutionStarted,
+  onRefreshStatus,
   artifactNames,
   valuesMap,
   executionValues,
@@ -357,21 +377,84 @@ function ToggleWidget({
   // accurate position is to configure `status` + `status.onValue`.
   const [localOn, setLocalOn] = useState(false);
   const [pendingAction, setPendingAction] = useState<"on" | "off" | null>(null);
+  // The position the user last ASKED for, held past the action's completion
+  // until the real state can be expected to reflect it.
+  //
+  // WHY THIS IS SEPARATE FROM `pendingAction`: `triggerCommandRun` resolves
+  // as soon as the process is SPAWNED, not when it finishes — and even after
+  // it finishes, the underlying tool (openvpn3 connecting, a service
+  // starting) needs longer still before a probe can observe the new state.
+  // Driving the switch off `pendingAction` alone therefore snapped it back to
+  // the old position the instant the spawn returned, which reads as "my click
+  // was undone".
+  const [optimisticOn, setOptimisticOn] = useState<boolean | null>(null);
+  // The `statusResult` object that was on screen when the CURRENT override
+  // was created. Any probe result with this exact identity predates the
+  // action and therefore cannot speak to its outcome — see the confirm
+  // effect below.
+  const overrideBaselineRef = useRef<StatusResult | undefined>(undefined);
+  // Monotonic id bumped on every toggle click. The grace-window effect keys
+  // on this rather than on `optimisticOn`, so the deadline restarts for EVERY
+  // click — including one that re-requests the position already displayed
+  // (e.g. re-issuing "on" after a failed attempt), where `optimisticOn` alone
+  // would not change and would silently leave the previous, nearly-expired
+  // deadline in force.
+  const [overrideAttempt, setOverrideAttempt] = useState(0);
 
   const statusBacked = widget.status !== undefined;
   // Value-based derivation: ON iff the probe's value matches `onValue`
   // (case-insensitive). Falls back to the legacy "probe succeeded" heuristic
   // when no `onValue` is configured — reported via `matched: false`.
   const derived = resolveToggleOnState(statusResult, widget.status?.onValue);
-  // While a click is in flight, optimistically show the target position so
-  // the switch feels responsive before the next poll lands.
-  const isOn = statusBacked
-    ? pendingAction === "on"
-      ? true
-      : pendingAction === "off"
-        ? false
-        : derived.isOn
-    : localOn;
+
+  // Retire the optimistic override as soon as a FRESH settled probe AGREES
+  // with it: the real state has caught up, so the override is redundant and
+  // the poller is authoritative again.
+  //
+  // "FRESH" is load-bearing, not a detail. Comparing values alone cannot tell
+  // "the probe confirms my action" from "the probe happens to match because
+  // it ran BEFORE my action". That distinction is invisible when toggling
+  // back mid-transition: with real state OFF, clicking ON then immediately
+  // OFF again leaves the still-stale "off" probe coincidentally matching the
+  // second click's target, which would end the transition instantly —
+  // dropping the spinner and trusting a reading that predates the action.
+  // Requiring a probe result whose identity differs from the one captured at
+  // click time closes that hole: only a genuinely new poll can confirm.
+  //
+  // A DISAGREEING probe is deliberately NOT a clear signal on its own — it is
+  // the expected reading for the whole window between "the action was issued"
+  // and "the tool finished acting". Letting disagreement clear the override
+  // would snap the switch back almost every time. The bounded fallback below
+  // is what stops this from ever lying indefinitely.
+  const probeSettled =
+    statusResult !== undefined && statusResult.state !== "loading";
+  useEffect(() => {
+    if (!probeSettled || optimisticOn === null) return;
+    if (statusResult === overrideBaselineRef.current) return;
+    if (derived.isOn === optimisticOn) setOptimisticOn(null);
+  }, [probeSettled, derived.isOn, optimisticOn, statusResult]);
+
+  // Bounded fallback: if the real state has NOT caught up within this window,
+  // drop the override and show what the probe actually reports. This is what
+  // makes a failed/ineffective action self-correct — without it, an override
+  // that is never confirmed would display a permanent lie. Re-armed on every
+  // new override (each click restarts the grace period).
+  useEffect(() => {
+    if (optimisticOn === null) return;
+    const handle = setTimeout(
+      () => setOptimisticOn(null),
+      OPTIMISTIC_TOGGLE_GRACE_MS,
+    );
+    return () => clearTimeout(handle);
+    // `overrideAttempt` (not `optimisticOn`) is what guarantees a fresh
+    // deadline per click — see its declaration. `optimisticOn` is still a dep
+    // so clearing the override tears the timer down.
+  }, [optimisticOn, overrideAttempt]);
+
+  // Displayed position. The optimistic value wins for a status-backed toggle
+  // while it is set, so the switch flips the moment it is clicked and stays
+  // there until the real state catches up (or the grace window expires).
+  const isOn = statusBacked ? (optimisticOn ?? derived.isOn) : localOn;
 
   // The position is "unverified" whenever nothing authoritative backs it:
   // no status source at all, or a status source with no `onValue` mapping.
@@ -397,7 +480,18 @@ function ToggleWidget({
     if (pendingAction !== null || isBroken) return;
     const action = target === "on" ? widget.onAction : widget.offAction;
     setPendingAction(target);
-    if (!statusBacked) {
+    // Flip the visible position IMMEDIATELY — before any IPC — so the switch
+    // responds to the click at once. For a status-backed toggle this override
+    // outlives the spawn and is retired only by a settled probe (see
+    // `optimisticOn`).
+    if (statusBacked) {
+      // Pin the currently-displayed probe as this override's baseline, so a
+      // result that predates the action can never be mistaken for its
+      // confirmation (matters when re-toggling mid-transition).
+      overrideBaselineRef.current = statusResult;
+      setOptimisticOn(target === "on");
+      setOverrideAttempt((n) => n + 1);
+    } else {
       setLocalOn(target === "on");
     }
     void (async (): Promise<void> => {
@@ -413,6 +507,10 @@ function ToggleWidget({
         );
       } finally {
         setPendingAction(null);
+        // Re-probe at once rather than waiting out the remaining interval, so
+        // the optimistic position is confirmed (or corrected) as soon as the
+        // action's effect is observable.
+        onRefreshStatus?.();
       }
     })();
   };
@@ -421,12 +519,40 @@ function ToggleWidget({
     runToggle(next ? "on" : "off");
   };
 
-  const statusBadge =
-    statusBacked && statusResult ? (
-      <span className="miniapp-widget__status-inline">
-        <StatusBadge statusResult={statusResult} />
+  // The badge shows the real polled status, REPLACED by a spinner for the
+  // whole TRANSITION — from the click until the probe confirms the new state
+  // (or the grace window expires), i.e. exactly while `optimisticOn` is set.
+  //
+  // It is deliberately NOT keyed on `pendingAction`: that only covers
+  // `triggerCommandRun`, which resolves the instant the process is SPAWNED
+  // (milliseconds), so the spinner flashed too briefly to ever be seen while
+  // the badge underneath still showed the stale pre-click status for seconds.
+  // `optimisticOn` spans the real "we asked, reality hasn't caught up yet"
+  // window, which is precisely when a loader is meaningful.
+  //
+  // A routine background re-poll never renders one (the poller keeps
+  // reporting the last settled result instead of a `loading` flash; see
+  // `miniappStatusPoller`), so the only spinner a user ever sees on a toggle
+  // is one their own click caused.
+  const isTransitioning = statusBacked && optimisticOn !== null;
+  const statusBadge = isTransitioning ? (
+    <span className="miniapp-widget__status-inline">
+      <span className="miniapp-widget__badge miniapp-widget__badge--loading">
+        <SpinnerIcon />
+        <span>
+          {t(
+            optimisticOn
+              ? "miniapps.runner.toggleTurningOn"
+              : "miniapps.runner.toggleTurningOff",
+          )}
+        </span>
       </span>
-    ) : null;
+    </span>
+  ) : statusBacked && statusResult ? (
+    <span className="miniapp-widget__status-inline">
+      <StatusBadge statusResult={statusResult} />
+    </span>
+  ) : null;
 
   return (
     <div className="miniapp-widget__toggle">
@@ -434,12 +560,15 @@ function ToggleWidget({
         checked={isOn}
         onChange={handleSwitchChange}
         ariaLabel={resolvedLabel}
+        // Only the actual spawn blocks input — the switch stays usable during
+        // the (much longer) confirmation window so the user can immediately
+        // toggle back if they change their mind.
         disabled={pendingAction !== null || isBroken}
         color={widget.style?.color}
         variant={widget.style?.variant}
       />
       <span className="miniapp-widget__label">{resolvedLabel}</span>
-      {isUnverified && !isBroken ? (
+      {isUnverified && !isBroken && !isTransitioning ? (
         <span
           className="miniapp-widget__unverified"
           title={t("miniapps.runner.toggleUnverifiedHint")}
@@ -466,17 +595,17 @@ interface StatusBadgeProps {
  * a translation KEY + params — resolved HERE. The raw backend text stays in
  * `detail` and is surfaced only as a `title` tooltip, never as the user's
  * message.
+ *
+ * NOTE: `loading` renders the SAME neutral placeholder as `idle`, NOT a
+ * spinner. A spinner here would only ever appear for a widget's first probe
+ * (the poller suppresses `loading` on every subsequent re-poll, keeping the
+ * last settled result instead), which made it a brief, purposeless flash on
+ * panel open. The only spinner in the mini-app runtime is the one a toggle
+ * shows while the USER'S OWN on/off action is in flight — see `ToggleWidget`.
  */
 function StatusBadge({ statusResult }: StatusBadgeProps): ReactElement {
   const { t } = useTranslation();
   switch (statusResult.state) {
-    case "loading":
-      return (
-        <span className="miniapp-widget__badge miniapp-widget__badge--loading">
-          <SpinnerIcon />
-          <span>…</span>
-        </span>
-      );
     case "error":
       return (
         <span
@@ -515,7 +644,10 @@ function StatusBadge({ statusResult }: StatusBadgeProps): ReactElement {
           </span>
         </span>
       );
+    // `loading` deliberately shares the neutral `idle` placeholder rather
+    // than rendering a spinner — see this function's doc comment.
     case "idle":
+    case "loading":
     default:
       return (
         <span className="miniapp-widget__badge miniapp-widget__badge--idle">
@@ -809,6 +941,7 @@ export function MiniAppWidget({
   statusResult,
   onActionComplete,
   onExecutionStarted,
+  onRefreshStatus,
   artifactValues,
   onArtifactChange,
   artifactNames,
@@ -850,6 +983,7 @@ export function MiniAppWidget({
           statusResult={statusResult}
           onActionComplete={onActionComplete}
           onExecutionStarted={onExecutionStarted}
+          onRefreshStatus={onRefreshStatus}
           {...sharedContext}
         />
       );

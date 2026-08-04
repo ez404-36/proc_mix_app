@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "miniapp",
-  "description": "Capability for standalone Mini-App runner windows (`miniapp-<id>`, one per running mini-app — glob-matched since any number can be open at once). Grants core IPC (every app-defined command — execute_command, save_miniapp, run_miniapp_status_probe, etc. — needs no separate per-command entry, same as the main window and the quick-prompt dialog) plus the window controls a user-closable/minimizable runner window needs: close, minimize/unminimize, is-minimized, focus, and start-dragging. `allow-destroy` is required too — the JS SDK's `onCloseRequested` wrapper calls the window's own `destroy()` internally (a separate IPC command from `close()`) whenever the handler does not call `event.preventDefault()`, so the close-without-confirmation path needs it even though this component's own code never calls `.destroy()` directly. Does NOT get the main window's plugin permissions (updater, global-shortcut, autostart, window-state, notification, etc.) — a mini-app window is a lightweight satellite, not a second main window.",
+  "description": "Capability for standalone Mini-App runner windows (`miniapp-<id>`, one per running mini-app — glob-matched since any number can be open at once). Grants core IPC (every app-defined command — execute_command, save_miniapp, run_miniapp_status_probe, etc. — needs no separate per-command entry, same as the main window and the quick-prompt dialog) plus the window controls a user-closable/minimizable runner window needs: close, minimize/unminimize, is-minimized, focus, and start-dragging. `allow-destroy` is required too — the JS SDK's `onCloseRequested` wrapper calls the window's own `destroy()` internally (a separate IPC command from `close()`) whenever the handler does not call `event.preventDefault()`, so the close-without-confirmation path needs it even though this component's own code never calls `.destroy()` directly. Does NOT get the main window's plugin permissions (updater, global-shortcut, autostart, window-state, notify, etc.) — a mini-app window is a lightweight satellite, not a second main window. `notification:allow-is-permission-granted` is the one narrow exception: `tauri-plugin-notification`'s `js_init_script` runs in EVERY webview unconditionally (there is no per-window opt-out) and eagerly self-checks permission via IPC with no `.catch()`; without this grant that call is denied and surfaces as an unhandled promise rejection in the console on every mini-app window open. It only permits READING the current permission state — actually sending a notification (`notification:allow-notify`) or requesting permission remain denied, so a mini-app window still cannot raise OS notifications.",
   "windows": ["miniapp-*"],
   "permissions": [
     "core:default",
@@ -12,6 +12,7 @@
     "core:window:allow-is-minimized",
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
-    "opener:default"
+    "opener:default",
+    "notification:allow-is-permission-granted"
   ]
 }

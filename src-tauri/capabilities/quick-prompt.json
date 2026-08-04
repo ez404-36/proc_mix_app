@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "quick-prompt",
-  "description": "Capability for the standalone quick-launch prompt dialog window (v0.12.0). Deliberately minimal: it only needs core IPC (to call the app-defined get/submit/cancel quick-prompt commands), the ability to close/focus itself, and start-dragging. It does NOT get the main window's plugin permissions (updater, global-shortcut, autostart, window-state, notification, etc.).",
+  "description": "Capability for the standalone quick-launch prompt dialog window (v0.12.0). Deliberately minimal: it only needs core IPC (to call the app-defined get/submit/cancel quick-prompt commands), the ability to close/focus itself, and start-dragging. It does NOT get the main window's plugin permissions (updater, global-shortcut, autostart, window-state, notify, etc.). `notification:allow-is-permission-granted` is the one narrow exception — see `capabilities/miniapp.json` for why: `tauri-plugin-notification`'s `js_init_script` runs in EVERY webview unconditionally and self-checks permission via IPC with no `.catch()`, so without this grant it surfaces as an unhandled promise rejection on every quick-prompt open. It only permits READING the current permission state — sending a notification remains denied.",
   "windows": ["quick-prompt"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
     "core:window:allow-set-focus",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "notification:allow-is-permission-granted"
   ]
 }
