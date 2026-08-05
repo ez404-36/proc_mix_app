@@ -1,12 +1,16 @@
 import type { ReactElement } from "react";
 
 /**
- * Rounded module/block glyph for the Plugins nav item — drawn with
- * `currentColor` so the surrounding sidebar button controls the hue. Kept
- * intentionally simple (no puzzle-piece notches) since the plugin system
- * itself is scaffolding-only (see `docs/ideas/plugin-system.md`). Replaces
- * the legacy `⧉` Unicode glyph (see docs/ui-conventions.md Navigation
- * section).
+ * Three-modules-plus-one glyph for the Plugins nav item — drawn with
+ * `currentColor` so the surrounding sidebar button controls the hue. Three
+ * equal-size squares fill the top-left, bottom-left, and bottom-right
+ * corners (the "core" module group, an L-shape); a fourth square — the SAME
+ * size as the other three — sits detached in the top-right corner with a
+ * visible gap, reading as a plug-in/extension module being
+ * attached/detached from the group. Matches the pre-migration Unicode
+ * glyph's composition even though the plugin system itself is
+ * scaffolding-only (see `docs/ideas/plugin-system.md`). Replaces the legacy
+ * `⧉` Unicode glyph (see docs/ui-conventions.md Navigation section).
  */
 export function PluginsIcon(): ReactElement {
   return (
@@ -19,8 +23,10 @@ export function PluginsIcon(): ReactElement {
       aria-hidden="true"
       focusable="false"
     >
-      <rect x="3" y="3" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.3" />
-      <circle cx="8" cy="8" r="1.8" fill="currentColor" />
+      <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="10" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
     </svg>
   );
 }
