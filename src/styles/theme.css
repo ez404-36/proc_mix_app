@@ -10073,64 +10073,180 @@ body.is-editor-fullscreen .output-panel {
   flex-shrink: 0;
 }
 
-/* ---- Mini-App active processes panel ------------------------------------- */
-/* Lists every OS process the mini-app currently has in flight (one row per
-   concurrently-running widget action — a mini-app can spawn several at once).
-   Sits below the widget panel in `MiniAppRunner`; renders nothing when
-   nothing is running (see the component's early-return). */
-.miniapp-processes {
-  margin-top: 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
-  overflow: hidden;
+/* ---- Mini-App runner tabs (Interface / Console / Processes) -------------- */
+/* Permanent 3-tab layout under the runner's header (`MiniAppRunner` /
+   `MiniAppRunnerTabs`), replacing the earlier collapsible bottom-docked
+   console. The tab strip reuses the underline-tab pattern established by
+   `.library-tabs`/`.command-form__tabs` (own family, not literally shared,
+   since this lives in a different component tree). The Console/Processes
+   tab BODIES use the shared `--console-*` token family (see "Design tokens"
+   in docs/ui-conventions.md) so they theme identically to OutputPanel. */
+.miniapp-runner__tabs-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.miniapp-processes__header {
+.miniapp-runner__tabs {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
+  gap: 4px;
+  margin-top: 16px;
+  padding: 0 4px;
   border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 
-.miniapp-processes__title {
-  font-size: 13px;
+/* The runner header uses the shared `.view-header` (24px bottom margin,
+   tuned for the taller, action-heavy headers of other views). Stacked with
+   the tab strip's own 16px top margin that reads as ~40px of dead space
+   above the tabs. Pull the header's margin in specifically when it's
+   immediately followed by the tab strip, rather than touching
+   `.view-header` globally (every other view still gets the full 24px). */
+.view-header:has(+ .miniapp-runner__tabs-wrap) {
+  margin-bottom: 8px;
+}
+
+.miniapp-runner__tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 14px;
   font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.miniapp-runner__tab:hover {
   color: var(--color-text);
 }
 
-.miniapp-processes__count {
-  padding: 1px 7px;
+.miniapp-runner__tab.is-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+/* Live running-count badge on the Processes tab. Only rendered while
+   `runningCount > 0` — hidden entirely at zero rather than showing "0". */
+.miniapp-runner__tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   border-radius: 999px;
-  background: var(--color-bg);
-  color: var(--color-text-muted);
-  font-size: 12px;
-  font-weight: 600;
+  background: var(--color-accent);
+  color: var(--color-text-inverse, #fff);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Console tab body: one continuous, chronologically-merged log across every
+   tracked run — NOT split by a chip/tab-switcher. `position: relative` is the
+   anchor for `.miniapp-console__clear`, pinned top-right INSIDE the body
+   rather than living in the tab strip (see the button itself for why). */
+.miniapp-console {
+  position: relative;
+  margin-top: 12px;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+  background: var(--console-bg);
+  overflow: hidden;
+}
+
+.miniapp-console__body {
+  overflow: auto;
+  max-height: 480px;
+  padding: 10px 40px 10px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: var(--console-bg);
+}
+
+/* Pinned top-right, floating over the scrolling log — reads as a control on
+   the console's content, not a fourth item in the Interface/Console/Processes
+   tab strip (which sits at a fixed height regardless of which tab is open). */
+.miniapp-console__clear {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--console-border);
+  background: var(--console-header-bg, var(--console-bg));
+  color: var(--console-text-muted);
+  flex-shrink: 0;
+}
+
+.miniapp-console__clear:hover {
+  color: var(--console-text);
+  border-color: var(--console-text-muted);
+}
+
+/* One run's header + output lines. Separated from the next run's block by
+   `.output-line--meta`'s own top border/margin (see the shared workflow
+   step-header styling), so no extra spacing rule is needed here. */
+.miniapp-console__run-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.miniapp-console__placeholder {
+  color: var(--console-placeholder);
+  font-style: italic;
+}
+
+/* Processes tab body: only running/pending runs, each with PID + Cancel.
+   Functionally the old `MiniAppActiveProcesses` component's content. */
+.miniapp-processes {
+  margin-top: 12px;
 }
 
 .miniapp-processes__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: flex;
   flex-direction: column;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--console-bg);
 }
 
 .miniapp-processes__item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 14px;
+  padding: 10px 14px;
 }
 
 .miniapp-processes__item + .miniapp-processes__item {
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--console-border);
 }
 
 .miniapp-processes__spinner {
-  display: flex;
-  color: var(--app-color-run);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--console-status-running);
+  animation: output-panel-spin 0.9s linear infinite;
 }
 
 .miniapp-processes__label {
@@ -10140,14 +10256,14 @@ body.is-editor-fullscreen .output-panel {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
-  color: var(--color-text);
+  color: var(--console-text);
 }
 
 .miniapp-processes__pid {
   flex-shrink: 0;
-  font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--console-text-muted);
 }
 
 .miniapp-processes__cancel {

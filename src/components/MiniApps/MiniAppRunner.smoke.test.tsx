@@ -66,6 +66,7 @@ import { useUIStore } from "../../stores/uiStore";
 import type { MiniApp, MiniAppWidget } from "../../types";
 import { cancelExecution } from "../../utils/executor";
 import { listMiniAppsFromDb } from "../../utils/miniappRepository";
+import { ContextMenuProvider } from "../ContextMenu";
 import { MiniAppRunner } from "./MiniAppRunner";
 
 const DATA_URI_ICON =
@@ -142,13 +143,34 @@ function stageMiniApp(miniapp: MiniApp | null): void {
   });
 }
 
-/** Render the runner and flush the post-mount `hydrateFromDb` effect. */
+/** Tracks the previous `renderRunner()` call's unmount fn, so re-calling it
+ *  (e.g. to simulate opening a different mini-app in the SAME window) tears
+ *  down the prior tree first rather than leaving two runner trees mounted
+ *  side by side — which would make any `screen.getByRole`/`getByText` query
+ *  ambiguous. */
+let lastRunnerUnmount: (() => void) | null = null;
+
+/** Render the runner and flush the post-mount `hydrateFromDb` effect.
+ *  Wrapped in `ContextMenuProvider` — the Console tab's run body attaches a
+ *  right-click copy menu via `useContextMenu`, mirroring the real app's
+ *  `MiniAppWindowApp`. */
 async function renderRunner(): Promise<void> {
+  if (lastRunnerUnmount !== null) {
+    const unmount = lastRunnerUnmount;
+    await act(async () => {
+      unmount();
+    });
+  }
   vi.mocked(listMiniAppsFromDb).mockResolvedValue(
     useMiniAppStore.getState().miniapps,
   );
   await act(async () => {
-    render(<MiniAppRunner />);
+    const result = render(
+      <ContextMenuProvider>
+        <MiniAppRunner />
+      </ContextMenuProvider>,
+    );
+    lastRunnerUnmount = result.unmount;
   });
 }
 
@@ -279,7 +301,11 @@ describe("MiniAppRunner — standalone window mode", () => {
     );
 
     await act(async () => {
-      render(<MiniAppRunner miniappId="ma-1" standalone />);
+      render(
+        <ContextMenuProvider>
+          <MiniAppRunner miniappId="ma-1" standalone />
+        </ContextMenuProvider>,
+      );
     });
 
     expect(screen.getByText("VPN Panel")).toBeTruthy();
@@ -297,7 +323,11 @@ describe("MiniAppRunner — standalone window mode", () => {
     );
 
     await act(async () => {
-      render(<MiniAppRunner miniappId="ma-1" standalone />);
+      render(
+        <ContextMenuProvider>
+          <MiniAppRunner miniappId="ma-1" standalone />
+        </ContextMenuProvider>,
+      );
     });
 
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
@@ -709,7 +739,11 @@ describe("MiniAppRunner — persisted artifact write-back", () => {
     );
     let unmount: () => void = () => {};
     await act(async () => {
-      const result = render(<MiniAppRunner />);
+      const result = render(
+        <ContextMenuProvider>
+          <MiniAppRunner />
+        </ContextMenuProvider>,
+      );
       unmount = result.unmount;
     });
 
@@ -878,54 +912,121 @@ describe("MiniAppRunner — hydration", () => {
   });
 });
 
-describe("MiniAppRunner — active processes panel", () => {
-  it("renders nothing when nothing is running", async () => {
+describe("MiniAppRunner — tabs", () => {
+  it("shows the Interface tab by default, with Console/Processes hidden", async () => {
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
-    expect(document.querySelector(".miniapp-processes")).toBeNull();
+    expect(
+      screen.getByRole("tab", { name: "Interface" }).getAttribute(
+        "aria-selected",
+      ),
+    ).toBe("true");
+    expect(document.getElementById("miniapp-runner-panel-interface")).not.toHaveProperty(
+      "hidden",
+      true,
+    );
+    expect(document.getElementById("miniapp-runner-panel-console")).toHaveProperty(
+      "hidden",
+      true,
+    );
+    expect(document.getElementById("miniapp-runner-panel-processes")).toHaveProperty(
+      "hidden",
+      true,
+    );
   });
 
-  it("shows a row with the widget's label after clicking a button", async () => {
+  it("switches to the Console tab on click, without auto-switching on a widget run", async () => {
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
+    // Starting a run must NOT auto-switch away from Interface.
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
-    });
-
-    const panel = document.querySelector(".miniapp-processes");
-    expect(panel).not.toBeNull();
-    expect(within(panel as HTMLElement).getByText("Connect")).toBeTruthy();
-  });
-
-  it("shows the PID once the execution store reports one", async () => {
-    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
-    await renderRunner();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
-    });
-
-    // Before the `started` event lands, the row shows a pending placeholder.
-    expect(screen.getByText("starting…")).toBeTruthy();
-
-    act(() => {
       useExecutionStore
         .getState()
         .startExecution("exec-1", undefined, "Connect");
-      useExecutionStore.setState((s) => ({
-        executions: {
-          ...s.executions,
-          "exec-1": { ...s.executions["exec-1"], pid: 4242 },
-        },
-      }));
+    });
+    expect(
+      screen.getByRole("tab", { name: "Interface" }).getAttribute(
+        "aria-selected",
+      ),
+    ).toBe("true");
+
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Console" }));
     });
 
-    expect(screen.getByText("PID 4242")).toBeTruthy();
+    expect(
+      screen.getByRole("tab", { name: "Console" }).getAttribute(
+        "aria-selected",
+      ),
+    ).toBe("true");
+    expect(document.getElementById("miniapp-runner-panel-console")).not.toHaveProperty(
+      "hidden",
+      true,
+    );
   });
 
-  it("tracks MULTIPLE concurrent processes — one row per running widget", async () => {
+  it("resets to the Interface tab when switching to a different mini-app", async () => {
+    stageMiniApp(makeMiniApp({ id: "ma-1", widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Console" }));
+    });
+    expect(
+      screen.getByRole("tab", { name: "Console" }).getAttribute(
+        "aria-selected",
+      ),
+    ).toBe("true");
+
+    stageMiniApp(makeMiniApp({ id: "ma-2", widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    expect(
+      screen.getByRole("tab", { name: "Interface" }).getAttribute(
+        "aria-selected",
+      ),
+    ).toBe("true");
+  });
+});
+
+describe("MiniAppRunner — Console tab", () => {
+  async function openConsoleTab(): Promise<void> {
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Console" }));
+    });
+  }
+
+  it("shows the empty state when nothing has run yet", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+    await openConsoleTab();
+
+    expect(screen.getByText("No output yet.")).toBeTruthy();
+  });
+
+  it("shows a run block with the widget's label once the execution is registered", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+    });
+    await openConsoleTab();
+
+    expect(
+      within(
+        document.getElementById("miniapp-runner-panel-console") as HTMLElement,
+      ).getByText(/Connect/),
+    ).toBeTruthy();
+  });
+
+  it("merges MULTIPLE concurrent runs into one chronological log, not a chip switcher", async () => {
     vi.mocked(triggerCommandRun)
       .mockResolvedValueOnce("exec-a")
       .mockResolvedValueOnce("exec-b");
@@ -945,30 +1046,44 @@ describe("MiniAppRunner — active processes panel", () => {
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Connect A/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-a", undefined, "Connect A");
     });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Connect B/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-b", undefined, "Connect B");
     });
+    await openConsoleTab();
 
-    const panel = document.querySelector(".miniapp-processes") as HTMLElement;
-    expect(panel.querySelectorAll(".miniapp-processes__item")).toHaveLength(2);
-    expect(within(panel).getByText("Connect A")).toBeTruthy();
-    expect(within(panel).getByText("Connect B")).toBeTruthy();
+    const panel = document.getElementById(
+      "miniapp-runner-panel-console",
+    ) as HTMLElement;
+    // No chip-switcher element — both runs' blocks render together.
+    expect(panel.querySelectorAll(".miniapp-console__run-block")).toHaveLength(
+      2,
+    );
+    expect(within(panel).getByText(/Connect A/)).toBeTruthy();
+    expect(within(panel).getByText(/Connect B/)).toBeTruthy();
   });
 
-  it("removes the row once the execution reaches a terminal status", async () => {
+  it("keeps a run visible after it reaches a terminal status", async () => {
+    // Regression test: a run that finishes (e.g. a fast `echo`/`uname`
+    // script like the "System details" seed button) must stay visible in
+    // the Console tab — not vanish the instant it completes.
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
-    });
-    expect(document.querySelector(".miniapp-processes")).not.toBeNull();
-
-    act(() => {
       useExecutionStore
         .getState()
         .startExecution("exec-1", undefined, "Connect");
+    });
+
+    act(() => {
       useExecutionStore.getState().finishExecution("exec-1", {
         status: "success",
         exitCode: 0,
@@ -978,39 +1093,387 @@ describe("MiniAppRunner — active processes panel", () => {
         timedOut: false,
       });
     });
+    await openConsoleTab();
 
-    expect(document.querySelector(".miniapp-processes")).toBeNull();
+    expect(
+      within(
+        document.getElementById("miniapp-runner-panel-console") as HTMLElement,
+      ).getByText(/Connect/),
+    ).toBeTruthy();
   });
 
-  it("Cancel invokes cancelExecution with the row's execution id", async () => {
+  it("a run that finishes within the same tick it started is still shown afterward", async () => {
+    // Reproduces the exact fast-finish scenario: `started` AND `finished`
+    // land before there is ever a render in between (no separate `act()`
+    // boundary for the terminal status) — the bug that made the OLD
+    // collapsible console flash open and immediately close.
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+      useExecutionStore.getState().finishExecution("exec-1", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
     });
+    await openConsoleTab();
+
+    expect(
+      within(
+        document.getElementById("miniapp-runner-panel-console") as HTMLElement,
+      ).getByText(/Connect/),
+    ).toBeTruthy();
+  });
+
+  it("Clear removes a finished run from the Console tab", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+      useExecutionStore.getState().finishExecution("exec-1", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+    });
+    await openConsoleTab();
+    expect(
+      within(
+        document.getElementById("miniapp-runner-panel-console") as HTMLElement,
+      ).getByText(/Connect/),
+    ).toBeTruthy();
 
     act(() => {
-      fireEvent.click(
-        screen.getByRole("button", { name: "Cancel" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    });
+
+    expect(screen.getByText("No output yet.")).toBeTruthy();
+  });
+
+  it("Clear is only available on the Console tab", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: /Processes/ }));
+    });
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Console" }));
+    });
+    expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
+  });
+});
+
+describe("MiniAppRunner — Processes tab", () => {
+  async function openProcessesTab(): Promise<void> {
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: /Processes/ }));
+    });
+  }
+
+  it("shows the empty state when nothing is running", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+    await openProcessesTab();
+
+    expect(screen.getByText("No active processes.")).toBeTruthy();
+  });
+
+  it("lists a running execution with its widget label and a Cancel button", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+    });
+    await openProcessesTab();
+
+    const panel = document.getElementById(
+      "miniapp-runner-panel-processes",
+    ) as HTMLElement;
+    expect(within(panel).getByText("Connect")).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("excludes a finished run — only running/pending appear", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+      useExecutionStore.getState().finishExecution("exec-1", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+    });
+    await openProcessesTab();
+
+    expect(screen.getByText("No active processes.")).toBeTruthy();
+  });
+
+  it("Cancel invokes cancelExecution with the running execution's id", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+    });
+    await openProcessesTab();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     });
 
     expect(cancelExecution).toHaveBeenCalledWith("exec-1");
   });
 
-  it("clears tracked processes when switching to a different mini-app", async () => {
+  it("shows a live running-count badge on the Processes tab, hidden at zero", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    expect(
+      within(screen.getByRole("tab", { name: /Processes/ })).queryByText("1"),
+    ).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+    });
+
+    expect(
+      within(screen.getByRole("tab", { name: /Processes/ })).getByText("1"),
+    ).toBeTruthy();
+
+    act(() => {
+      useExecutionStore.getState().finishExecution("exec-1", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+    });
+
+    expect(
+      within(screen.getByRole("tab", { name: /Processes/ })).queryByText("1"),
+    ).toBeNull();
+  });
+
+  it("clears tracked runs when switching to a different mini-app", async () => {
     stageMiniApp(makeMiniApp({ id: "ma-1", widgets: [buttonWidget()] }));
     await renderRunner();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
     });
-    expect(document.querySelector(".miniapp-processes")).not.toBeNull();
+    await openProcessesTab();
+    expect(screen.queryByText("No active processes.")).toBeNull();
 
     stageMiniApp(makeMiniApp({ id: "ma-2", widgets: [buttonWidget()] }));
     await renderRunner();
+    await openProcessesTab();
 
-    expect(document.querySelector(".miniapp-processes")).toBeNull();
+    expect(screen.getByText("No active processes.")).toBeTruthy();
+  });
+
+  it("refetches live while already open: an execution store update reaches the tab without switching away and back", async () => {
+    // The widget button only exists in the DOM while Interface is the
+    // active tab (each tab body is conditionally rendered, not just
+    // CSS-hidden — see `MiniAppRunnerTabs`). So the click that STARTS the
+    // run happens on Interface, mirroring a real click; the assertion below
+    // is what actually matters here — a LATER store update (the run
+    // finishing) is reflected in the Processes tab while it stays the
+    // active tab throughout, with no tab switch in between.
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+    });
+
+    await openProcessesTab();
+
+    const panel = document.getElementById(
+      "miniapp-runner-panel-processes",
+    ) as HTMLElement;
+    expect(within(panel).getByText("Connect")).toBeTruthy();
+    expect(screen.queryByText("No active processes.")).toBeNull();
+
+    // The run finishes WHILE the Processes tab is still the active tab —
+    // no re-navigation. The list must update live.
+    act(() => {
+      useExecutionStore.getState().finishExecution("exec-1", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+    });
+
+    expect(within(panel).queryByText("Connect")).toBeNull();
+    expect(screen.getByText("No active processes.")).toBeTruthy();
+  });
+
+  it("updates the PID label live once the started event's pid arrives after the row is already showing", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      // Mirrors a real run: the frontend pre-registers the execution
+      // BEFORE the backend's `started` event (carrying the real pid)
+      // arrives — see `triggerCommandRun`'s pre-registration comment.
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+    });
+    await openProcessesTab();
+
+    const panel = document.getElementById(
+      "miniapp-runner-panel-processes",
+    ) as HTMLElement;
+    expect(within(panel).getByText("starting…")).toBeTruthy();
+
+    act(() => {
+      // The backend `started` event merging in the real pid — same
+      // idempotent `startExecution` call `useExecutionBridge` makes.
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect", undefined, undefined, undefined, undefined, undefined, undefined, undefined, 4242);
+    });
+
+    expect(within(panel).getByText("PID 4242")).toBeTruthy();
+    expect(within(panel).queryByText("starting…")).toBeNull();
+  });
+
+  it("refetches live while the tab stays open: two concurrent runs each disappear independently on finish, without reopening the tab", async () => {
+    // Both widget clicks happen on the Interface tab (the only tab that
+    // renders widget buttons — the Processes tab is a pure data view with
+    // no way to trigger a run from it). Switching to Processes afterward
+    // does NOT unmount `MiniAppRunner`'s `executionWidgets` state, so the
+    // tracked runs survive the tab switch exactly like a real session.
+    //
+    // The mock resolves a DISTINCT execution id per call (mirrors the real
+    // `triggerCommandRun`, which mints a fresh id per run) — without this
+    // both clicks would report the SAME id and the second click would
+    // silently overwrite the first in `executionWidgets`.
+    vi.mocked(triggerCommandRun)
+      .mockResolvedValueOnce("exec-1")
+      .mockResolvedValueOnce("exec-2");
+    stageMiniApp(
+      makeMiniApp({
+        widgets: [
+          buttonWidget({ id: "w-btn-1", label: "Connect" }),
+          buttonWidget({
+            id: "w-btn-2",
+            label: "Disconnect",
+            action: { kind: "inline", name: "Disconnect", script: "vpn down" },
+          }),
+        ],
+      }),
+    );
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+      fireEvent.click(screen.getByRole("button", { name: /Disconnect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-2", undefined, "Disconnect");
+    });
+
+    await openProcessesTab();
+
+    const panel = document.getElementById(
+      "miniapp-runner-panel-processes",
+    ) as HTMLElement;
+    expect(within(panel).getByText("Connect")).toBeTruthy();
+    expect(within(panel).getByText("Disconnect")).toBeTruthy();
+    expect(
+      within(screen.getByRole("tab", { name: /Processes/ })).getByText("2"),
+    ).toBeTruthy();
+
+    // Finish ONE of the two runs while still viewing the Processes tab —
+    // the list must update live (no re-navigation, no remount) and leave
+    // the still-running one untouched.
+    act(() => {
+      useExecutionStore.getState().finishExecution("exec-1", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+    });
+
+    expect(within(panel).queryByText("Connect")).toBeNull();
+    expect(within(panel).getByText("Disconnect")).toBeTruthy();
+    expect(
+      within(screen.getByRole("tab", { name: /Processes/ })).getByText("1"),
+    ).toBeTruthy();
+
+    act(() => {
+      useExecutionStore.getState().finishExecution("exec-2", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+    });
+
+    expect(within(panel).queryByText("Disconnect")).toBeNull();
+    expect(screen.getByText("No active processes.")).toBeTruthy();
+    expect(
+      within(screen.getByRole("tab", { name: /Processes/ })).queryByText("1"),
+    ).toBeNull();
   });
 });

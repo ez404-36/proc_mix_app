@@ -1616,6 +1616,10 @@ function WidgetPreview({ widget }: { widget: MiniAppWidget }): ReactElement {
         valuesMap={PREVIEW_VALUES_MAP}
         executionValues={PREVIEW_ARTIFACT_VALUES}
         artifactSpecs={PREVIEW_ARTIFACT_SPECS}
+        // The canvas preview is inert (`pointer-events: none` — see this
+        // component's own doc comment), so no action can ever fire here; an
+        // untagged execution id would be harmless even if one did.
+        miniAppId={undefined}
       />
     </span>
   );

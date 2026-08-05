@@ -16,6 +16,7 @@ import { useUIStore } from "../../stores/uiStore";
 import { getMiniAppWindowId } from "../../services/miniappWindow";
 import { cancelExecution } from "../../utils/executor";
 import { AdminPasswordPrompt } from "../AdminPasswordPrompt";
+import { ContextMenuProvider } from "../ContextMenu";
 import { RemoteHostPrompt } from "../RemoteHostPrompt/RemoteHostPrompt";
 import { SshPasswordPrompt } from "../SshPasswordPrompt/SshPasswordPrompt";
 import { VariablePrompt } from "../VariablePrompt";
@@ -50,9 +51,10 @@ const ARCO_LOCALE_MAP: Record<Language, Locale> = {
  *      (`get_miniapp_window_id`) — never a URL query param.
  *   2. Hydrates `miniappStore` + `commandStore` (widget actions may
  *      reference library commands) from SQLite.
- *   3. Wires the execution bridge so widget runs stream output/PIDs into
- *      THIS window's `executionStore` (consumed by `MiniAppActiveProcesses`
- *      inside `MiniAppRunner`).
+ *   3. Wires the execution bridge — gated to this window's OWN mini-app id
+ *      (see `useExecutionBridge`) — so widget runs stream output/PIDs into
+ *      THIS window's `executionStore` only, consumed by `MiniAppRunnerTabs`
+ *      (Console/Processes tabs) inside `MiniAppRunner`.
  *   4. Installs the `onCloseRequested` guard: if the mini-app has active
  *      processes when the user tries to close (native × / minimize is
  *      unaffected — only closing is intercepted), a confirmation dialog asks
@@ -63,9 +65,13 @@ export function MiniAppWindowApp(): ReactElement {
   const language = useUIStore((s) => s.language);
   useTheme();
   useI18nBridge();
-  useExecutionBridge();
 
   const [miniappId, setMiniappId] = useState<string | null>(null);
+  // Gate the execution-event bridge to THIS mini-app's own tagged runs (see
+  // `useExecutionBridge`'s doc comment) so a widget run's output never leaks
+  // into the main window or a DIFFERENT mini-app's own window. `null` before
+  // `miniappId` resolves is harmless — nothing has run yet.
+  useExecutionBridge(miniappId);
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   // Guards the SECOND, post-confirmation `close()` call so it isn't
@@ -148,38 +154,44 @@ export function MiniAppWindowApp(): ReactElement {
 
   return (
     <ConfigProvider locale={ARCO_LOCALE_MAP[language]}>
-      <div className="miniapp-window">
-        {resolveError !== null ? (
-          <div className="empty-state">
-            {t("miniapps.runner.windowResolveFailed", {
-              defaultValue: resolveError,
-              message: resolveError,
-            })}
-          </div>
-        ) : miniappId === null ? (
-          <div className="empty-state">{t("common.loading")}</div>
-        ) : (
-          <MiniAppRunner miniappId={miniappId} standalone />
-        )}
+      {/* `MiniAppRunnerTabs`' Console tab (rendered inside `MiniAppRunner`)
+          attaches a right-click copy menu via `useContextMenu` — this window
+          has no `.app-shell` chrome to inherit a provider from, so it needs
+          its own, mirroring the main `App`'s `<ContextMenuProvider>`. */}
+      <ContextMenuProvider>
+        <div className="miniapp-window">
+          {resolveError !== null ? (
+            <div className="empty-state">
+              {t("miniapps.runner.windowResolveFailed", {
+                defaultValue: resolveError,
+                message: resolveError,
+              })}
+            </div>
+          ) : miniappId === null ? (
+            <div className="empty-state">{t("common.loading")}</div>
+          ) : (
+            <MiniAppRunner miniappId={miniappId} standalone />
+          )}
 
-        <MiniAppCloseConfirmDialog
-          open={closeConfirmOpen}
-          processCount={activeProcessCount}
-          onConfirm={handleCloseConfirm}
-          onCancel={handleCloseCancel}
-        />
+          <MiniAppCloseConfirmDialog
+            open={closeConfirmOpen}
+            processCount={activeProcessCount}
+            onConfirm={handleCloseConfirm}
+            onCancel={handleCloseCancel}
+          />
 
-        {/* Widget actions can prompt for command variables / admin password /
-            remote host / SSH password, exactly like a library run — these
-            singletons must be mounted so the imperative helpers
-            `commandRunner.ts` calls have a registered handler, mirroring
-            the main `App`. */}
-        <AdminPasswordPrompt />
-        <VariablePrompt />
-        <WorkingDirPrompt />
-        <RemoteHostPrompt />
-        <SshPasswordPrompt />
-      </div>
+          {/* Widget actions can prompt for command variables / admin password /
+              remote host / SSH password, exactly like a library run — these
+              singletons must be mounted so the imperative helpers
+              `commandRunner.ts` calls have a registered handler, mirroring
+              the main `App`. */}
+          <AdminPasswordPrompt />
+          <VariablePrompt />
+          <WorkingDirPrompt />
+          <RemoteHostPrompt />
+          <SshPasswordPrompt />
+        </div>
+      </ContextMenuProvider>
     </ConfigProvider>
   );
 }

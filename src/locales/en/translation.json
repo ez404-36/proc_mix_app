@@ -480,7 +480,8 @@
         "title": "Active processes",
         "pid": "PID {{pid}}",
         "pidPending": "starting…",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "empty": "No active processes."
       },
       "windowResolveFailed": "Could not open this mini-app window: {{message}}",
       "closeConfirm": {
@@ -489,6 +490,23 @@
         "message_other": "This mini-app has {{count}} active processes. Closing the window will not stop them unless you kill them below.",
         "killToggle": "Kill all child processes",
         "confirm": "Close window"
+      },
+      "tabs": {
+        "interface": "Interface",
+        "console": "Console",
+        "processes": "Processes",
+        "runningCount": "{{count}} running"
+      }
+    },
+    "console": {
+      "empty": "No output yet.",
+      "runHeader": "▸ {{label}} · {{status}}",
+      "status": {
+        "pending": "Pending",
+        "running": "Running",
+        "success": "Success",
+        "error": "Error",
+        "cancelled": "Cancelled"
       }
     },
     "editor": {

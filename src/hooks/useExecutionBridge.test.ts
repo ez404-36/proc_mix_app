@@ -26,6 +26,7 @@ import { useExecutionBridge } from "./useExecutionBridge";
 import { useCommandStore } from "../stores/commandStore";
 import { useExecutionStore } from "../stores/executionStore";
 import { useTerminalStore } from "../stores/terminalStore";
+import { makeMiniAppExecutionId } from "../utils/miniappExecutionId";
 
 type Handler = (e: ExecutionEvent) => void;
 
@@ -43,13 +44,15 @@ beforeEach(() => {
   useTerminalStore.setState({ panelMode: "terminal" });
 });
 
-function mountBridge(): { handler: Handler } {
+function mountBridge(currentWindowMiniAppId?: string | null): {
+  handler: Handler;
+} {
   const captured: { handler: Handler | null } = { handler: null };
   subscribeMock.mockImplementation((h: Handler) => {
     captured.handler = h;
     return () => {};
   });
-  renderHook(() => useExecutionBridge());
+  renderHook(() => useExecutionBridge(currentWindowMiniAppId));
   if (!captured.handler) throw new Error("handler not captured");
   return { handler: captured.handler };
 }
@@ -99,5 +102,48 @@ describe("useExecutionBridge - backend-initiated run console tab", () => {
     expect(
       useExecutionStore.getState().executions["exec-no-pid"].pid,
     ).toBeUndefined();
+  });
+});
+
+describe("useExecutionBridge - mini-app window isolation", () => {
+  it("drops a mini-app-tagged event when this window shows a DIFFERENT mini-app", () => {
+    const { handler } = mountBridge("ma-1");
+    const taggedId = makeMiniAppExecutionId("ma-2");
+
+    handler({ kind: "started", executionId: taggedId, commandId: "cmd-1" });
+
+    expect(useExecutionStore.getState().executions[taggedId]).toBeUndefined();
+  });
+
+  it("accepts a mini-app-tagged event when this window shows the SAME mini-app", () => {
+    const { handler } = mountBridge("ma-1");
+    const taggedId = makeMiniAppExecutionId("ma-1");
+
+    handler({ kind: "started", executionId: taggedId, commandId: "cmd-1" });
+
+    expect(useExecutionStore.getState().executions[taggedId]).toBeDefined();
+  });
+
+  it("the main window (no id) drops EVERY mini-app-tagged event", () => {
+    const { handler } = mountBridge();
+    const taggedId = makeMiniAppExecutionId("ma-1");
+
+    handler({ kind: "started", executionId: taggedId, commandId: "cmd-1" });
+
+    expect(useExecutionStore.getState().executions[taggedId]).toBeUndefined();
+  });
+
+  it("an UNTAGGED event still reaches every window regardless of currentWindowMiniAppId", () => {
+    const { handler } = mountBridge("ma-1");
+
+    handler({
+      kind: "started",
+      executionId: "plain-exec-1",
+      commandId: "cmd-1",
+    });
+
+    expect(
+      useExecutionStore.getState().executions["plain-exec-1"],
+    ).toBeDefined();
   });
 });

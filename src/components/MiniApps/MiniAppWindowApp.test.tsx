@@ -14,11 +14,30 @@ const mocks = vi.hoisted(() => ({
   onCloseRequested: vi.fn(),
   cancelExecution: vi.fn(),
   listMiniAppsFromDb: vi.fn(),
+  useExecutionBridge: vi.fn(),
 }));
 
 vi.mock("../../services/miniappWindow", () => ({
   getMiniAppWindowId: mocks.getMiniAppWindowId,
 }));
+
+// Spy on `useExecutionBridge` itself (rather than mocking its internals) so
+// we can assert THIS window passes its resolved mini-app id through — the
+// gate that keeps a widget run's output isolated to its own window (see
+// `useExecutionBridge`'s doc comment). Delegates to the real implementation
+// so the rest of the mount-time behavior this file already covers (event
+// subscription via the mocked `subscribeExecutionEvents` below) is
+// unaffected.
+vi.mock("../../hooks/useExecutionBridge", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../hooks/useExecutionBridge")>();
+  return {
+    useExecutionBridge: (id?: string | null) => {
+      mocks.useExecutionBridge(id);
+      return actual.useExecutionBridge(id);
+    },
+  };
+});
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -81,6 +100,7 @@ beforeEach(() => {
   mocks.onCloseRequested.mockReset().mockResolvedValue(() => {});
   mocks.cancelExecution.mockReset().mockResolvedValue(undefined);
   mocks.listMiniAppsFromDb.mockReset().mockResolvedValue([]);
+  mocks.useExecutionBridge.mockReset();
   useMiniAppStore.setState({ miniapps: [], favorites: [], hydrated: false });
   useExecutionStore.setState({ executions: {}, recentIds: [] });
 });
@@ -124,6 +144,33 @@ describe("MiniAppWindowApp — mount / id resolution", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/bad label/)).toBeTruthy();
+    });
+  });
+
+  it("passes the resolved mini-app id into useExecutionBridge, gating this window's execution routing", async () => {
+    mocks.getMiniAppWindowId.mockResolvedValue("ma-1");
+    mocks.listMiniAppsFromDb.mockResolvedValue([
+      {
+        id: "ma-1",
+        name: "VPN Panel",
+        widgets: [],
+        tags: [],
+        favorite: false,
+        createdAt: "2026-07-31T00:00:00.000Z",
+        updatedAt: "2026-07-31T00:00:00.000Z",
+        runCount: 0,
+        panelSize: { w: 320, h: 240 },
+      },
+    ]);
+
+    await act(async () => {
+      render(<MiniAppWindowApp />);
+    });
+
+    // First render: id not yet resolved (null). Final render: the resolved
+    // mini-app id.
+    await waitFor(() => {
+      expect(mocks.useExecutionBridge).toHaveBeenLastCalledWith("ma-1");
     });
   });
 });

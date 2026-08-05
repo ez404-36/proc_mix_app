@@ -12,6 +12,7 @@ import {
   executionLogToHistoryOutput,
   updateRunHistoryEventInDb,
 } from "../utils/historyRepository";
+import { parseMiniAppExecutionId } from "../utils/miniappExecutionId";
 import { isTransient } from "../utils/transientExecutions";
 
 /**
@@ -168,13 +169,32 @@ function routeWorkflowNodeEvent(
   // handles run lifecycle + step headers.
 }
 
-function handleEvent(event: ExecutionEvent): void {
+function handleEvent(
+  event: ExecutionEvent,
+  currentWindowMiniAppId: string | null | undefined,
+): void {
   // Transient executions (e.g. the CommandForm live-run) bypass the global
   // execution store entirely. The fan-out in `subscribeExecutionEvents`
   // still delivers the event to the transient consumer's own handler;
   // skipping the store write here keeps live-runs out of Recent, the
   // OutputPanel, and the recent-ids list.
   if (isTransient(event.executionId)) return;
+  // Mini-App window isolation: a widget run's `executionId` is tagged
+  // `mawin:<miniAppId>:<uuid>` (see `utils/miniappExecutionId`). Tauri's
+  // `execution-event` channel fans out to EVERY open webview, so without
+  // this gate a mini-app's run would ALSO get written into every other open
+  // window's `executionStore` — leaking its console output into the main
+  // window's global OutputPanel (or a different mini-app's own window).
+  // Drop the event here (never writing it into THIS window's store) when it
+  // is tagged for a DIFFERENT mini-app than the one this window is showing.
+  // The main window calls `useExecutionBridge()` with no id — `undefined`/
+  // `null` — so it drops EVERY `mawin:*` tagged event unconditionally.
+  // History persistence (`recordRunStart` / `updateRunHistoryEventInDb`) is
+  // untouched by this gate — only the live in-memory per-window routing.
+  const miniAppTag = parseMiniAppExecutionId(event.executionId);
+  if (miniAppTag !== null && miniAppTag.miniAppId !== currentWindowMiniAppId) {
+    return;
+  }
   // Workflow node output: fold into the aggregated workflow process instead
   // of creating a standalone execution. Deterministic — the Rust runner tags
   // every node event with the run id, so this does not depend on event
@@ -301,11 +321,25 @@ function handleEvent(event: ExecutionEvent): void {
   }
 }
 
-export function useExecutionBridge(): void {
+/**
+ * Wire the global `execution-event` channel into `useExecutionStore` (and,
+ * for a workflow node, `useWorkflowRunStore`).
+ *
+ * `currentWindowMiniAppId` identifies which mini-app THIS window is showing
+ * (omit it — `undefined`/`null` — for the main window). It gates every
+ * mini-app-tagged event (see `handleEvent`'s doc comment) so a widget run's
+ * output only ever lands in the ONE window that owns it, never leaking into
+ * the main window's OutputPanel or a different mini-app's window.
+ */
+export function useExecutionBridge(
+  currentWindowMiniAppId?: string | null,
+): void {
   useEffect(() => {
-    const unsubscribe = subscribeExecutionEvents(handleEvent);
+    const unsubscribe = subscribeExecutionEvents((event) =>
+      handleEvent(event, currentWindowMiniAppId),
+    );
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [currentWindowMiniAppId]);
 }

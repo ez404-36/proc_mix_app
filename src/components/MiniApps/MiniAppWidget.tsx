@@ -21,6 +21,7 @@ import {
   withArtifactVariableSpecs,
   type ArtifactSpecSource,
 } from "../../utils/miniappInlineCommand";
+import { makeMiniAppExecutionId } from "../../utils/miniappExecutionId";
 import { resolveToggleOnState } from "../../utils/miniappToggleState";
 import { ToggleSwitch } from "../ToggleSwitch/ToggleSwitch";
 import {
@@ -68,6 +69,19 @@ export interface ArtifactContext {
    * See `utils/miniappInlineCommand`.
    */
   artifactSpecs: ReadonlyArray<ArtifactSpecSource>;
+  /**
+   * The owning mini-app's id, threaded down so a button/toggle action can
+   * mint a `mawin:<miniAppId>:<uuid>`-tagged `executionId` (see
+   * `utils/miniappExecutionId`) instead of letting the executor generate an
+   * untagged one. The tag is what lets `useExecutionBridge` route the run's
+   * output into ONLY this mini-app's own window instead of leaking into
+   * every other open webview (Tauri's `execution-event` fan-out).
+   *
+   * Absent in the editor's WYSIWYG canvas preview (`WidgetPreview`), which
+   * never actually invokes an action (`pointer-events: none`) — falls back
+   * to a plain untagged id there, which is harmless since nothing runs.
+   */
+  miniAppId: string | undefined;
 }
 
 export interface MiniAppWidgetProps extends ArtifactContext {
@@ -194,6 +208,14 @@ function BrokenRefMarker({ label }: { label: string }): ReactElement {
  * command (a referenced command may itself parameterise on an artifact
  * name). The map is passed verbatim; `triggerCommandRun` merges it with
  * the command's own variable defaults + prompt results.
+ *
+ * `miniAppId`, when present, mints a `mawin:<miniAppId>:<uuid>`-tagged
+ * `executionId` (see `utils/miniappExecutionId`) and forwards it as
+ * `RunOptions.executionId` — the Rust executor honours it verbatim, so
+ * every event this run emits carries the tag `useExecutionBridge` uses to
+ * route the run's output into ONLY this mini-app's own standalone window.
+ * Absent in the editor's inert canvas preview, where the id is left
+ * untagged (harmless — nothing ever actually runs there).
  */
 async function runWidgetAction(
   action: MiniAppAction,
@@ -203,6 +225,7 @@ async function runWidgetAction(
   onActionComplete?: () => void,
   variableValues?: Record<string, string>,
   onExecutionStarted?: (executionId: string) => void,
+  miniAppId?: string,
 ): Promise<void> {
   const cmd = resolveActionCommand(action, commands, artifactSpecs);
   if (cmd === null) {
@@ -212,6 +235,9 @@ async function runWidgetAction(
   try {
     const executionId = await triggerCommandRun(cmd, {
       variableValues: variableValues ?? {},
+      ...(miniAppId !== undefined
+        ? { executionId: makeMiniAppExecutionId(miniAppId) }
+        : {}),
     });
     if (executionId !== null) {
       onActionComplete?.();
@@ -272,6 +298,7 @@ function ButtonWidget({
   valuesMap,
   executionValues,
   artifactSpecs,
+  miniAppId,
 }: ButtonWidgetProps): ReactElement {
   const { t } = useTranslation();
   const commands = useCommandStore((s) => s.commands);
@@ -304,6 +331,7 @@ function ButtonWidget({
           onActionComplete,
           executionValues,
           onExecutionStarted,
+          miniAppId,
         );
       } finally {
         setIsRunning(false);
@@ -367,6 +395,7 @@ function ToggleWidget({
   valuesMap,
   executionValues,
   artifactSpecs,
+  miniAppId,
 }: ToggleWidgetProps): ReactElement {
   const { t } = useTranslation();
   const commands = useCommandStore((s) => s.commands);
@@ -504,6 +533,7 @@ function ToggleWidget({
           onActionComplete,
           executionValues,
           onExecutionStarted,
+          miniAppId,
         );
       } finally {
         setPendingAction(null);
@@ -948,6 +978,7 @@ export function MiniAppWidget({
   valuesMap,
   executionValues,
   artifactSpecs,
+  miniAppId,
   bordered = true,
 }: MiniAppWidgetProps): ReactElement {
   const sharedContext = {
@@ -957,6 +988,7 @@ export function MiniAppWidget({
     valuesMap,
     executionValues,
     artifactSpecs,
+    miniAppId,
   };
   let body: ReactElement;
   // Button and toggle cards host a `.btn` / `.toggle-switch` control that

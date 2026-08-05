@@ -486,7 +486,8 @@
         "title": "Активные процессы",
         "pid": "PID {{pid}}",
         "pidPending": "запускается…",
-        "cancel": "Отмена"
+        "cancel": "Отмена",
+        "empty": "Нет активных процессов."
       },
       "windowResolveFailed": "Не удалось открыть окно мини-приложения: {{message}}",
       "closeConfirm": {
@@ -497,6 +498,23 @@
         "message_other": "У этого мини-приложения {{count}} активных процесса. Закрытие окна не остановит их, если вы не завершите их ниже.",
         "killToggle": "Завершить все дочерние процессы",
         "confirm": "Закрыть окно"
+      },
+      "tabs": {
+        "interface": "Интерфейс",
+        "console": "Консоль",
+        "processes": "Процессы",
+        "runningCount": "Выполняется: {{count}}"
+      }
+    },
+    "console": {
+      "empty": "Пока нет вывода.",
+      "runHeader": "▸ {{label}} · {{status}}",
+      "status": {
+        "pending": "Ожидание",
+        "running": "Выполняется",
+        "success": "Успех",
+        "error": "Ошибка",
+        "cancelled": "Отменено"
       }
     },
     "editor": {

@@ -12,7 +12,8 @@ import {
 } from "../../services/miniappStatusPoller";
 import { ArrowLeftIcon } from "../icons";
 import { HoverTooltip } from "../HoverTooltip";
-import { MiniAppActiveProcesses } from "./MiniAppActiveProcesses";
+import { MiniAppRunnerTabs } from "./MiniAppRunnerTabs";
+import type { MiniAppRunnerTab } from "./MiniAppRunnerTabs";
 import { MiniAppWidget } from "./MiniAppWidget";
 import { renderIcon } from "../../utils/iconRenderer";
 import { resolveArtifactValues } from "../../utils/resolveArtifactValues";
@@ -41,6 +42,17 @@ const DEFAULT_STATUS_INTERVAL_MS = 5000;
  */
 const PANEL_MIN_HEIGHT = 400;
 const PANEL_BOTTOM_PADDING = 24;
+
+/**
+ * Upper bound on how many FINISHED (non-running/pending) runs
+ * `executionWidgets` keeps around for the Console tab before the oldest
+ * ones are evicted, oldest-first by `finishedAt`/`startedAt`. Running/pending
+ * runs are NEVER evicted by this cap — only terminal ones, so a long mini-app
+ * session doesn't grow the map unboundedly while the user hasn't hit the
+ * Console tab's Clear button. Mirrors `RECENT_VISIBLE`
+ * (`OutputPanel.tsx`) / `MAX_RECENT` (`executionStore.ts`).
+ */
+const MAX_FINISHED_CONSOLE_RUNS = 20;
 
 /**
  * Trailing debounce delay for writing an edited `persist: true` artifact
@@ -289,12 +301,21 @@ export function MiniAppRunner({
     new Map(),
   );
 
-  // Active-processes tracking: a mini-app can trigger MULTIPLE concurrent
-  // widget runs (one process per click — nothing here assumes at most one
-  // in flight), so this is `executionId -> widgetId`, not a single slot.
-  // Populated by each widget's `onExecutionStarted` the moment its run
-  // actually starts spawning; pruned below once the execution store reports
-  // the run is no longer active (finished / errored / cancelled).
+  // Run tracking for the Console/Processes tabs: a mini-app can trigger
+  // MULTIPLE concurrent widget runs (one process per click — nothing here
+  // assumes at most one in flight), so this is `executionId -> widgetId`,
+  // not a single slot. Populated by each widget's `onExecutionStarted` the
+  // moment its run actually starts spawning.
+  //
+  // An entry stays here for as long as its execution still EXISTS in the
+  // store, REGARDLESS of status — running, pending, success, error, or
+  // cancelled. The Console tab needs to keep showing a finished run's
+  // output/status until the user clears it, not just while it's active (the
+  // Processes tab instead filters this SAME map down to only
+  // running/pending — see `MiniAppRunnerTabs`). An entry is only pruned when
+  // its execution has actually left the store — via the Console tab's Clear
+  // button (`clearTerminated()`), the mini-app-switch reset effect below, or
+  // the `MAX_FINISHED_CONSOLE_RUNS` eviction below.
   const [executionWidgets, setExecutionWidgets] = useState<
     Record<string, string>
   >({});
@@ -307,18 +328,19 @@ export function MiniAppRunner({
     setExecutionWidgets((prev) => ({ ...prev, [executionId]: widgetId }));
   };
 
-  // Drop any tracked execution id whose run has left the store (cleared /
-  // never registered) or reached a terminal status — otherwise the panel
-  // would keep showing a finished run forever. Runs on every execution
-  // store change; a no-op (same reference returned) when nothing tracked
-  // here actually changed status, so this doesn't fight the state below.
+  // Drop any tracked execution id whose run has actually left the store
+  // (cleared, or never registered — e.g. a stale id from before a reload).
+  // Deliberately does NOT prune on terminal status alone: a run that
+  // finishes within the same tick it started (e.g. a fast `echo`/`uname`
+  // script) must still be visible in the console afterward, not vanish the
+  // instant it completes. Runs on every execution store change; a no-op
+  // (same reference returned) when nothing tracked here actually changed.
   useEffect(() => {
     setExecutionWidgets((prev) => {
       let changed = false;
       const next: Record<string, string> = {};
       for (const [execId, widgetId] of Object.entries(prev)) {
-        const exec = executions[execId];
-        if (exec && (exec.status === "running" || exec.status === "pending")) {
+        if (executions[execId] !== undefined) {
           next[execId] = widgetId;
         } else {
           changed = true;
@@ -328,11 +350,53 @@ export function MiniAppRunner({
     });
   }, [executions]);
 
+  // Cap how many FINISHED runs `executionWidgets` accumulates, evicting the
+  // oldest first (by `finishedAt`, falling back to `startedAt` for a
+  // terminal execution somehow missing it). Running/pending runs are never
+  // evicted here — only once they finish do they become eligible, and only
+  // once the finished count exceeds the cap. Runs as its own effect (rather
+  // than folded into the prune-on-store-change effect above) so it reacts
+  // to the SAME `executions` changes without complicating that effect's
+  // simpler existence check.
+  useEffect(() => {
+    setExecutionWidgets((prev) => {
+      const finished = Object.keys(prev)
+        .map((execId) => executions[execId])
+        .filter(
+          (exec): exec is NonNullable<typeof exec> =>
+            exec !== undefined &&
+            exec.status !== "running" &&
+            exec.status !== "pending",
+        );
+      if (finished.length <= MAX_FINISHED_CONSOLE_RUNS) return prev;
+      const overflow = finished
+        .sort(
+          (a, b) => (a.finishedAt ?? a.startedAt) - (b.finishedAt ?? b.startedAt),
+        )
+        .slice(0, finished.length - MAX_FINISHED_CONSOLE_RUNS);
+      if (overflow.length === 0) return prev;
+      const next = { ...prev };
+      for (const exec of overflow) delete next[exec.id];
+      return next;
+    });
+  }, [executions]);
+
   // Reset the tracked map when the user opens a different mini-app — stale
   // execution ids from a previously-open mini-app must never leak into
   // this one's panel.
   useEffect(() => {
     setExecutionWidgets({});
+  }, [miniapp?.id]);
+
+  // Which of the three permanent tabs (Interface / Console / Processes) is
+  // shown. Always starts on Interface — the primary view a user opens a
+  // mini-app to interact with — and is reset there when switching to a
+  // different mini-app, so a Console/Processes selection never carries over
+  // to an unrelated panel. Deliberately NEVER auto-switched by a widget run
+  // starting/finishing — the user's tab choice is authoritative.
+  const [activeTab, setActiveTab] = useState<MiniAppRunnerTab>("interface");
+  useEffect(() => {
+    setActiveTab("interface");
   }, [miniapp?.id]);
 
   useEffect(() => {
@@ -418,12 +482,13 @@ export function MiniAppRunner({
     useMiniAppStatusPolling(statusConfigs);
 
   // Resolve `executionWidgets` (execution id -> widget id) into the display
-  // entries the active-processes panel renders. Only `button`/`toggle`
-  // widgets ever populate `executionWidgets` (the only kinds that call
+  // entries `MiniAppRunnerTabs` renders (Console: one run block per entry;
+  // Processes: the running/pending subset). Only `button`/`toggle` widgets
+  // ever populate `executionWidgets` (the only kinds that call
   // `onExecutionStarted`), so every lookup here is expected to resolve; a
   // widget removed from the mini-app mid-run (editor open in another window)
   // falls back to the raw id rather than dropping the row silently.
-  const activeProcessEntries = useMemo(() => {
+  const consoleEntries = useMemo(() => {
     const widgets = miniapp?.widgets ?? [];
     return Object.entries(executionWidgets).map(([executionId, widgetId]) => {
       const widget = widgets.find((w) => w.id === widgetId);
@@ -504,6 +569,54 @@ export function MiniAppRunner({
       ? resolveArtifactValues(rawDescription, valuesMap, artifactNames)
       : undefined;
 
+  // The Interface tab's body — the widget panel (or its empty state). Built
+  // as a variable rather than inlined so `MiniAppRunnerTabs` can render it
+  // as one of three mutually-exclusive tab bodies without owning any of the
+  // panel-layout logic itself.
+  const interfaceBody =
+    miniapp.widgets.length === 0 ? (
+      <div className="empty-state">{t("miniapps.runner.noWidgets")}</div>
+    ) : (
+      <div
+        className="miniapp-runner__panel"
+        style={{
+          width: miniapp.panelSize.w,
+          minHeight: Math.max(miniapp.panelSize.h, panelMinHeight),
+        }}
+      >
+        {miniapp.widgets.map((widget) => (
+          <div
+            key={widget.id}
+            className="miniapp-runner__widget-slot"
+            style={{
+              left: widget.layout.x,
+              top: widget.layout.y,
+              width: widget.layout.w,
+              height: widget.layout.h,
+            }}
+          >
+            <MiniAppWidget
+              widget={widget}
+              statusResult={statusResults[widget.id]}
+              onActionComplete={handleActionComplete}
+              onExecutionStarted={(executionId) =>
+                handleExecutionStarted(widget.id, executionId)
+              }
+              onRefreshStatus={() => refreshStatus(widget.id)}
+              artifactValues={artifactValues}
+              onArtifactChange={updateArtifactValue}
+              artifactNames={artifactNames}
+              valuesMap={valuesMap}
+              executionValues={executionValues}
+              artifactSpecs={artifactSpecs}
+              miniAppId={miniapp.id}
+              bordered={false}
+            />
+          </div>
+        ))}
+      </div>
+    );
+
   return (
     <div>
       <header className="view-header">
@@ -537,49 +650,12 @@ export function MiniAppRunner({
         </div>
       </header>
 
-      {miniapp.widgets.length === 0 ? (
-        <div className="empty-state">{t("miniapps.runner.noWidgets")}</div>
-      ) : (
-        <div
-          className="miniapp-runner__panel"
-          style={{
-            width: miniapp.panelSize.w,
-            minHeight: Math.max(miniapp.panelSize.h, panelMinHeight),
-          }}
-        >
-          {miniapp.widgets.map((widget) => (
-            <div
-              key={widget.id}
-              className="miniapp-runner__widget-slot"
-              style={{
-                left: widget.layout.x,
-                top: widget.layout.y,
-                width: widget.layout.w,
-                height: widget.layout.h,
-              }}
-            >
-              <MiniAppWidget
-                widget={widget}
-                statusResult={statusResults[widget.id]}
-                onActionComplete={handleActionComplete}
-                onExecutionStarted={(executionId) =>
-                  handleExecutionStarted(widget.id, executionId)
-                }
-                onRefreshStatus={() => refreshStatus(widget.id)}
-                artifactValues={artifactValues}
-                onArtifactChange={updateArtifactValue}
-                artifactNames={artifactNames}
-                valuesMap={valuesMap}
-                executionValues={executionValues}
-                artifactSpecs={artifactSpecs}
-                bordered={false}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-
-      <MiniAppActiveProcesses entries={activeProcessEntries} />
+      <MiniAppRunnerTabs
+        entries={consoleEntries}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        interfaceBody={interfaceBody}
+      />
     </div>
   );
 }

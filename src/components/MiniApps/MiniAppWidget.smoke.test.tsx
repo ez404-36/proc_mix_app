@@ -77,6 +77,10 @@ interface RenderOptions {
   /** Defaults to `true` (the editor's bordered-card look), matching the
    * component's own default. */
   bordered?: boolean;
+  /** Defaults to `"ma-test"` — the owning mini-app id, mirroring what
+   * `MiniAppRunner` threads down in production. Pass `undefined` explicitly
+   * to exercise the editor-preview path (no action ever tagged). */
+  miniAppId?: string;
 }
 
 /**
@@ -102,6 +106,7 @@ function widgetElement(
       valuesMap={new Map(Object.entries(values))}
       executionValues={values}
       artifactSpecs={collectArtifactSpecSources(opts.artifactWidgets ?? [])}
+      miniAppId={"miniAppId" in opts ? opts.miniAppId : "ma-test"}
       bordered={opts.bordered}
     />
   );
@@ -187,6 +192,28 @@ describe("MiniAppWidget — button", () => {
     const [cmd] = vi.mocked(triggerCommandRun).mock.calls[0];
     expect(cmd.script).toBe("vpn up");
     expect(cmd.name).toBe("Connect");
+  });
+
+  it("tags the run's executionId with the owning mini-app id, so useExecutionBridge can route it to this window only", async () => {
+    renderWidget(buttonWidget(), { miniAppId: "ma-vpn" });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    });
+
+    const [, opts] = vi.mocked(triggerCommandRun).mock.calls[0];
+    expect(opts?.executionId).toMatch(/^mawin:ma-vpn:/);
+  });
+
+  it("leaves executionId unset when no miniAppId is provided (the editor preview path)", async () => {
+    renderWidget(buttonWidget(), { miniAppId: undefined });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    });
+
+    const [, opts] = vi.mocked(triggerCommandRun).mock.calls[0];
+    expect(opts?.executionId).toBeUndefined();
   });
 
   it("forwards the current artifact values as variableValues", async () => {
@@ -472,6 +499,17 @@ describe("MiniAppWidget — toggle", () => {
 
     const [cmd] = vi.mocked(triggerCommandRun).mock.calls[0];
     expect(cmd.script).toBe("vpn up");
+  });
+
+  it("tags a toggle action's executionId with the owning mini-app id", async () => {
+    renderWidget(toggleWidget(), { miniAppId: "ma-vpn" });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "VPN" }));
+    });
+
+    const [, opts] = vi.mocked(triggerCommandRun).mock.calls[0];
+    expect(opts?.executionId).toMatch(/^mawin:ma-vpn:/);
   });
 
   it("switching off runs the OFF action", async () => {
