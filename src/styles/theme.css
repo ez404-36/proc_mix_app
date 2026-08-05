@@ -570,10 +570,11 @@ select {
   border-left: 3px solid var(--app-color-edit);
 }
 
-/* Mini-app cards reuse the same list-tile skeleton; the accent border
- * distinguishes them from commands/workflows/schedules at a glance. */
+/* Mini-app cards reuse the same list-tile skeleton, but with a plain white
+ * left edge (not an accent stripe like commands/workflows/schedules) —
+ * fixed white regardless of theme, matching the design request. */
 .list-tile--miniapp {
-  border-left: 3px solid var(--color-accent);
+  border-left: 3px solid #ffffff;
 }
 
 .type-badge {
@@ -593,6 +594,11 @@ select {
 .type-badge--workflow {
   background: rgba(16, 185, 129, 0.12);
   color: var(--app-color-run);
+}
+
+.type-badge--miniapp {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
 }
 
 .list-tile__head {

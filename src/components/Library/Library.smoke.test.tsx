@@ -199,11 +199,16 @@ HTMLElement.prototype.scrollIntoView = (): void => {};
 
 beforeEach(() => {
   resetStores();
+  // `useLibraryFilters` persists query/tags/category per tab to
+  // localStorage — clear it so one test's filter selection can't leak into
+  // the next test's fresh render.
+  window.localStorage.clear();
   triggerWorkflowRun.mockClear();
   listOpenMiniAppWindows.mockReset().mockResolvedValue([]);
 });
 afterEach(() => {
   resetStores();
+  window.localStorage.clear();
   vi.clearAllMocks();
 });
 
@@ -430,6 +435,211 @@ describe("Library Commands tab — tag & category filters", () => {
 
     expect(screen.getByText("Deploy app")).toBeTruthy();
     expect(screen.getByText("Open shell")).toBeTruthy();
+  });
+
+  it("Group by category shows a category-chip-free card under a collapsible section", () => {
+    seedCommands();
+    renderLibrary();
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Group by category" }),
+      );
+    });
+
+    expect(screen.getByRole("button", { name: /Build/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Network/ })).toBeTruthy();
+    expect(screen.getByText("Deploy app")).toBeTruthy();
+    expect(screen.getByText("Open shell")).toBeTruthy();
+  });
+});
+
+describe("Library Workflows tab — tag & category filters", () => {
+  function seedWorkflows(): void {
+    useWorkflowStore.setState({
+      workflows: [
+        makeWorkflow({
+          id: "wf-a",
+          name: "Deploy pipeline",
+          tags: ["ci"],
+          categoryId: "Build",
+        }),
+        makeWorkflow({
+          id: "wf-b",
+          name: "Backup routine",
+          tags: ["util"],
+          categoryId: "Ops",
+        }),
+      ],
+      hydrated: true,
+    });
+    useUIStore.setState({ libraryTab: "workflows" });
+  }
+
+  it("selecting a tag chip narrows the workflow list (ANY semantics)", () => {
+    seedWorkflows();
+    renderLibrary();
+
+    expect(screen.getByText("Deploy pipeline")).toBeTruthy();
+    expect(screen.getByText("Backup routine")).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "ci", pressed: false }));
+    });
+
+    expect(screen.getByText("Deploy pipeline")).toBeTruthy();
+    expect(screen.queryByText("Backup routine")).toBeNull();
+  });
+
+  it("selecting a category narrows the workflow list", () => {
+    seedWorkflows();
+    renderLibrary();
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Filter by category" }),
+      );
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("option", { name: "Ops" }));
+    });
+
+    expect(screen.getByText("Backup routine")).toBeTruthy();
+    expect(screen.queryByText("Deploy pipeline")).toBeNull();
+  });
+
+  it("Clear filters restores the full workflow list", () => {
+    seedWorkflows();
+    renderLibrary();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "ci", pressed: false }));
+    });
+    expect(screen.queryByText("Backup routine")).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    });
+
+    expect(screen.getByText("Deploy pipeline")).toBeTruthy();
+    expect(screen.getByText("Backup routine")).toBeTruthy();
+  });
+
+  it("shows the category on a workflow card and groups by category", () => {
+    seedWorkflows();
+    renderLibrary();
+
+    expect(within(cardFor("Deploy pipeline")).getByText("Build")).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Group by category" }),
+      );
+    });
+
+    expect(screen.getByRole("button", { name: /Build/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Ops/ })).toBeTruthy();
+    expect(screen.getByText("Deploy pipeline")).toBeTruthy();
+    expect(screen.getByText("Backup routine")).toBeTruthy();
+  });
+
+  it("shows the category column on the workflow table", () => {
+    seedWorkflows();
+    useUIStore.setState({
+      libraryTab: "workflows",
+      workflowsView: {
+        sortKey: "createdAt",
+        sortDir: "desc",
+        mode: "table",
+        pageSize: 10,
+        grouped: false,
+      },
+    });
+    renderLibrary();
+
+    expect(screen.getByText("Category")).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "Build" })).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "Ops" })).toBeTruthy();
+  });
+});
+
+describe("Library — filters persist across a tab switch", () => {
+  it("Commands tab: a search query survives switching to Workflows and back", () => {
+    useCommandStore.setState({
+      commands: [
+        makeCommand({ id: "a", name: "Deploy app", tags: [] }),
+        makeCommand({ id: "b", name: "Open shell", tags: [] }),
+      ],
+      favorites: [],
+      seedsInitialized: true,
+      hydrated: true,
+    });
+    renderLibrary();
+
+    const field = screen.getByPlaceholderText(
+      "Search by name, description, or tag…",
+    );
+    act(() => {
+      fireEvent.change(field, { target: { value: "deploy" } });
+    });
+    expect(screen.getByText("Deploy app")).toBeTruthy();
+    expect(screen.queryByText("Open shell")).toBeNull();
+
+    // Navigate away — this UNMOUNTS CommandsTab (Library conditionally
+    // renders one tab at a time), which is what a plain useState would lose.
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Workflows" }));
+    });
+    expect(useUIStore.getState().libraryTab).toBe("workflows");
+
+    // Navigate back — CommandsTab remounts and must re-hydrate the query
+    // from localStorage rather than resetting to empty.
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Commands" }));
+    });
+
+    const restoredField = screen.getByPlaceholderText(
+      "Search by name, description, or tag…",
+    ) as HTMLInputElement;
+    expect(restoredField.value).toBe("deploy");
+    expect(screen.getByText("Deploy app")).toBeTruthy();
+    expect(screen.queryByText("Open shell")).toBeNull();
+  });
+
+  it("Workflows tab: a selected tag chip survives switching to Mini-Apps and back", async () => {
+    useWorkflowStore.setState({
+      workflows: [
+        makeWorkflow({ id: "wf-a", name: "Deploy pipeline", tags: ["ci"] }),
+        makeWorkflow({ id: "wf-b", name: "Backup routine", tags: ["util"] }),
+      ],
+      hydrated: true,
+    });
+    useUIStore.setState({ libraryTab: "workflows" });
+    vi.mocked(listMiniAppsFromDb).mockResolvedValue([]);
+    await act(async () => {
+      renderLibrary();
+    });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "ci", pressed: false }));
+    });
+    expect(screen.getByText("Deploy pipeline")).toBeTruthy();
+    expect(screen.queryByText("Backup routine")).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Mini-Apps" }));
+    });
+    expect(useUIStore.getState().libraryTab).toBe("miniapps");
+
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Workflows" }));
+    });
+
+    expect(
+      screen.getByRole("button", { name: "ci", pressed: true }),
+    ).toBeTruthy();
+    expect(screen.getByText("Deploy pipeline")).toBeTruthy();
+    expect(screen.queryByText("Backup routine")).toBeNull();
   });
 });
 
@@ -799,7 +1009,7 @@ describe("Library Mini-Apps tab", () => {
     await renderLibraryWithMiniApps();
 
     const field = screen.getByPlaceholderText(
-      "Search mini-apps by name, description, or tag…",
+      "Search by name, description, or tag…",
     );
     act(() => {
       fireEvent.change(field, { target: { value: "docker" } });
@@ -807,6 +1017,97 @@ describe("Library Mini-Apps tab", () => {
 
     expect(screen.getByText("Docker Tools")).toBeTruthy();
     expect(screen.queryByText("VPN Panel")).toBeNull();
+  });
+});
+
+describe("Library Mini-Apps tab — tag & category filters", () => {
+  async function seedMiniApps(): Promise<void> {
+    useUIStore.setState({ libraryTab: "miniapps" });
+    useMiniAppStore.setState({
+      miniapps: [
+        makeMiniApp({
+          id: "ma-1",
+          name: "VPN Panel",
+          tags: ["network"],
+          categoryId: "Networking",
+        }),
+        makeMiniApp({
+          id: "ma-2",
+          name: "Docker Tools",
+          description: "Container helpers",
+          tags: ["docker"],
+          categoryId: "Dev",
+        }),
+      ],
+      favorites: [],
+      hydrated: true,
+    });
+    await renderLibraryWithMiniApps();
+  }
+
+  it("selecting a tag chip narrows the mini-app list (ANY semantics)", async () => {
+    await seedMiniApps();
+
+    expect(screen.getByText("VPN Panel")).toBeTruthy();
+    expect(screen.getByText("Docker Tools")).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "docker", pressed: false }),
+      );
+    });
+
+    expect(screen.getByText("Docker Tools")).toBeTruthy();
+    expect(screen.queryByText("VPN Panel")).toBeNull();
+  });
+
+  it("selecting a category narrows the mini-app list", async () => {
+    await seedMiniApps();
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Filter by category" }),
+      );
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("option", { name: "Dev" }));
+    });
+
+    expect(screen.getByText("Docker Tools")).toBeTruthy();
+    expect(screen.queryByText("VPN Panel")).toBeNull();
+  });
+
+  it("Clear filters restores the full mini-app list", async () => {
+    await seedMiniApps();
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "docker", pressed: false }),
+      );
+    });
+    expect(screen.queryByText("VPN Panel")).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    });
+
+    expect(screen.getByText("VPN Panel")).toBeTruthy();
+    expect(screen.getByText("Docker Tools")).toBeTruthy();
+  });
+
+  it("Group by category shows collapsible category sections", async () => {
+    await seedMiniApps();
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Group by category" }),
+      );
+    });
+
+    expect(screen.getByRole("button", { name: /Networking/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Dev/ })).toBeTruthy();
+    expect(screen.getByText("VPN Panel")).toBeTruthy();
+    expect(screen.getByText("Docker Tools")).toBeTruthy();
   });
 });
 

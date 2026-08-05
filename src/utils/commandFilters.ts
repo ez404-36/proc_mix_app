@@ -1,6 +1,7 @@
 import type { TFunction } from "i18next";
 import type { Command } from "../types";
 import { getCommandDescription, getCommandName } from "./commandLabels";
+import { filterEntities } from "./libraryFilters";
 
 /**
  * Active filter selection for the Library Commands tab. All three
@@ -194,22 +195,7 @@ export function filterCommands(
   filter: CommandFilter,
   t: TFunction,
 ): Command[] {
-  const selectedTags = filter.tags
-    .map((tag) => tag.toLowerCase())
-    .filter((tag) => tag !== "");
-  const category =
-    filter.category !== undefined && filter.category.trim() !== ""
-      ? filter.category
-      : undefined;
-
-  return commands.filter((cmd) => {
-    if (!matchesQuery(cmd, filter.query, t)) return false;
-    if (selectedTags.length > 0) {
-      const cmdTags = cmd.tags.map((tag) => tag.toLowerCase());
-      const hasAny = selectedTags.some((tag) => cmdTags.includes(tag));
-      if (!hasAny) return false;
-    }
-    if (category !== undefined && cmd.categoryId !== category) return false;
-    return true;
-  });
+  return filterEntities(commands, filter, (cmd, query) =>
+    matchesQuery(cmd, query, t),
+  );
 }

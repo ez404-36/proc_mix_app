@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type {
-  ChangeEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactElement,
-} from "react";
+import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Message } from "@arco-design/web-react";
@@ -50,10 +46,16 @@ import {
 import { renderIcon } from "../../utils/iconRenderer";
 import {
   collectCategories,
+  collectCategoriesFrom,
   collectTags,
+  collectTagsFrom,
   filterCommands,
   globalCommands,
 } from "../../utils/commandFilters";
+import { filterEntities } from "../../utils/libraryFilters";
+import { groupEntitiesByCategory } from "../../utils/groupByCategory";
+import { matchesWorkflowQuery } from "../../utils/workflowFilters";
+import { matchesMiniAppQuery } from "../../utils/miniappFilters";
 import { sortCommands, sortMiniApps, sortWorkflows } from "../../utils/sortLists";
 import { paginate } from "../../utils/paginate";
 import { triggerCommandRun } from "../../services/commandRunner";
@@ -70,13 +72,12 @@ import {
 import type { DeleteBlocker } from "../../utils/usageCheck";
 import { useContextMenu } from "../ContextMenu";
 import type { ContextMenuEntry } from "../ContextMenu";
-import { Dropdown } from "../Dropdown";
-import type { DropdownOption } from "../Dropdown";
-import { ListControls } from "../ListControls/ListControls";
+import { useLibraryFilters } from "../../hooks/useLibraryFilters";
+import { ALL_CATEGORIES, LibraryFilterBar } from "./LibraryFilterBar";
+import { CategoryGroupSection } from "./CategoryGroupSection";
 import type { SortOption } from "../ListControls/ListControls";
 import { Pagination } from "../Pagination/Pagination";
 import {
-  ChevronIcon,
   CopyIcon,
   EditIcon,
   PlusIcon,
@@ -85,41 +86,6 @@ import {
   ViewIcon,
 } from "../icons";
 import { TargetBadge } from "../TargetBadge";
-/**
- * Workflows are user-authored, so their `name`/`description` are not run
- * through the seed-localization helper that commands use — they are shown
- * verbatim. Tags are matched case-insensitively, mirroring the command
- * search.
- */
-function matchesWorkflowQuery(wf: Workflow, query: string): boolean {
-  if (query.length === 0) return true;
-  const q = query.toLowerCase();
-  if (wf.name.toLowerCase().includes(q)) return true;
-  if (wf.description && wf.description.toLowerCase().includes(q)) return true;
-  if (wf.tags.some((tag) => tag.toLowerCase().includes(q))) return true;
-  return false;
-}
-
-/**
- * Case-insensitive name/description/tag match, mirroring
- * `matchesWorkflowQuery`. A seed mini-app's DISPLAYED (translated) labels
- * are matched, so searching for what is on screen works in either
- * language; the literal fields are matched too, because that is what a
- * user-created mini-app carries.
- */
-function matchesMiniAppQuery(
-  ma: MiniApp,
-  query: string,
-  t: TFunction,
-): boolean {
-  if (query.length === 0) return true;
-  const q = query.toLowerCase();
-  if (getMiniAppName(ma, t).toLowerCase().includes(q)) return true;
-  const description = getMiniAppDescription(ma, t);
-  if (description && description.toLowerCase().includes(q)) return true;
-  if (ma.tags.some((tag) => tag.toLowerCase().includes(q))) return true;
-  return false;
-}
 
 interface CommandCardProps {
   cmd: Command;
@@ -374,6 +340,12 @@ interface WorkflowCardProps {
   onView: (workflow: Workflow) => void;
   /** Render the dense layout: no description, icon-only Run/View buttons. */
   compact?: boolean;
+  /**
+   * Hide the per-card category chip. Set when the list is grouped BY
+   * category — the group header already names the category, so repeating
+   * it on every card is redundant. Mirrors {@link CommandCardProps.hideCategory}.
+   */
+  hideCategory?: boolean;
 }
 
 function buildWorkflowCardMenuItems(
@@ -428,6 +400,7 @@ function WorkflowCard({
   onEdit,
   onView,
   compact = false,
+  hideCategory = false,
 }: WorkflowCardProps): ReactElement {
   const { t } = useTranslation();
   const { show } = useContextMenu();
@@ -533,6 +506,11 @@ function WorkflowCard({
         )}
       </div>
       <div className="list-tile__meta">
+        {!hideCategory &&
+        workflow.categoryId !== undefined &&
+        workflow.categoryId.trim() !== "" ? (
+          <span className="category-chip">{workflow.categoryId}</span>
+        ) : null}
         {workflow.tags.map((tag) => (
           <span key={tag} className="tag-chip">
             {tag}
@@ -566,9 +544,6 @@ function WorkflowCard({
     </div>
   );
 }
-
-/** Sentinel value for the "all categories" option in the category filter. */
-const ALL_CATEGORIES = "";
 
 /** Grid template (column widths) for the command table rows. */
 const COMMAND_TABLE_COLUMNS = "auto minmax(0, 2fr) 1fr 1fr";
@@ -655,118 +630,6 @@ function CommandTable({
   );
 }
 
-interface CommandGroup {
-  /** Category id, or the empty string for the synthetic "uncategorized" group. */
-  key: string;
-  label: string;
-  commands: Command[];
-}
-
-/**
- * Partition commands into category groups, each internally sorted by the
- * active sort. Real categories come first (sorted by name); the synthetic
- * "uncategorized" bucket is always last. Commands with a blank `categoryId`
- * fall into the uncategorized bucket.
- */
-function groupCommandsByCategory(
-  commands: ReadonlyArray<Command>,
-  sortKey: CommandSortKey,
-  sortDir: "asc" | "desc",
-  nameOf: (cmd: Command) => string,
-  uncategorizedLabel: string,
-): CommandGroup[] {
-  const byCategory = new Map<string, Command[]>();
-  for (const cmd of commands) {
-    const cat =
-      cmd.categoryId !== undefined && cmd.categoryId.trim() !== ""
-        ? cmd.categoryId
-        : "";
-    const bucket = byCategory.get(cat);
-    if (bucket) bucket.push(cmd);
-    else byCategory.set(cat, [cmd]);
-  }
-
-  const namedKeys = [...byCategory.keys()]
-    .filter((key) => key !== "")
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  const orderedKeys = byCategory.has("") ? [...namedKeys, ""] : namedKeys;
-
-  return orderedKeys.map((key) => ({
-    key,
-    label: key === "" ? uncategorizedLabel : key,
-    commands: sortCommands(
-      byCategory.get(key) ?? [],
-      { key: sortKey, dir: sortDir },
-      nameOf,
-    ),
-  }));
-}
-
-interface CommandGroupSectionProps {
-  group: CommandGroup;
-  favorites: ReadonlyArray<string>;
-  isOpen: boolean;
-  onToggleOpen: (key: string) => void;
-  onToggleFavorite: (id: string) => void;
-  onDelete: (id: string) => void;
-  onEdit: (cmd: Command) => void;
-  onView: (cmd: Command) => void;
-  onDuplicate: (cmd: Command) => void;
-  /** Render member cards in the dense compact layout. */
-  compact: boolean;
-}
-
-/** A collapsible category section in the grouped Commands view. */
-function CommandGroupSection({
-  group,
-  favorites,
-  isOpen,
-  onToggleOpen,
-  onToggleFavorite,
-  onDelete,
-  onEdit,
-  onView,
-  onDuplicate,
-  compact,
-}: CommandGroupSectionProps): ReactElement {
-  return (
-    <section className="list-group">
-      <button
-        type="button"
-        className={"list-group__header" + (isOpen ? " is-open" : "")}
-        aria-expanded={isOpen}
-        onClick={() => onToggleOpen(group.key)}
-      >
-        <span className="list-group__chevron">
-          <ChevronIcon />
-        </span>
-        {group.label}
-        <span className="list-group__count">{group.commands.length}</span>
-      </button>
-      {isOpen ? (
-        <div className="list-group__body">
-          <div className={`command-list${compact ? " command-list--compact" : ""}`}>
-            {group.commands.map((cmd) => (
-              <CommandCard
-                key={cmd.id}
-                cmd={cmd}
-                isFavorite={favorites.includes(cmd.id)}
-                onToggleFavorite={onToggleFavorite}
-                onDelete={onDelete}
-                onEdit={onEdit}
-                onView={onView}
-                onDuplicate={onDuplicate}
-                compact={compact}
-                hideCategory
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 function CommandsTab(): ReactElement {
   const { t } = useTranslation();
   const allCommands = useCommandStore((s) => s.commands);
@@ -789,11 +652,11 @@ function CommandsTab(): ReactElement {
   const updateView = useUIStore((s) => s.updateCommandsView);
   const workflows = useWorkflowStore((s) => s.workflows);
   const schedules = useScheduleStore((s) => s.schedules);
-  const [query, setQuery] = useState<string>("");
-  const [activeTags, setActiveTags] = useState<string[]>([]);
-  const [category, setCategory] = useState<string>(ALL_CATEGORIES);
+  const { query, setQuery, activeTags, setActiveTags, category, setCategory } =
+    useLibraryFilters("commands");
   // Transient table page (1-based); reset to 1 whenever the result set or
-  // ordering changes. Not persisted — only the view preference is.
+  // ordering changes. Not persisted — only the view preference and the
+  // query/tags/category filters (via `useLibraryFilters`) are.
   const [page, setPage] = useState<number>(1);
   // Which category sections are collapsed in grouped mode (by category key,
   // "" = uncategorized). Default-open: a key is collapsed only when present.
@@ -842,14 +705,6 @@ function CommandsTab(): ReactElement {
     [commands, query, effectiveTags, effectiveCategory, t],
   );
 
-  const categoryOptions: ReadonlyArray<DropdownOption> = useMemo(
-    () => [
-      { value: ALL_CATEGORIES, label: t("library.allCategories") },
-      ...allCategories.map((cat) => ({ value: cat, label: cat })),
-    ],
-    [allCategories, t],
-  );
-
   const sortOptions: ReadonlyArray<SortOption<CommandSortKey>> = useMemo(
     () => [
       { key: "createdAt", dir: "desc", label: t("listView.sortNewestFirst") },
@@ -874,11 +729,12 @@ function CommandsTab(): ReactElement {
   const groups = useMemo(
     () =>
       view.grouped
-        ? groupCommandsByCategory(
+        ? groupEntitiesByCategory(
             filtered,
-            view.sortKey,
-            view.sortDir,
-            (cmd) => getCommandName(cmd, t),
+            (items) =>
+              sortCommands(items, { key: view.sortKey, dir: view.sortDir }, (cmd) =>
+                getCommandName(cmd, t),
+              ),
             t("listView.uncategorized"),
           )
         : [],
@@ -905,10 +761,6 @@ function CommandsTab(): ReactElement {
     query.trim() !== "" ||
     effectiveTags.length > 0 ||
     effectiveCategory !== ALL_CATEGORIES;
-
-  const handleSearch = (e: ChangeEvent<HTMLInputElement>): void => {
-    setQuery(e.target.value);
-  };
 
   const toggleTag = (tag: string): void => {
     setActiveTags((prev) =>
@@ -967,95 +819,54 @@ function CommandsTab(): ReactElement {
     setDeleteBlockers([]);
   };
 
-  // Any change that reorders or reshapes the result set returns to page 1 so
-  // the user is never stranded on a now-empty page.
-  const handleSearchReset = (e: ChangeEvent<HTMLInputElement>): void => {
-    handleSearch(e);
-    setPage(1);
-  };
-
   const showTable = view.mode === "table" && !view.grouped;
   const compact = view.mode === "compact";
 
   return (
     <>
-      <div className="library-toolbar">
-        <input
-          className="input"
-          type="search"
-          placeholder={t("library.searchPlaceholder")}
-          value={query}
-          onChange={handleSearchReset}
-        />
-        {allCategories.length > 0 ? (
-          <Dropdown
-            value={effectiveCategory}
-            options={categoryOptions}
-            onChange={(value) => {
-              setCategory(value);
-              setPage(1);
-            }}
-            ariaLabel={t("library.filterByCategory")}
-          />
-        ) : null}
-        <ListControls
-          sortOptions={sortOptions}
-          sortKey={view.sortKey}
-          sortDir={view.sortDir}
-          onSortChange={(key, dir) => {
-            updateView({ sortKey: key, sortDir: dir });
-            setPage(1);
-          }}
-          mode={view.mode}
-          onModeChange={(mode) => {
-            // Grouping is supported in both tile layouts (tiles / compact) but
-            // not in the table view. Switching to table therefore turns
-            // grouping off; switching between tile layouts keeps it.
-            updateView(mode === "table" ? { mode, grouped: false } : { mode });
-          }}
-          grouped={view.grouped}
-          onGroupedChange={(grouped) => {
-            // Grouping renders as tiles; if the user enables it while in table
-            // mode, fall back to the expanded tile layout. A compact tile mode
-            // is preserved (grouped compact tiles are valid).
-            const nextMode =
-              grouped && view.mode === "table" ? "tiles" : view.mode;
-            updateView({ grouped, mode: nextMode });
-            setPage(1);
-          }}
-        />
-      </div>
-
-      {allTags.length > 0 ? (
-        <div
-          className="library-filter-tags"
-          role="group"
-          aria-label={t("library.filterByTag")}
-        >
-          {allTags.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              className={`tag-chip tag-chip--filter${
-                effectiveTags.includes(tag) ? " is-active" : ""
-              }`}
-              aria-pressed={effectiveTags.includes(tag)}
-              onClick={() => toggleTag(tag)}
-            >
-              {tag}
-            </button>
-          ))}
-          {filtersActive ? (
-            <button
-              type="button"
-              className="btn btn--ghost library-filter-clear"
-              onClick={clearFilters}
-            >
-              {t("library.clearFilters")}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      <LibraryFilterBar
+        query={query}
+        onQueryChange={(value) => {
+          setQuery(value);
+          setPage(1);
+        }}
+        searchPlaceholder={t("library.searchPlaceholder")}
+        categories={allCategories}
+        category={effectiveCategory}
+        onCategoryChange={(value) => {
+          setCategory(value);
+          setPage(1);
+        }}
+        tags={allTags}
+        activeTags={effectiveTags}
+        onToggleTag={toggleTag}
+        filtersActive={filtersActive}
+        onClearFilters={clearFilters}
+        sortOptions={sortOptions}
+        sortKey={view.sortKey}
+        sortDir={view.sortDir}
+        onSortChange={(key, dir) => {
+          updateView({ sortKey: key, sortDir: dir });
+          setPage(1);
+        }}
+        mode={view.mode}
+        onModeChange={(mode) => {
+          // Grouping is supported in both tile layouts (tiles / compact) but
+          // not in the table view. Switching to table therefore turns
+          // grouping off; switching between tile layouts keeps it.
+          updateView(mode === "table" ? { mode, grouped: false } : { mode });
+        }}
+        grouped={view.grouped}
+        onGroupedChange={(grouped) => {
+          // Grouping renders as tiles; if the user enables it while in table
+          // mode, fall back to the expanded tile layout. A compact tile mode
+          // is preserved (grouped compact tiles are valid).
+          const nextMode =
+            grouped && view.mode === "table" ? "tiles" : view.mode;
+          updateView({ grouped, mode: nextMode });
+          setPage(1);
+        }}
+      />
 
       {filtered.length === 0 ? (
         <div className="empty-state">
@@ -1065,18 +876,26 @@ function CommandsTab(): ReactElement {
         </div>
       ) : view.grouped ? (
         groups.map((group) => (
-          <CommandGroupSection
+          <CategoryGroupSection
             key={group.key}
             group={group}
-            favorites={favorites}
             isOpen={!collapsedGroups.has(group.key)}
             onToggleOpen={toggleGroupOpen}
-            onToggleFavorite={toggleFavorite}
-            onDelete={requestDelete}
-            onEdit={handleEdit}
-            onView={handleView}
-            onDuplicate={handleDuplicate}
-            compact={compact}
+            listClassName={`command-list${compact ? " command-list--compact" : ""}`}
+            renderItem={(cmd) => (
+              <CommandCard
+                key={cmd.id}
+                cmd={cmd}
+                isFavorite={favorites.includes(cmd.id)}
+                onToggleFavorite={toggleFavorite}
+                onDelete={requestDelete}
+                onEdit={handleEdit}
+                onView={handleView}
+                onDuplicate={handleDuplicate}
+                compact={compact}
+                hideCategory
+              />
+            )}
           />
         ))
       ) : showTable ? (
@@ -1160,7 +979,7 @@ function CommandsTab(): ReactElement {
 }
 
 /** Grid template (column widths) for the workflow table rows. */
-const WORKFLOW_TABLE_COLUMNS = "auto minmax(0, 2fr) 1fr";
+const WORKFLOW_TABLE_COLUMNS = "auto minmax(0, 2fr) 1fr 1fr";
 
 interface WorkflowTableProps {
   workflows: ReadonlyArray<Workflow>;
@@ -1189,6 +1008,9 @@ function WorkflowTable({
         <span className="table__cell" role="columnheader" aria-hidden="true" />
         <span className="table__cell" role="columnheader">
           {t("listView.sortByName")}
+        </span>
+        <span className="table__cell" role="columnheader">
+          {t("listView.columnCategory")}
         </span>
         <span className="table__cell" role="columnheader">
           {t("listView.sortByCreatedAt")}
@@ -1221,6 +1043,11 @@ function WorkflowTable({
             {workflow.name}
           </span>
           <span className="table__cell table__cell--muted" role="cell">
+            {workflow.categoryId !== undefined && workflow.categoryId.trim() !== ""
+              ? workflow.categoryId
+              : t("listView.uncategorized")}
+          </span>
+          <span className="table__cell table__cell--muted" role="cell">
             {formatDate(workflow.createdAt)}
           </span>
         </div>
@@ -1242,9 +1069,15 @@ function WorkflowsTab(): ReactElement {
   // flow — same contract as commands.
   const deleteWorkflow = deleteWorkflowWithHistory;
   const schedules = useScheduleStore((s) => s.schedules);
-  const [query, setQuery] = useState<string>("");
+  const { query, setQuery, activeTags, setActiveTags, category, setCategory } =
+    useLibraryFilters("workflows");
   // Transient table page (1-based); reset on filter/sort/page-size changes.
   const [page, setPage] = useState<number>(1);
+  // Which category sections are collapsed in grouped mode (by category key,
+  // "" = uncategorized). Default-open: a key is collapsed only when present.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
   // The workflow currently shown in the read-only view modal (double-click),
   // or null when closed. Editing starts from that modal's Edit button.
   const [viewWorkflow, setViewWorkflow] = useState<Workflow | null>(null);
@@ -1253,9 +1086,40 @@ function WorkflowsTab(): ReactElement {
   // Blockers preventing the staged delete (non-empty = show blocked dialog).
   const [deleteBlockers, setDeleteBlockers] = useState<DeleteBlocker[]>([]);
 
+  // Option sets derived from the current workflows — categories/tags are
+  // modeled inline (no separate entity), mirroring the Commands tab.
+  const allTags = useMemo(() => collectTagsFrom(workflows), [workflows]);
+  const allCategories = useMemo(
+    () => collectCategoriesFrom(workflows),
+    [workflows],
+  );
+
+  // Drop any selected tag/category that no longer exists so a stale filter
+  // can't hide everything with no way to clear it from the visible chips.
+  const effectiveTags = useMemo(
+    () => activeTags.filter((tag) => allTags.includes(tag)),
+    [activeTags, allTags],
+  );
+  const effectiveCategory =
+    category !== ALL_CATEGORIES && allCategories.includes(category)
+      ? category
+      : ALL_CATEGORIES;
+
   const filtered = useMemo(
-    () => workflows.filter((w) => matchesWorkflowQuery(w, query)),
-    [workflows, query],
+    () =>
+      filterEntities(
+        workflows,
+        {
+          query,
+          tags: effectiveTags,
+          category:
+            effectiveCategory === ALL_CATEGORIES
+              ? undefined
+              : effectiveCategory,
+        },
+        matchesWorkflowQuery,
+      ),
+    [workflows, query, effectiveTags, effectiveCategory],
   );
 
   const sortOptions: ReadonlyArray<SortOption<WorkflowSortKey>> = useMemo(
@@ -1277,18 +1141,56 @@ function WorkflowsTab(): ReactElement {
     [filtered, workflowView.sortKey, workflowView.sortDir],
   );
 
+  // Category groups (grouped mode only). Each group is internally sorted.
+  const groups = useMemo(
+    () =>
+      workflowView.grouped
+        ? groupEntitiesByCategory(
+            filtered,
+            (items) =>
+              sortWorkflows(items, {
+                key: workflowView.sortKey,
+                dir: workflowView.sortDir,
+              }),
+            t("listView.uncategorized"),
+          )
+        : [],
+    [filtered, workflowView.grouped, workflowView.sortKey, workflowView.sortDir, t],
+  );
+
   const pageResult = useMemo(
     () => paginate(sorted, page, workflowView.pageSize),
     [sorted, page, workflowView.pageSize],
   );
 
-  const showTable = workflowView.mode === "table";
-  const compact = workflowView.mode === "compact";
-
-  const handleSearch = (e: ChangeEvent<HTMLInputElement>): void => {
-    setQuery(e.target.value);
-    setPage(1);
+  const toggleGroupOpen = (key: string): void => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
+
+  const filtersActive =
+    query.trim() !== "" ||
+    effectiveTags.length > 0 ||
+    effectiveCategory !== ALL_CATEGORIES;
+
+  const toggleTag = (tag: string): void => {
+    setActiveTags((prev) =>
+      prev.includes(tag) ? prev.filter((t2) => t2 !== tag) : [...prev, tag],
+    );
+  };
+
+  const clearFilters = (): void => {
+    setQuery("");
+    setActiveTags([]);
+    setCategory(ALL_CATEGORIES);
+  };
+
+  const showTable = workflowView.mode === "table" && !workflowView.grouped;
+  const compact = workflowView.mode === "compact";
 
   const openEditor = (workflowId: string | null): void => {
     setEditorWorkflowId(workflowId);
@@ -1322,26 +1224,45 @@ function WorkflowsTab(): ReactElement {
 
   return (
     <>
-      <div className="library-toolbar">
-        <input
-          className="input"
-          type="search"
-          placeholder={t("workflow.searchPlaceholder")}
-          value={query}
-          onChange={handleSearch}
-        />
-        <ListControls
-          sortOptions={sortOptions}
-          sortKey={workflowView.sortKey}
-          sortDir={workflowView.sortDir}
-          onSortChange={(key, dir) => {
-            updateWorkflowView({ sortKey: key, sortDir: dir });
-            setPage(1);
-          }}
-          mode={workflowView.mode}
-          onModeChange={(mode) => updateWorkflowView({ mode })}
-        />
-      </div>
+      <LibraryFilterBar
+        query={query}
+        onQueryChange={(value) => {
+          setQuery(value);
+          setPage(1);
+        }}
+        searchPlaceholder={t("library.searchPlaceholder")}
+        categories={allCategories}
+        category={effectiveCategory}
+        onCategoryChange={(value) => {
+          setCategory(value);
+          setPage(1);
+        }}
+        tags={allTags}
+        activeTags={effectiveTags}
+        onToggleTag={toggleTag}
+        filtersActive={filtersActive}
+        onClearFilters={clearFilters}
+        sortOptions={sortOptions}
+        sortKey={workflowView.sortKey}
+        sortDir={workflowView.sortDir}
+        onSortChange={(key, dir) => {
+          updateWorkflowView({ sortKey: key, sortDir: dir });
+          setPage(1);
+        }}
+        mode={workflowView.mode}
+        onModeChange={(mode) => {
+          updateWorkflowView(
+            mode === "table" ? { mode, grouped: false } : { mode },
+          );
+        }}
+        grouped={workflowView.grouped}
+        onGroupedChange={(grouped) => {
+          const nextMode =
+            grouped && workflowView.mode === "table" ? "tiles" : workflowView.mode;
+          updateWorkflowView({ grouped, mode: nextMode });
+          setPage(1);
+        }}
+      />
 
       {filtered.length === 0 ? (
         <div className="empty-state">
@@ -1349,6 +1270,28 @@ function WorkflowsTab(): ReactElement {
             ? t("workflow.noWorkflows")
             : t("workflow.noResults")}
         </div>
+      ) : workflowView.grouped ? (
+        groups.map((group) => (
+          <CategoryGroupSection
+            key={group.key}
+            group={group}
+            isOpen={!collapsedGroups.has(group.key)}
+            onToggleOpen={toggleGroupOpen}
+            listClassName={`command-list${compact ? " command-list--compact" : ""}`}
+            renderItem={(workflow) => (
+              <WorkflowCard
+                key={workflow.id}
+                workflow={workflow}
+                onToggleFavorite={toggleFavorite}
+                onDelete={requestDelete}
+                onEdit={handleEdit}
+                onView={handleView}
+                compact={compact}
+                hideCategory
+              />
+            )}
+          />
+        ))
       ) : showTable ? (
         <>
           <WorkflowTable
@@ -1434,6 +1377,12 @@ interface MiniAppCardProps {
   onRun: (miniapp: MiniApp) => void;
   /** Render the dense layout: no description, icon-only Run/Edit buttons. */
   compact?: boolean;
+  /**
+   * Hide the per-card category chip. Set when the list is grouped BY
+   * category — the group header already names the category, so repeating
+   * it on every card is redundant. Mirrors {@link CommandCardProps.hideCategory}.
+   */
+  hideCategory?: boolean;
 }
 
 function buildMiniAppCardMenuItems(
@@ -1481,6 +1430,7 @@ function MiniAppCard({
   onEdit,
   onRun,
   compact = false,
+  hideCategory = false,
 }: MiniAppCardProps): ReactElement {
   const { t } = useTranslation();
   const { show } = useContextMenu();
@@ -1600,7 +1550,8 @@ function MiniAppCard({
       </div>
       <div className="list-tile__meta">
         <span className="shell-badge">{widgetLabel}</span>
-        {miniapp.categoryId !== undefined &&
+        {!hideCategory &&
+        miniapp.categoryId !== undefined &&
         miniapp.categoryId.trim() !== "" ? (
           <span className="category-chip">{miniapp.categoryId}</span>
         ) : null}
@@ -1735,9 +1686,15 @@ function MiniAppsTab(): ReactElement {
   const miniappsView = useUIStore((s) => s.miniappsView);
   const updateMiniappsView = useUIStore((s) => s.updateMiniappsView);
 
-  const [query, setQuery] = useState<string>("");
+  const { query, setQuery, activeTags, setActiveTags, category, setCategory } =
+    useLibraryFilters("miniapps");
   // Transient table page (1-based); reset on filter/sort/mode changes.
   const [page, setPage] = useState<number>(1);
+  // Which category sections are collapsed in grouped mode (by category key,
+  // "" = uncategorized). Default-open: a key is collapsed only when present.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
   // The mini-app staged for deletion (awaiting confirmation), or null.
   const [pendingDelete, setPendingDelete] = useState<MiniApp | null>(null);
 
@@ -1775,9 +1732,40 @@ function MiniAppsTab(): ReactElement {
     };
   }, []);
 
+  // Option sets derived from the current mini-apps — categories/tags are
+  // modeled inline (no separate entity), mirroring the Commands tab.
+  const allTags = useMemo(() => collectTagsFrom(miniapps), [miniapps]);
+  const allCategories = useMemo(
+    () => collectCategoriesFrom(miniapps),
+    [miniapps],
+  );
+
+  // Drop any selected tag/category that no longer exists so a stale filter
+  // can't hide everything with no way to clear it from the visible chips.
+  const effectiveTags = useMemo(
+    () => activeTags.filter((tag) => allTags.includes(tag)),
+    [activeTags, allTags],
+  );
+  const effectiveCategory =
+    category !== ALL_CATEGORIES && allCategories.includes(category)
+      ? category
+      : ALL_CATEGORIES;
+
   const filtered = useMemo(
-    () => miniapps.filter((ma) => matchesMiniAppQuery(ma, query, t)),
-    [miniapps, query, t],
+    () =>
+      filterEntities(
+        miniapps,
+        {
+          query,
+          tags: effectiveTags,
+          category:
+            effectiveCategory === ALL_CATEGORIES
+              ? undefined
+              : effectiveCategory,
+        },
+        (ma, q) => matchesMiniAppQuery(ma, q, t),
+      ),
+    [miniapps, query, effectiveTags, effectiveCategory, t],
   );
 
   const sortOptions: ReadonlyArray<SortOption<MiniAppSortKey>> = useMemo(
@@ -1799,18 +1787,56 @@ function MiniAppsTab(): ReactElement {
     [filtered, miniappsView.sortKey, miniappsView.sortDir],
   );
 
+  // Category groups (grouped mode only). Each group is internally sorted.
+  const groups = useMemo(
+    () =>
+      miniappsView.grouped
+        ? groupEntitiesByCategory(
+            filtered,
+            (items) =>
+              sortMiniApps(items, {
+                key: miniappsView.sortKey,
+                dir: miniappsView.sortDir,
+              }),
+            t("listView.uncategorized"),
+          )
+        : [],
+    [filtered, miniappsView.grouped, miniappsView.sortKey, miniappsView.sortDir, t],
+  );
+
   const pageResult = useMemo(
     () => paginate(sorted, page, miniappsView.pageSize),
     [sorted, page, miniappsView.pageSize],
   );
 
-  const showTable = miniappsView.mode === "table";
-  const compact = miniappsView.mode === "compact";
-
-  const handleSearch = (e: ChangeEvent<HTMLInputElement>): void => {
-    setQuery(e.target.value);
-    setPage(1);
+  const toggleGroupOpen = (key: string): void => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
+
+  const filtersActive =
+    query.trim() !== "" ||
+    effectiveTags.length > 0 ||
+    effectiveCategory !== ALL_CATEGORIES;
+
+  const toggleTag = (tag: string): void => {
+    setActiveTags((prev) =>
+      prev.includes(tag) ? prev.filter((t2) => t2 !== tag) : [...prev, tag],
+    );
+  };
+
+  const clearFilters = (): void => {
+    setQuery("");
+    setActiveTags([]);
+    setCategory(ALL_CATEGORIES);
+  };
+
+  const showTable = miniappsView.mode === "table" && !miniappsView.grouped;
+  const compact = miniappsView.mode === "compact";
 
   const handleCreate = (): void => {
     setMiniappEditorId(null);
@@ -1856,26 +1882,45 @@ function MiniAppsTab(): ReactElement {
 
   return (
     <>
-      <div className="library-toolbar">
-        <input
-          className="input"
-          type="search"
-          placeholder={t("miniapps.searchPlaceholder")}
-          value={query}
-          onChange={handleSearch}
-        />
-        <ListControls
-          sortOptions={sortOptions}
-          sortKey={miniappsView.sortKey}
-          sortDir={miniappsView.sortDir}
-          onSortChange={(key, dir) => {
-            updateMiniappsView({ sortKey: key, sortDir: dir });
-            setPage(1);
-          }}
-          mode={miniappsView.mode}
-          onModeChange={(mode) => updateMiniappsView({ mode })}
-        />
-      </div>
+      <LibraryFilterBar
+        query={query}
+        onQueryChange={(value) => {
+          setQuery(value);
+          setPage(1);
+        }}
+        searchPlaceholder={t("library.searchPlaceholder")}
+        categories={allCategories}
+        category={effectiveCategory}
+        onCategoryChange={(value) => {
+          setCategory(value);
+          setPage(1);
+        }}
+        tags={allTags}
+        activeTags={effectiveTags}
+        onToggleTag={toggleTag}
+        filtersActive={filtersActive}
+        onClearFilters={clearFilters}
+        sortOptions={sortOptions}
+        sortKey={miniappsView.sortKey}
+        sortDir={miniappsView.sortDir}
+        onSortChange={(key, dir) => {
+          updateMiniappsView({ sortKey: key, sortDir: dir });
+          setPage(1);
+        }}
+        mode={miniappsView.mode}
+        onModeChange={(mode) => {
+          updateMiniappsView(
+            mode === "table" ? { mode, grouped: false } : { mode },
+          );
+        }}
+        grouped={miniappsView.grouped}
+        onGroupedChange={(grouped) => {
+          const nextMode =
+            grouped && miniappsView.mode === "table" ? "tiles" : miniappsView.mode;
+          updateMiniappsView({ grouped, mode: nextMode });
+          setPage(1);
+        }}
+      />
 
       {!hydrated ? (
         <div className="empty-state">{t("common.loading")}</div>
@@ -1892,6 +1937,28 @@ function MiniAppsTab(): ReactElement {
         </div>
       ) : filtered.length === 0 ? (
         <div className="empty-state">{t("miniapps.noResults")}</div>
+      ) : miniappsView.grouped ? (
+        groups.map((group) => (
+          <CategoryGroupSection
+            key={group.key}
+            group={group}
+            isOpen={!collapsedGroups.has(group.key)}
+            onToggleOpen={toggleGroupOpen}
+            listClassName={`command-list${compact ? " command-list--compact" : ""}`}
+            renderItem={(miniapp) => (
+              <MiniAppCard
+                key={miniapp.id}
+                miniapp={miniapp}
+                onToggleFavorite={toggleFavorite}
+                onDelete={requestDelete}
+                onEdit={handleEdit}
+                onRun={handleRun}
+                compact={compact}
+                hideCategory
+              />
+            )}
+          />
+        ))
       ) : showTable ? (
         <>
           <MiniAppTable

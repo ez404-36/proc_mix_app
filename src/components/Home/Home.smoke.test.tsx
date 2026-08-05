@@ -46,17 +46,37 @@ vi.mock("../../utils/historyRepository", () => ({
   updateRunHistoryEventInDb: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../utils/miniappRepository", () => ({
+  listMiniAppsFromDb: vi.fn().mockResolvedValue([]),
+  getMiniAppFromDb: vi.fn().mockResolvedValue(null),
+  saveMiniAppInDb: vi.fn().mockResolvedValue(undefined),
+  deleteMiniAppInDb: vi.fn().mockResolvedValue(undefined),
+  runStatusProbe: vi.fn().mockResolvedValue(null),
+}));
+
 const triggerWorkflowRun = vi.fn().mockResolvedValue("run-1");
 vi.mock("../../services/workflowRunner", () => ({
   triggerWorkflowRun: (...args: unknown[]) => triggerWorkflowRun(...args),
 }));
 
+const openMiniAppWindow = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../services/miniappWindow", () => ({
+  openMiniAppWindow: (...args: unknown[]) => openMiniAppWindow(...args),
+  listOpenMiniAppWindows: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("@arco-design/web-react", () => ({
+  Message: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
+}));
+
 import "../../i18n";
 import { ContextMenuProvider } from "../ContextMenu";
 import { useCommandStore } from "../../stores/commandStore";
+import { useMiniAppStore } from "../../stores/miniappStore";
+import { useMiniAppWindowStore } from "../../stores/miniappWindowStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import type { Command, Workflow } from "../../types";
+import type { Command, MiniApp, MiniAppWidget, Workflow } from "../../types";
 import { Home } from "./Home";
 
 function makeCommand(overrides: Partial<Command> = {}): Command {
@@ -90,6 +110,32 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
   };
 }
 
+function buttonWidget(id: string): MiniAppWidget {
+  return {
+    id,
+    kind: "button",
+    layout: { x: 0, y: 0, w: 120, h: 44 },
+    label: "Go",
+    action: { kind: "inline", name: "Go", script: "echo go" },
+  };
+}
+
+function makeMiniApp(overrides: Partial<MiniApp> = {}): MiniApp {
+  return {
+    id: "ma-1",
+    name: "VPN Panel",
+    description: "Controls the office VPN",
+    widgets: [buttonWidget("w-1")],
+    tags: [],
+    favorite: false,
+    createdAt: "2026-07-31T00:00:00.000Z",
+    updatedAt: "2026-07-31T00:00:00.000Z",
+    runCount: 0,
+    panelSize: { w: 400, h: 320 },
+    ...overrides,
+  };
+}
+
 function resetStores(): void {
   useCommandStore.setState({
     commands: [],
@@ -98,11 +144,14 @@ function resetStores(): void {
     hydrated: true,
   });
   useWorkflowStore.setState({ workflows: [], hydrated: true });
+  useMiniAppStore.setState({ miniapps: [], favorites: [], hydrated: true });
+  useMiniAppWindowStore.setState({ runningIds: new Set() });
   useUIStore.setState({
     currentView: "home",
     commandEditorTarget: null,
     commandEditorDirty: false,
     editorWorkflowId: null,
+    miniappEditorId: null,
   });
 }
 
@@ -305,5 +354,75 @@ describe("Home workflow cards — edit & delete flow", () => {
     });
 
     expect(useWorkflowStore.getState().workflows).toHaveLength(0);
+  });
+});
+
+describe("Home mini-app tiles — favorites section", () => {
+  function seedFavoriteMiniApp(): void {
+    const ma = makeMiniApp({ id: "ma-1", name: "VPN Panel", favorite: true });
+    useMiniAppStore.setState({ miniapps: [ma], favorites: ["ma-1"], hydrated: true });
+  }
+
+  it("shows a favorited mini-app in the Favorites section", () => {
+    seedFavoriteMiniApp();
+    renderHome();
+
+    expect(screen.getByText("VPN Panel")).toBeTruthy();
+    expect(screen.getByText("Controls the office VPN")).toBeTruthy();
+    expect(screen.queryByText("No favorites yet.")).toBeNull();
+  });
+
+  it("Run opens the mini-app's standalone window", () => {
+    seedFavoriteMiniApp();
+    renderHome();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    });
+
+    expect(openMiniAppWindow).toHaveBeenCalledWith("ma-1");
+  });
+
+  it("double-clicking a mini-app tile navigates to its editor", () => {
+    seedFavoriteMiniApp();
+    renderHome();
+
+    act(() => {
+      fireEvent.doubleClick(screen.getByText("VPN Panel"));
+    });
+
+    expect(useUIStore.getState().currentView).toBe("miniapp-editor");
+    expect(useUIStore.getState().miniappEditorId).toBe("ma-1");
+  });
+
+  it("right-click Favorite toggles the mini-app's favorite flag", () => {
+    seedFavoriteMiniApp();
+    renderHome();
+
+    act(() => {
+      fireEvent.contextMenu(screen.getByText("VPN Panel"));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Remove from favorites" }));
+    });
+
+    expect(useMiniAppStore.getState().miniapps[0]?.favorite).toBe(false);
+  });
+
+  it("right-click Delete removes the mini-app after confirmation", () => {
+    seedFavoriteMiniApp();
+    renderHome();
+
+    act(() => {
+      fireEvent.contextMenu(screen.getByText("VPN Panel"));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    });
+
+    expect(useMiniAppStore.getState().miniapps).toHaveLength(0);
   });
 });

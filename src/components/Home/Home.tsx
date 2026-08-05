@@ -1,18 +1,25 @@
 import { useMemo, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+import { Message } from "@arco-design/web-react";
 import { deleteCommand as deleteCommandWithHistory } from "../../services/commandActions";
 import { deleteWorkflow as deleteWorkflowWithHistory } from "../../services/workflowActions";
+import { deleteMiniApp as deleteMiniAppWithHistory } from "../../services/miniappActions";
+import { openMiniAppWindow } from "../../services/miniappWindow";
 import { useCommandStore } from "../../stores/commandStore";
+import { useMiniAppStore } from "../../stores/miniappStore";
+import { useMiniAppWindowStore } from "../../stores/miniappWindowStore";
 import { useScheduleStore } from "../../stores/scheduleStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import type { Command, Workflow } from "../../types";
+import type { Command, MiniApp, Workflow } from "../../types";
 import {
   getCommandDescription,
   getCommandName,
 } from "../../utils/commandLabels";
+import { getMiniAppDescription, getMiniAppName } from "../../utils/miniappLabels";
 import { globalCommands } from "../../utils/commandFilters";
+import { renderIcon } from "../../utils/iconRenderer";
 import {
   checkCommandBlockers,
   checkWorkflowBlockers,
@@ -25,7 +32,7 @@ import { CommandView } from "../CommandView";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { WorkflowView } from "../WorkflowView";
 import { useContextMenu } from "../ContextMenu";
-import { RunIcon } from "../icons";
+import { RunIcon, SpinnerIcon } from "../icons";
 import type { ContextMenuEntry } from "../ContextMenu";
 import type { TFunction } from "i18next";
 
@@ -403,6 +410,147 @@ function WorkflowRow({ wf }: { wf: Workflow }): ReactElement {
   );
 }
 
+function buildMiniAppRowMenuItems(
+  miniapp: MiniApp,
+  t: TFunction,
+  actions: {
+    onToggleFavorite: (id: string) => void;
+    onDelete: () => void;
+    onEdit: () => void;
+  },
+): ContextMenuEntry[] {
+  return [
+    {
+      id: "favorite",
+      label: miniapp.favorite
+        ? t("contextMenu.favoriteRemove")
+        : t("contextMenu.favoriteAdd"),
+      onSelect: () => actions.onToggleFavorite(miniapp.id),
+    },
+    { id: "div1", divider: true },
+    {
+      id: "edit",
+      label: t("contextMenu.edit"),
+      onSelect: () => actions.onEdit(),
+    },
+    {
+      id: "delete",
+      label: t("contextMenu.delete"),
+      danger: true,
+      onSelect: () => actions.onDelete(),
+    },
+  ];
+}
+
+/**
+ * Favorite mini-app row. Mini-apps run in their own OS window (not an
+ * in-app view) — see `services/miniappWindow.ts` — so, unlike
+ * `CommandRow`/`WorkflowRow`, there is no read-only view modal here;
+ * double-click opens the editor directly, mirroring the Library's
+ * `MiniAppCard` double-click-less contract (that card has no
+ * `onDoubleClick` either — its title area alone opens the editor).
+ */
+function MiniAppRow({ miniapp }: { miniapp: MiniApp }): ReactElement {
+  const { t } = useTranslation();
+  const { show } = useContextMenu();
+  const toggleFavorite = useMiniAppStore((s) => s.toggleFavorite);
+  // History-aware delete — see Library.tsx for the rationale.
+  const deleteMiniApp = deleteMiniAppWithHistory;
+  const setView = useUIStore((s) => s.setView);
+  const setMiniappEditorId = useUIStore((s) => s.setMiniappEditorId);
+  const isRunning = useMiniAppWindowStore((s) => s.runningIds.has(miniapp.id));
+  const displayName = getMiniAppName(miniapp, t);
+  const displayDesc = getMiniAppDescription(miniapp, t);
+  // Whether the delete-confirmation dialog is open for this row.
+  const [confirmOpen, setConfirmOpen] = useState<boolean>(false);
+
+  const handleEdit = (): void => {
+    setMiniappEditorId(miniapp.id);
+    setView("miniapp-editor");
+  };
+
+  const handleRun = (): void => {
+    // Mirrors the Library's `MiniAppCard` Run handler — skip the IPC call
+    // for an already-running mini-app; the Rust side would just focus the
+    // existing window (never a duplicate), but this keeps every entry
+    // point from even attempting a pointless second round-trip.
+    if (isRunning) return;
+    openMiniAppWindow(miniapp.id).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      Message.error(
+        t("miniapps.windowOpenFailed", { defaultValue: message, message }),
+      );
+    });
+  };
+
+  const requestDelete = (): void => {
+    setConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = (): void => {
+    deleteMiniApp(miniapp.id);
+    setConfirmOpen(false);
+  };
+
+  const handleContextMenu = (e: ReactMouseEvent<HTMLDivElement>): void => {
+    show({
+      event: {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        preventDefault: () => e.preventDefault(),
+      },
+      items: buildMiniAppRowMenuItems(miniapp, t, {
+        onToggleFavorite: toggleFavorite,
+        onDelete: requestDelete,
+        onEdit: handleEdit,
+      }),
+    });
+  };
+
+  return (
+    <div
+      className="list-tile list-tile--miniapp"
+      onContextMenu={handleContextMenu}
+      onDoubleClick={handleEdit}
+    >
+      <div className="list-tile__head">
+        <div>
+          <h3 className="list-tile__title">
+            {renderIcon(miniapp.icon, 20, "list-tile__icon")}
+            {displayName}
+          </h3>
+          {displayDesc ? <p className="list-tile__desc">{displayDesc}</p> : null}
+        </div>
+      </div>
+      <div className="list-tile__meta">
+        <span className="type-badge type-badge--miniapp">{t("home.typeMiniApp")}</span>
+      </div>
+      <div className="list-tile__actions">
+        <button
+          type="button"
+          className={`btn btn--run${isRunning ? " is-running" : ""}`}
+          onClick={handleRun}
+          onDoubleClick={(e) => e.stopPropagation()}
+          disabled={isRunning}
+        >
+          {isRunning ? <SpinnerIcon /> : <RunIcon />}
+          {isRunning ? t("miniapps.running") : t("common.run")}
+        </button>
+      </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={t("miniapps.deleteConfirmTitle")}
+        message={t("miniapps.deleteConfirm", { name: displayName })}
+        confirmLabel={t("common.delete")}
+        danger
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </div>
+  );
+}
+
 /** A recently-run entry, discriminated so the list can render either kind. */
 type RecentEntry =
   | { type: "command"; lastRunAt: string; command: Command }
@@ -413,17 +561,20 @@ export function Home(): ReactElement {
   const allCommands = useCommandStore((s) => s.commands);
   const commands = useMemo(() => globalCommands(allCommands), [allCommands]);
   const workflows = useWorkflowStore((s) => s.workflows);
+  const miniapps = useMiniAppStore((s) => s.miniapps);
 
   type FavoriteEntry =
     | { type: "command"; command: Command }
-    | { type: "workflow"; workflow: Workflow };
+    | { type: "workflow"; workflow: Workflow }
+    | { type: "miniapp"; miniapp: MiniApp };
 
   const favorites = useMemo<FavoriteEntry[]>(
     () => [
       ...commands.filter((c) => c.favorite).map((c) => ({ type: "command" as const, command: c })),
       ...workflows.filter((w) => w.favorite).map((w) => ({ type: "workflow" as const, workflow: w })),
+      ...miniapps.filter((m) => m.favorite).map((m) => ({ type: "miniapp" as const, miniapp: m })),
     ],
-    [commands, workflows],
+    [commands, workflows, miniapps],
   );
 
   const recent = useMemo<RecentEntry[]>(() => {
@@ -461,13 +612,15 @@ export function Home(): ReactElement {
           <div className="empty-state">{t("home.noFavorites")}</div>
         ) : (
           <div className="command-list">
-            {favorites.map((entry) =>
-              entry.type === "command" ? (
-                <CommandRow key={`cmd-${entry.command.id}`} cmd={entry.command} />
-              ) : (
-                <WorkflowRow key={`wf-${entry.workflow.id}`} wf={entry.workflow} />
-              ),
-            )}
+            {favorites.map((entry) => {
+              if (entry.type === "command") {
+                return <CommandRow key={`cmd-${entry.command.id}`} cmd={entry.command} />;
+              }
+              if (entry.type === "workflow") {
+                return <WorkflowRow key={`wf-${entry.workflow.id}`} wf={entry.workflow} />;
+              }
+              return <MiniAppRow key={`ma-${entry.miniapp.id}`} miniapp={entry.miniapp} />;
+            })}
           </div>
         )}
       </section>

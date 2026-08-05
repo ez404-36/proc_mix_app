@@ -65,7 +65,8 @@
     "noFavorites": "No favorites yet.",
     "noRecent": "No commands have been run yet. Pick one from the Library to get started.",
     "typeCommand": "Command",
-    "typeWorkflow": "Workflow"
+    "typeWorkflow": "Workflow",
+    "typeMiniApp": "Mini-App"
   },
   "library": {
     "title": "Library",
@@ -414,7 +415,6 @@
       "miniapps": "Mini-Apps"
     },
     "new": "New workflow",
-    "searchPlaceholder": "Search workflows by name, description, or tag…",
     "noResults": "No workflows match your search.",
     "noWorkflows": "No workflows yet. Create your first one.",
     "favorite": "Favorite",
@@ -435,7 +435,6 @@
     "subtitle": "Compact UI panels for your commands.",
     "create": "Create mini-app",
     "createLabel": "Mini-App",
-    "searchPlaceholder": "Search mini-apps by name, description, or tag…",
     "noResults": "No mini-apps match your search.",
     "empty": "No mini-applications yet.",
     "emptyHint": "Create your first mini-application to build a custom control panel.",
