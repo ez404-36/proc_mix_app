@@ -5,6 +5,63 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-08-07
+
+### Added
+
+- **Mini-Apps.** A new Library tab and visual canvas editor for building
+  compact control-panel widgets (button, toggle, status, artifact, text)
+  wired to existing commands, with a shared artifact/variable system across
+  a mini-app's widgets. Each mini-app opens in its own standalone OS window
+  (`platform::miniapp_window`) from the Library or the system tray, at most
+  one window per mini-app id (re-launching focuses the existing window);
+  closing a window with active child processes prompts to also stop them
+  (`MiniAppCloseConfirmDialog`).
+- **Mini-app window layout.** Every mini-app window has a permanent
+  Interface / Console / Processes tab layout (`MiniAppRunnerTabs`). Console
+  merges every tracked run into one chronological log; Processes lists only
+  running/pending executions with PID + Cancel and a live count badge. Every
+  widget run's `executionId` is tagged `mawin:<miniAppId>:<uuid>` so
+  execution events never leak into the main window's console or another
+  mini-app's window.
+- **Headless status probing.** Status widgets poll a command on an interval
+  and render a normalized state without a visible console
+  (`services/miniappStatusPoller.ts`); a new `StatusPolling.refresh` lets a
+  toggle force an immediate re-probe. Toggle widgets flip immediately on
+  click and hold that optimistic state until a probe postdating the action
+  confirms it, within a 30s grace window that self-corrects on failure.
+- **Built-in seed templates**: a System Info panel (CPU load, uptime,
+  host/OS/CPU details) and an OpenVPN3 connection toggle (status probe
+  scoped by exact config-path match instead of a substring/basename match).
+- **Standalone mini-app tray launch** and Library "Running" tile state fed
+  by a new `miniapp-window-event` Tauri channel, reconciled against the live
+  window registry on every Mini-Apps tab mount.
+- **Unified Library filter/sort/group UI.** `LibraryFilterBar` +
+  `CategoryGroupSection` and shared `filterEntities`/`groupEntitiesByCategory`
+  utilities bring category filter, tag filter, and group-by-category
+  (previously Commands-only) to Workflows and Mini-Apps too. Each Library
+  tab's search/filter state persists independently
+  (`hooks/useLibraryFilters.ts`).
+- **Home favorites for Mini-Apps** — favorited mini-apps now appear in the
+  Home view's Favorites section (run / open-window / edit / favorite /
+  delete via context menu).
+- Sidebar navigation icons, the collapse toggle, and the theme-cycle button
+  migrated from Unicode glyphs to proper `icons/` SVG components
+  (`HomeIcon`, `LibraryIcon`, `SchedulerIcon`, `HistoryIcon`, `RecordIcon`,
+  `EnvIcon`, `PluginsIcon`, `SettingsIcon`, `ThemeIcon`, `SidebarToggleIcon`).
+
+### Fixed
+
+- OpenVPN3 seed: disconnect had been broken since the seed's first version
+  because `session-manage --config` requires the exact string passed to
+  `session-start --config`, not a basename-derived name; the status probe
+  now compares `Config name:` for exact equality instead of a substring
+  match, and a non-zero probe exit no longer renders as a hard error for
+  "no config selected" / "no matching session".
+- Plugins and Settings sidebar icons redrawn (four-square "detaching module"
+  silhouette for Plugins; single filled gear/cog outline for Settings) after
+  reading as visually inconsistent at 16px.
+
 ## [0.14.4] - 2026-07-28
 
 ### Added

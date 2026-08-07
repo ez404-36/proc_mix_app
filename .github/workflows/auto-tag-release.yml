@@ -1,0 +1,116 @@
+name: Auto-tag release on version bump
+
+# Automatically creates and pushes a `v<version>` git tag when a version bump
+# lands on `main` — so publishing a release only requires merging the branch
+# that already contains the version bump + release notes (see
+# docs/releases/, app/CHANGELOG.md, PLAN.md and the `app-releases` skill).
+# Pushing the tag triggers release.yml's installer build + draft GitHub
+# Release, exactly as a manual `git tag` + `git push` would.
+#
+# Trigger: push to `main` that touches one of the three version files
+# (package.json / Cargo.toml / tauri.conf.json). The `paths` filter alone is
+# NOT sufficient to detect a real bump (touching those files without
+# changing the version string, e.g. a comment edit, would also match), so
+# the job additionally diffs the ACTUAL version value between the
+# before/after commit of the push before doing anything.
+#
+# IMPORTANT — GITHUB_TOKEN cannot trigger downstream workflows: a tag or
+# commit pushed using the default `GITHUB_TOKEN` does NOT trigger OTHER
+# workflows (GitHub's anti-recursion rule), so pushing the tag with
+# `GITHUB_TOKEN` here would silently fail to kick off release.yml. To avoid
+# that trap, this job pushes the tag using a personal access token stored in
+# the `RELEASE_TAG_PAT` secret (repo scope is enough) if present, falling
+# back to `GITHUB_TOKEN` with a loud warning otherwise (the tag is still
+# created — release.yml would then need a manual `workflow_dispatch`, or the
+# tag push re-triggered by re-pushing it from a local clone).
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'package.json'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/tauri.conf.json'
+
+permissions:
+  contents: write
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need history for both the before/after SHAs of the push, plus
+          # the ability to fetch the previous commit's version of
+          # package.json for the diff below.
+          fetch-depth: 0
+
+      - name: Detect version bump
+        id: version
+        run: |
+          set -euo pipefail
+
+          before='${{ github.event.before }}'
+          new_version="$(jq -r '.version' package.json)"
+          echo "new=$new_version" >> "$GITHUB_OUTPUT"
+
+          # `before` is all-zeros for the first push of a new branch (not
+          # expected on `main`, but handle it defensively) — with no prior
+          # state to diff against, fall through to the tag-exists check
+          # below as the real guard instead of guessing.
+          if [ "$before" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$before" 2>/dev/null; then
+            echo "No previous commit to diff against; relying on tag-exists check."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          old_version="$(git show "$before:package.json" 2>/dev/null | jq -r '.version // empty')"
+
+          if [ "$old_version" = "$new_version" ]; then
+            echo "Version unchanged ($new_version); this push did not bump the version."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version changed: $old_version -> $new_version"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify version files are in lockstep
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          pkg_version="${{ steps.version.outputs.new }}"
+          cargo_version="$(grep -m1 '^version' src-tauri/Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          tauri_version="$(jq -r '.version' src-tauri/tauri.conf.json)"
+
+          if [ "$pkg_version" != "$cargo_version" ] || [ "$pkg_version" != "$tauri_version" ]; then
+            echo "::error::Version mismatch — package.json=$pkg_version Cargo.toml=$cargo_version tauri.conf.json=$tauri_version. Refusing to tag an inconsistent release."
+            exit 1
+          fi
+
+      - name: Create and push tag
+        if: steps.version.outputs.changed == 'true'
+        env:
+          # Prefer a PAT so the pushed tag can trigger release.yml (see the
+          # header comment). Falls back to GITHUB_TOKEN, which still creates
+          # the tag but will NOT auto-trigger the release build.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TAG_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="v${{ steps.version.outputs.new }}"
+
+          if git ls-remote --tags origin "$tag" | grep -q "refs/tags/$tag"; then
+            echo "Tag $tag already exists on origin; nothing to do."
+            exit 0
+          fi
+
+          if [ -z "${{ secrets.RELEASE_TAG_PAT }}" ]; then
+            echo "::warning::RELEASE_TAG_PAT is not set — tagging with GITHUB_TOKEN, which will NOT trigger release.yml automatically (GitHub blocks workflows triggering workflows via the default token). Add a repo-scoped PAT as RELEASE_TAG_PAT to fully automate this, or manually re-run release.yml via workflow_dispatch / re-push the tag."
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Release $tag"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$tag"
+          echo "Pushed tag $tag"
