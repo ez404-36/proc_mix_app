@@ -1,11 +1,8 @@
 //! Aggregates discovered plugins into the deduplicated, status-annotated list
-//! the UI shows. Mirrors `core/ssh/registry.rs`:
-//!   1. take the discovered plugins (across the three roots),
-//!   2. compute a per-plugin status (loaded / disabled / incompatible / error),
-//!   3. deduplicate by manifest `id` (first occurrence wins — core before
-//!      community before user),
-//!   4. isolate per-plugin failures so one broken manifest never sinks the
-//!      list.
+//! the UI shows: computes per-plugin status (loaded / disabled / incompatible
+//! / error), deduplicates by manifest `id` (core before community before
+//! user), and isolates per-plugin failures so one broken manifest never
+//! sinks the list.
 //!
 //! Phase 1 does NOT execute any plugin; it only describes and orders them. The
 //! enabled/disabled flag is supplied by the caller (persisted separately) and

@@ -1,23 +1,14 @@
 // Composite hardware-ID fingerprint used to bind a license lease to a
 // device.
 //
-// Privacy contract: the RAW machine identifiers (machine-id, IOPlatformUUID,
-// MachineGuid, MAC address) NEVER leave the device. They are concatenated
-// with a build-time salt and hashed with SHA-256; only the resulting hex
-// digest (`hwid_hash`) is ever sent to the license server or stored.
+// Raw machine identifiers (machine-id, IOPlatformUUID, MachineGuid, MAC
+// address) never leave the device — only the SHA-256 digest of them plus a
+// build-time salt is sent to the license server.
 //
-// Stability contract: the fingerprint must be stable across app restarts and
-// reinstalls on the same hardware (so a trial cannot be reset, and an
-// activated lease keeps verifying). It composes a primary OS identifier with
-// the primary-NIC MAC as a secondary signal. Each source degrades gracefully:
-// a missing source contributes an empty component rather than panicking, so a
-// machine that hides one identifier still produces a deterministic hash from
-// whatever remains. A machine that exposes NO identifier at all yields a
-// stable all-empty fingerprint — verification then relies on the server's
-// own records, and the user can re-activate.
-//
-// Determinism: `compose_hwid_hash` is a pure function of its inputs and is
-// unit-tested directly; the OS collectors feed it. Same inputs → same hash.
+// Composes a primary OS identifier with the primary-NIC MAC. Each source
+// degrades to an empty component rather than panicking when unavailable.
+// `compose_hwid_hash` is a pure function of its inputs, unit-tested
+// directly.
 
 use sha2::{Digest, Sha256};
 

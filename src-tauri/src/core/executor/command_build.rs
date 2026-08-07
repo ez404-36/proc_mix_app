@@ -864,13 +864,10 @@ pub(crate) fn libc_killpg(pgid: i32, sig: i32) -> i32 {
 }
 
 /// `true` when `pgid` is safe to target with a group-wide signal: positive,
-/// above the init group, and NOT equal to ProcMix's own process group or
-/// session. This is a last-line, defence-in-depth re-check at the signal
-/// site (the authoritative isolation decision is made once, at spawn, by
-/// [`resolve_isolated_pgid`]). It exists because the elevated kill path runs
-/// `kill` as ROOT, where signaling our own session group would kill the whole
-/// desktop and EPERM no longer protects us — so even a stale/mistaken `pgid`
-/// must never reach `sudo kill -<pgid>`.
+/// above the init group, and not equal to ProcMix's own process group or
+/// session. Defence-in-depth re-check at the signal site — the elevated kill
+/// path runs `kill` as root, where signaling our own session group would
+/// take down the desktop and EPERM no longer protects us.
 #[cfg(unix)]
 pub(crate) fn pgid_is_safe_target(pgid: i32) -> bool {
     if pgid <= 1 {
@@ -904,25 +901,16 @@ pub(crate) fn libc_getsid(pid: i32) -> i32 {
 }
 
 /// Resolve the process group to use for a group-wide kill of `child_pid`,
-/// returning `Some(pgid)` ONLY when that group is provably a fresh, isolated
+/// returning `Some(pgid)` only when that group is provably a fresh, isolated
 /// group created by our `setsid()` in `pre_exec` — never the inherited
 /// login/session group ProcMix itself belongs to.
 ///
-/// `getpgid(child) == child` is NECESSARY but NOT SUFFICIENT: when ProcMix is
-/// launched directly from the display manager / login shell it can already be
-/// a process-group leader, so `setsid()` fails with `EPERM` (silently, in
-/// `pre_exec`) and the child INHERITS ProcMix's group. If that inherited
-/// group's pgid happens to equal the child's pid, the old `g == pid` check
-/// passed and a cancel/timeout `killpg(g, SIGKILL)` nuked the entire desktop
-/// session (black screen, forced re-login). The elevated path is worse: it
-/// runs `sudo kill -9 -<pgid>` as root, where the in-process EPERM that would
-/// otherwise spare an unrelated group no longer applies.
-///
-/// We therefore additionally require the group to differ from ProcMix's OWN
-/// process group (`getpgid(0)`) and session (`getsid(0)`). A genuine
-/// `setsid()` always yields a brand-new session whose id equals the child pid
-/// and differs from ours; the EPERM-inherited group fails at least one of
-/// these checks and falls back to a single-child kill.
+/// `getpgid(child) == child` alone is not sufficient: if `setsid()` fails
+/// with `EPERM` (ProcMix already a group leader), the child inherits
+/// ProcMix's group, which can coincidentally equal the child's pid. We
+/// therefore also require the group to differ from ProcMix's own process
+/// group (`getpgid(0)`) and session (`getsid(0)`) before allowing a
+/// group-wide kill.
 #[cfg(unix)]
 pub(crate) fn resolve_isolated_pgid(child_pid: i32) -> Option<i32> {
     if child_pid <= 1 {
@@ -1054,9 +1042,7 @@ mod shell_invocation_tests {
         assert_eq!(args, &["-c"]);
     }
 
-    /// Regression: `sh` and `powershell` used to alias to `bash` and `pwsh`
-    /// respectively. Lock that fix in so a future refactor cannot silently
-    /// reintroduce the aliasing.
+    /// Regression: `sh` and `powershell` must not alias to `bash`/`pwsh`.
     #[test]
     fn sh_and_powershell_are_not_aliased() {
         let (sh_exe, _) = shell_invocation("sh");
@@ -1149,10 +1135,8 @@ mod elevated_argv_tests {
         assert_eq!(argv[dd + 4], "Get-Process");
     }
 
-    /// Regression: the script is passed as a SINGLE argument to sudo,
-    /// not split on whitespace. A naive implementation that joined
-    /// argv with spaces and re-split on a shell would let the user's
-    /// script body inject extra arguments.
+    /// Regression: the script must be passed as a single argument to sudo,
+    /// not split/rejoined on whitespace.
     #[test]
     fn script_with_spaces_stays_a_single_argv_element() {
         let script = "echo hello world && uname -a";

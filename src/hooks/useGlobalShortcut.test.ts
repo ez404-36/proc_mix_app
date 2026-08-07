@@ -198,23 +198,9 @@ describe("useGlobalShortcut - shortcut change re-registration", () => {
 });
 
 describe("useGlobalShortcut - previous-accelerator inline unregister (lines 64-66)", () => {
-  // ONE bounded attempt to reach the `if (previous && previous !== accelerator)`
-  // branch at lines 64-66 of the source, where `apply()` unregisters the
-  // previously-registered accelerator INLINE before registering the new one.
-  //
-  // The claim is that this branch is structurally unreachable from a
-  // renderHook test because, on any accelerator (dep) change, React runs the
-  // OLD effect's cleanup BEFORE the new effect's setup. The cleanup op is
-  // queued FIRST onto the FIFO `opChain`; it nulls `lastRegistered.current`.
-  // The new effect's `apply()` is queued SECOND, so by the time it reads
-  // `previous = lastRegistered.current` the ref is already null → the
-  // `previous !== accelerator` branch never runs.
-  //
-  // This test tries to interleave the ops so `apply()` observes a NON-null
-  // `previous`: it holds the cleanup's `safeUnregister` open (by making its
-  // `isRegistered` hang) at the moment of the accelerator change, hoping the
-  // new effect's `apply()` runs its synchronous prefix first. A probe records
-  // the exact operation order so the outcome is verifiable either way.
+  // Attempts to reach the `if (previous && previous !== accelerator)` branch
+  // by interleaving cleanup/apply op ordering. Documents whether the branch
+  // is reachable via renderHook; a probe records the operation order.
   it("attempts to observe a non-null previous accelerator in apply() (documents reachability)", async () => {
     const order: string[] = [];
 

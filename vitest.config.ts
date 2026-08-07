@@ -7,12 +7,8 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
-    // jsdom startup and module transform can take tens of seconds on a
-    // loaded / slow CI machine (observed environment setup > 60s). The
-    // default 10s test/hook timeout then trips an unrelated `afterEach`
-    // (fake-timer cleanup) with "Hook timed out in 10000ms" even though
-    // the assertions themselves pass. Raise both ceilings so a slow host
-    // does not produce spurious timeout failures.
+    // Raised from the 10s default: a loaded CI machine can exceed it during
+    // jsdom startup alone, producing spurious hook timeouts.
     testTimeout: 30000,
     hookTimeout: 30000,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
@@ -38,18 +34,10 @@ export default defineConfig({
         "src/**/*.bench.*",
         "src/test/**",
         "src/stores/index.ts",
-        // useGlobalShortcut.ts is 96 % covered; the only gap is the
-        // `previous && previous !== accelerator` branch (lines 65-66), which is
-        // STRUCTURALLY UNREACHABLE via React's lifecycle: the hook serializes
-        // every register/unregister onto a module-global FIFO promise chain and
-        // nulls `lastRegistered.current` inside the effect-cleanup op. React
-        // always runs the old effect's cleanup before the new effect's setup,
-        // and the cleanup op is enqueued BEFORE the next `apply()`, so by the
-        // time `apply()` reads `previous = lastRegistered.current` it is always
-        // null. Confirmed by two independent operation-order probes (see
-        // useGlobalShortcut.test.ts). Excluded so the global 100 % line/function
-        // gate stays enforced for every other file rather than being lowered
-        // project-wide to accommodate two lines of dead defensive code.
+        // The `previous && previous !== accelerator` branch (lines 65-66) is
+        // structurally unreachable via React's effect lifecycle — see
+        // useGlobalShortcut.test.ts. Excluded to keep the 100% gate for
+        // every other file.
         "src/hooks/useGlobalShortcut.ts",
       ],
       // Defensive SSR guards (`typeof document === "undefined"`,

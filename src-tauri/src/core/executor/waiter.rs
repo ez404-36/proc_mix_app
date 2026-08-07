@@ -802,15 +802,10 @@ async fn elevated_kill_pids(pids: &[i32], sig: i32, password: &str) {
 mod kill_tree_tests {
     //! Regression tests for the cancel-kills-the-whole-tree behaviour.
     //!
-    //! These tests cross the real OS boundary: they spawn `bash` with
-    //! `pre_exec` calling `setsid()` (exactly as `spawn_execution` does),
-    //! then verify that `kill_child_tree` with the captured pgid
-    //! actually terminates the child. The prior implementation called
-    //! `Child::start_kill()` which sends SIGKILL only to the direct
-    //! child; for a `sudo`-wrapped invocation that left the descendants
-    //! orphaned. We can't run real `sudo` in CI, but a `bash -c
-    //! 'sleep 60'` reproduces the same kill semantics — the test fails
-    //! if a future refactor reverts to single-process kill.
+    //! Cross the real OS boundary: spawn `bash` with `pre_exec` calling
+    //! `setsid()` (as `spawn_execution` does), then verify `kill_child_tree`
+    //! with the captured pgid terminates the entire process group, not just
+    //! the direct child.
     use super::*;
     use crate::core::executor::command_build::{libc_getpgid, libc_setsid, SIGKILL, SIGTERM};
     use crate::core::executor::{

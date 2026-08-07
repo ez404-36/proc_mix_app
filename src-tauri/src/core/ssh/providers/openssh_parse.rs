@@ -468,9 +468,8 @@ mod tests {
     #[test]
     fn raw_text_excludes_next_blocks_detached_leading_comment() {
         // Regression: a comment after a blank line, just above the next
-        // `Host`, is the NEXT block's lead comment — it must not be captured
-        // into the previous block's raw text. (Mirrors the view-modal bug
-        // where a pattern showed the following host's comment.)
+        // `Host`, belongs to that next block and must not be captured into
+        // the previous block's raw text.
         let cfg = parse(
             "Host *.staging.example.com\n    User ci\n    Port 22\n\n# leads the next block\nHost behind\n    User ops\n",
         );

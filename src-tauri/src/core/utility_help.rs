@@ -760,9 +760,8 @@ mod tests {
         // A path carrying a shell metacharacter is rejected.
         assert_eq!(parse_utility_name("/usr/bin/$x"), None);
         assert_eq!(parse_utility_name("~/bin/tool"), None);
-        // NOTE: `rm;rm` resolves to `rm` now that the segment is cut at
-        // the `;` separator (see `separator_is_whitespace_insensitive`).
-        // It is NOT a metachar-rejection case anymore.
+        // NOTE: `rm;rm` resolves to `rm` — the segment is cut at the `;`
+        // separator (see `separator_is_whitespace_insensitive`).
     }
 
     #[test]

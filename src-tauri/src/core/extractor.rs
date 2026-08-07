@@ -1269,12 +1269,9 @@ mod tests {
     }
 
     #[test]
-    fn table_field_named_rows_no_longer_collides() {
-        // Regression: a declared field literally named `rows` used to overwrite
-        // the implicit row array inside `parse_table`'s map, corrupting the
-        // projection (every row came back `{}`). Now `parse_table` returns just
-        // the rows and projection is the caller's job, so `rows` is an ordinary
-        // field name and projects its column correctly.
+    fn table_field_named_rows_does_not_collide() {
+        // Regression: a field literally named `rows` must not collide with
+        // the implicit row array — it is an ordinary field name.
         let mut s = schema("table");
         s.has_header = Some(true);
         s.delimiter = Some(",".into());

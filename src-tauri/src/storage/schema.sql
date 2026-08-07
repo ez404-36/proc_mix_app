@@ -102,13 +102,9 @@ CREATE TABLE IF NOT EXISTS commands (
 
 CREATE INDEX IF NOT EXISTS idx_commands_favorite ON commands(favorite);
 CREATE INDEX IF NOT EXISTS idx_commands_last_run_at ON commands(last_run_at);
--- NOTE: the partial unique index `idx_commands_api_slug` is intentionally NOT
--- created here. On a database that predates the `api_slug` column the CREATE
--- TABLE IF NOT EXISTS above is a no-op, so the column is still missing when this
--- script runs (before the ALTER in db.rs::ensure_commands_columns) and indexing
--- it would panic with "no such column: api_slug". The index is created in
--- ensure_commands_columns instead, AFTER the column is guaranteed to exist
--- (same pattern as idx_history_schedule_id).
+-- NOTE: `idx_commands_api_slug` is not created here — on a pre-migration
+-- database the `api_slug` column may not exist yet. Created in
+-- db.rs::ensure_commands_columns, after the column is guaranteed to exist.
 
 -- Action history. Records create/edit/delete/run events for commands so the
 -- "History" view can show a paginated, filterable timeline AND so the user
@@ -142,13 +138,9 @@ CREATE INDEX IF NOT EXISTS idx_history_created_at ON history_events(created_at D
 CREATE INDEX IF NOT EXISTS idx_history_kind ON history_events(kind);
 CREATE INDEX IF NOT EXISTS idx_history_command_name ON history_events(command_name);
 CREATE INDEX IF NOT EXISTS idx_history_execution_id ON history_events(execution_id);
--- NOTE: the `schedule_id` index is intentionally NOT created here. On a
--- database that predates the `schedule_id` column, `CREATE TABLE IF NOT
--- EXISTS` above is a no-op (so the column is still missing at this point) and
--- this script runs BEFORE the idempotent `ALTER TABLE … ADD COLUMN schedule_id`
--- in db.rs::ensure_history_columns — indexing a not-yet-added column panics
--- with "no such column: schedule_id". The index is created in
--- ensure_history_columns instead, AFTER the column is guaranteed to exist.
+-- NOTE: `idx_history_schedule_id` is not created here — on a pre-migration
+-- database the `schedule_id` column may not exist yet. Created in
+-- db.rs::ensure_history_columns, after the column is guaranteed to exist.
 
 -- Workflows: the visual-editor automation graphs (v0.5.0). A workflow is a
 -- directed graph of nodes (start / command / condition / end) connected by
@@ -319,10 +311,9 @@ CREATE TABLE IF NOT EXISTS http_server_config (
   -- 1 (default) = an API-triggered run streams to the live console / OutputPanel
   -- (silent = false); 0 = runs are silent (history-only).
   log_to_console  INTEGER NOT NULL DEFAULT 1,
-  -- 1 (default for fresh installs) = also serve the browser-served read-only web
-  -- UI ("reduced ProcMix") over the same port; 0 = REST API only. NOTE: the
-  -- ADD COLUMN migration (db.rs) back-fills EXISTING databases with 0, so an
-  -- upgrade never silently exposes the web UI — only new installs default on.
+  -- 1 (default for fresh installs) = also serve the browser-served read-only
+  -- web UI ("reduced ProcMix") over the same port; 0 = REST API only.
+  -- Existing databases are back-filled with 0 by the ADD COLUMN migration.
   -- See docs/http-server.md.
   serve_web_ui    INTEGER NOT NULL DEFAULT 1,
   created_at      TEXT NOT NULL DEFAULT '',

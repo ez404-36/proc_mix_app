@@ -391,16 +391,12 @@ mod imp {
         // gives interior mutability. There is exactly one callback thread,
         // so the lock is never contended.
         //
-        // Mandatory self-exclusion (scoping plan §3.4): exclude ProcMix's own
-        // subtree. We add our own PID; the immediate-parent root (Toolhelp
-        // ppid lookup) is deferred together with Windows snapshot-seeding.
+        // Mandatory self-exclusion: exclude ProcMix's own subtree via our PID.
         //
-        // NOTE: Windows snapshot-seeding (Toolhelp `CreateToolhelp32Snapshot`)
-        // for `Subtree`/self-exclusion is a follow-up — see scoping plan
-        // §3.2/§3.3. Without it, scoping a Windows app that is ALREADY running
-        // won't pick up its pre-existing children, only those launched after
-        // recording starts. The scope tree itself is fully wired; only the
-        // seed source is TODO.
+        // TODO: Windows snapshot-seeding (Toolhelp `CreateToolhelp32Snapshot`)
+        // for `Subtree`/self-exclusion is not yet implemented — an
+        // already-running target app only picks up children launched after
+        // recording starts.
         let self_roots: std::collections::HashSet<u32> =
             std::iter::once(std::process::id()).collect();
         let filter = Mutex::new(CaptureFilter::with_scope_and_self_subtree(

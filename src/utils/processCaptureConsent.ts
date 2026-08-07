@@ -1,15 +1,12 @@
 // Opt-in consent gate for Process Capture (the background "command
 // recorder"). See `docs/process-capture.md` for the full contract.
 //
-// Process Capture is OFF by default. Before any capture command may run,
-// the user must accept a one-time consent dialog that explains what is
-// observed and the risk of capturing passwords/tokens in command lines.
-// The accepted state is persisted on `useUIStore.processCaptureEnabled`.
+// Process Capture is OFF by default; capture may only start after the user
+// accepts a one-time consent dialog. The accepted state is persisted on
+// `useUIStore.processCaptureEnabled`.
 //
 // This module owns the pure gate logic so it can be unit-tested without a
-// React tree. The Recorder UI (a later step) renders the actual dialog and
-// supplies `requestConsent`; this gate decides whether the dialog needs to
-// be shown at all and never lets capture start without consent.
+// React tree. Callers supply `requestConsent` to render the actual dialog.
 
 /**
  * Outcome of resolving capture consent. `granted` is the single source of
