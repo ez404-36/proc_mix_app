@@ -19,10 +19,21 @@ name: Auto-tag release on version bump
 # workflows (GitHub's anti-recursion rule), so pushing the tag with
 # `GITHUB_TOKEN` here would silently fail to kick off release.yml. To avoid
 # that trap, this job pushes the tag using a personal access token stored in
-# the `RELEASE_TAG_PAT` secret (repo scope is enough) if present, falling
-# back to `GITHUB_TOKEN` with a loud warning otherwise (the tag is still
-# created — release.yml would then need a manual `workflow_dispatch`, or the
-# tag push re-triggered by re-pushing it from a local clone).
+# the `RELEASE_TAG_PAT` secret (`Contents: read and write` is enough) if
+# present, falling back to `GITHUB_TOKEN` with a loud warning otherwise (the
+# tag is still created — release.yml would then need a manual
+# `workflow_dispatch`, or the tag push re-triggered from a local clone).
+#
+# The PAT MUST be handed to `actions/checkout` via its `token:` input — NOT
+# merely embedded in the push URL. checkout persists whatever token it was
+# given as `http.https://github.com/.extraheader`, and that header WINS over
+# any `https://user:token@github.com/...` credentials in the remote URL (curl
+# replaces its auto-generated Authorization header with the explicit one). A
+# `git push https://x-access-token:${PAT}@...` after a default checkout
+# therefore still authenticates as GITHUB_TOKEN and is silently swallowed by
+# the anti-recursion rule — this is exactly how v0.15.1 shipped a tag with no
+# installer build. Because checkout holds the credential, the push below is a
+# plain `git push origin "$tag"`.
 
 on:
   push:
@@ -35,6 +46,9 @@ on:
 
 permissions:
   contents: write
+  # `actions: read` is required by the final step's `gh run list`, which
+  # confirms the tag push actually started release.yml.
+  actions: read
 
 jobs:
   auto-tag:
@@ -46,6 +60,10 @@ jobs:
           # the ability to fetch the previous commit's version of
           # package.json for the diff below.
           fetch-depth: 0
+          # Persist the PAT (not GITHUB_TOKEN) as the credential git will use
+          # for the tag push in the last step — see the header comment for why
+          # putting it in the push URL instead does not work.
+          token: ${{ secrets.RELEASE_TAG_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Detect version bump
         id: version
@@ -92,10 +110,13 @@ jobs:
       - name: Create and push tag
         if: steps.version.outputs.changed == 'true'
         env:
-          # Prefer a PAT so the pushed tag can trigger release.yml (see the
-          # header comment). Falls back to GITHUB_TOKEN, which still creates
-          # the tag but will NOT auto-trigger the release build.
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TAG_PAT || secrets.GITHUB_TOKEN }}
+          # Read through `env` rather than interpolating `${{ secrets.* }}`
+          # into the script body: an inline secret is rendered into the log as
+          # `***`, which makes the emptiness check unreadable when debugging
+          # (and bakes the value into the command text). Only used to decide
+          # WHICH warning to print — the credential itself is already held by
+          # the checkout step above.
+          HAS_PAT: ${{ secrets.RELEASE_TAG_PAT != '' }}
         run: |
           set -euo pipefail
           tag="v${{ steps.version.outputs.new }}"
@@ -105,12 +126,39 @@ jobs:
             exit 0
           fi
 
-          if [ -z "${{ secrets.RELEASE_TAG_PAT }}" ]; then
-            echo "::warning::RELEASE_TAG_PAT is not set — tagging with GITHUB_TOKEN, which will NOT trigger release.yml automatically (GitHub blocks workflows triggering workflows via the default token). Add a repo-scoped PAT as RELEASE_TAG_PAT to fully automate this, or manually re-run release.yml via workflow_dispatch / re-push the tag."
+          if [ "$HAS_PAT" != "true" ]; then
+            echo "::warning::RELEASE_TAG_PAT is not set — tagging with GITHUB_TOKEN, which will NOT trigger release.yml automatically (GitHub blocks workflows triggering workflows via the default token). Add a PAT with 'Contents: read and write' as RELEASE_TAG_PAT to fully automate this, or manually re-run release.yml via workflow_dispatch / re-push the tag from a local clone."
           fi
 
+          # Tag authorship is cosmetic (the tag object's tagger); what decides
+          # whether release.yml fires is the credential the push authenticates
+          # with, which checkout persisted above.
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" -m "Release $tag"
-          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$tag"
+          git push origin "$tag"
           echo "Pushed tag $tag"
+
+      # Fail loudly if the tag push did not start release.yml. Without this the
+      # failure mode is silent: a green auto-tag run, a tag on origin, and no
+      # installers or draft release until someone notices days later.
+      - name: Verify release.yml was triggered
+        if: steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="v${{ steps.version.outputs.new }}"
+
+          # The run is queued asynchronously; poll rather than sleep once.
+          for _ in $(seq 1 10); do
+            sleep 10
+            count="$(gh run list --workflow release.yml --branch "$tag" --json databaseId --jq 'length')"
+            if [ "$count" -gt 0 ]; then
+              echo "release.yml was triggered by $tag."
+              exit 0
+            fi
+          done
+
+          echo "::error::Tag $tag was pushed but release.yml did not start within 100s. The push most likely authenticated as GITHUB_TOKEN (anti-recursion), so no installers or draft release will be produced. Fix: verify RELEASE_TAG_PAT is set and unexpired, then re-push the tag from a local clone: git push --delete origin $tag && git push origin $tag"
+          exit 1
