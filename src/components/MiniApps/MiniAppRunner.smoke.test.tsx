@@ -349,6 +349,25 @@ describe("MiniAppRunner — panel layout", () => {
     expect((panel as HTMLElement).style.minHeight).toBe("500px");
   });
 
+  // Regression guard: the runner used to impose a 400px `PANEL_MIN_HEIGHT`
+  // floor (plus a matching `min-height` in `.miniapp-runner__panel`), which
+  // silently inflated EVERY panel shorter than that — including the 400x320
+  // default and both seeds (240 / 256). The editor draws `.ma-canvas-panel`
+  // at exactly `panelSize.h`, so the two views disagreed on every normal
+  // mini-app. The panel must now render at the configured height, full stop.
+  it("renders a short panel at exactly panelSize.h (no minimum-height floor)", async () => {
+    stageMiniApp(
+      makeMiniApp({
+        panelSize: { w: 320, h: 240 },
+        widgets: [buttonWidget({ layout: { x: 0, y: 0, w: 120, h: 44 } })],
+      }),
+    );
+    await renderRunner();
+
+    const panel = document.querySelector(".miniapp-runner__panel");
+    expect((panel as HTMLElement).style.minHeight).toBe("240px");
+  });
+
   it("grows the panel so a widget placed beyond panelSize.h is not clipped", async () => {
     stageMiniApp(
       makeMiniApp({

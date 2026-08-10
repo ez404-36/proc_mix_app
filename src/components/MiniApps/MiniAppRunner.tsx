@@ -35,12 +35,20 @@ import {
 const DEFAULT_STATUS_INTERVAL_MS = 5000;
 
 /**
- * The widget panel is a relative canvas whose height grows with the widgets
- * placed on it. `PANEL_MIN_HEIGHT` is the guaranteed floor (also mirrored in
- * the `.miniapp-runner__panel` CSS rule); `PANEL_BOTTOM_PADDING` keeps the
- * bottom-most widget from sitting flush against the panel edge.
+ * Breathing room kept below the bottom-most widget when the panel has to grow
+ * past its configured `panelSize.h` (see `contentBottom` below), so that
+ * widget does not sit flush against the panel edge.
+ *
+ * There is deliberately NO absolute minimum height here. The runner must
+ * render the panel at exactly the size the editor showed
+ * (`MiniAppEditor.tsx` renders `.ma-canvas-panel` at `height: panelSize.h`
+ * with `overflow: hidden`), and `panelSize` is a REQUIRED field back-filled
+ * on every entry path — SQLite (`storage::miniapps` serde default),
+ * `miniappRepository.parsePanelSize`, and `dataImport.clampPanelSize` — so a
+ * missing value never reaches this component. A floor here would only ever
+ * inflate a legitimately short panel (the 400px one this used to impose
+ * stretched every default 400x320 mini-app and both seeds).
  */
-const PANEL_MIN_HEIGHT = 400;
 const PANEL_BOTTOM_PADDING = 24;
 
 /**
@@ -500,19 +508,24 @@ export function MiniAppRunner({
     });
   }, [executionWidgets, miniapp, valuesMap, artifactNames]);
 
-  // The panel's primary dimensions come from `miniapp.panelSize` (set in the
-  // editor). This content-driven height is a floor so a widget placed beyond
-  // the configured `panelSize.h` is never clipped: the rendered panel is the
-  // larger of `panelSize.h` and the bottom-most widget + padding. When there is
-  // nothing to lay out it falls back to `PANEL_MIN_HEIGHT` (legacy default).
-  const panelMinHeight = useMemo(() => {
+  // How far down the bottom-most widget actually reaches, plus padding. The
+  // panel renders at `panelSize.h` normally; this is a SAFETY floor for the
+  // one case the editor cannot produce — a widget sitting below the panel
+  // bottom. The editor re-clamps every widget into the panel on each resize
+  // (`clampWidgetsToPanel`) and the import path does the same
+  // (`dataImport.clampWidgetLayout`), so on a normal record this evaluates to
+  // less than `panelSize.h` and has no effect. It only kicks in for a
+  // hand-edited DB row, where growing beats clipping (the runner's panel, unlike
+  // the editor's, has no `overflow: hidden`, so an out-of-bounds widget would
+  // otherwise paint outside the border).
+  const contentBottom = useMemo(() => {
     const widgets = miniapp?.widgets ?? [];
     let maxBottom = 0;
     for (const w of widgets) {
       const bottom = w.layout.y + w.layout.h;
       if (bottom > maxBottom) maxBottom = bottom;
     }
-    return Math.max(PANEL_MIN_HEIGHT, maxBottom + PANEL_BOTTOM_PADDING);
+    return maxBottom === 0 ? 0 : maxBottom + PANEL_BOTTOM_PADDING;
   }, [miniapp]);
 
   // Hydrate the store from SQLite on mount (idempotent) so a deep-link into
@@ -581,7 +594,7 @@ export function MiniAppRunner({
         className="miniapp-runner__panel"
         style={{
           width: miniapp.panelSize.w,
-          minHeight: Math.max(miniapp.panelSize.h, panelMinHeight),
+          minHeight: Math.max(miniapp.panelSize.h, contentBottom),
         }}
       >
         {miniapp.widgets.map((widget) => (

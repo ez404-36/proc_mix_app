@@ -5,6 +5,33 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-08-10
+
+### Added
+
+- **Per-mini-app window title and icon.** A mini-app's standalone window now
+  sets its own OS window title from the mini-app's name (resolving seed
+  `nameKey` translations) and its taskbar icon from `MiniApp.icon`, instead of
+  every window reading "ProcMix" with the app icon. Emoji and SVG icons are
+  rasterized to PNG on the fly (`utils/windowIcon.ts`); PNG data URIs are
+  decoded directly. Applied best-effort: the icon lands on Windows and on
+  Linux WMs that honour `set_icon`, while macOS (which has no per-window
+  icons) still gets the correct title. Requires the new
+  `core:window:allow-set-title` / `core:window:allow-set-icon` capabilities,
+  both scoped to the caller's own window.
+
+### Fixed
+
+- **Mini-app panel height no longer differs between the editor and the
+  runner.** The runner imposed a 400px minimum panel height (both in
+  `MiniAppRunner` and in the `.miniapp-runner__panel` CSS rule), which
+  silently stretched every mini-app configured shorter than that — including
+  the 400x320 default and both built-in seeds (240 / 256). The panel now
+  renders at exactly the `panelSize.h` the editor showed. Growing past that
+  height is retained purely as a safety net for a widget positioned below the
+  panel bottom (only reachable via a hand-edited record), so an out-of-bounds
+  widget is still never clipped.
+
 ## [0.15.0] - 2026-08-07
 
 ### Added

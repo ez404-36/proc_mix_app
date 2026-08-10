@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   getMiniAppWindowId: vi.fn(),
   close: vi.fn(),
   onCloseRequested: vi.fn(),
+  setTitle: vi.fn(),
+  setIcon: vi.fn(),
   cancelExecution: vi.fn(),
   listMiniAppsFromDb: vi.fn(),
   useExecutionBridge: vi.fn(),
@@ -43,6 +45,8 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     close: mocks.close,
     onCloseRequested: mocks.onCloseRequested,
+    setTitle: mocks.setTitle,
+    setIcon: mocks.setIcon,
   }),
 }));
 
@@ -83,6 +87,33 @@ import { useExecutionStore } from "../../stores/executionStore";
 import { useMiniAppStore } from "../../stores/miniappStore";
 import { MiniAppWindowApp } from "./MiniAppWindowApp";
 
+/**
+ * Stage a single mini-app as the hydration result, so `miniappStore` flips
+ * `hydrated` with this record present — the exact precondition the
+ * window-branding effect waits on.
+ */
+function stageMiniApp(overrides: {
+  id?: string;
+  name?: string;
+  nameKey?: string;
+  icon?: string;
+}): void {
+  mocks.listMiniAppsFromDb.mockResolvedValue([
+    {
+      id: "ma-1",
+      name: "VPN Panel",
+      widgets: [],
+      tags: [],
+      favorite: false,
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
+      runCount: 0,
+      panelSize: { w: 320, h: 240 },
+      ...overrides,
+    },
+  ]);
+}
+
 function stageCloseRequestedHandler(): (event: {
   preventDefault: () => void;
 }) => void {
@@ -98,6 +129,8 @@ beforeEach(() => {
   mocks.getMiniAppWindowId.mockReset();
   mocks.close.mockReset().mockResolvedValue(undefined);
   mocks.onCloseRequested.mockReset().mockResolvedValue(() => {});
+  mocks.setTitle.mockReset().mockResolvedValue(undefined);
+  mocks.setIcon.mockReset().mockResolvedValue(undefined);
   mocks.cancelExecution.mockReset().mockResolvedValue(undefined);
   mocks.listMiniAppsFromDb.mockReset().mockResolvedValue([]);
   mocks.useExecutionBridge.mockReset();
@@ -172,6 +205,130 @@ describe("MiniAppWindowApp — mount / id resolution", () => {
     await waitFor(() => {
       expect(mocks.useExecutionBridge).toHaveBeenLastCalledWith("ma-1");
     });
+  });
+});
+
+describe("MiniAppWindowApp — OS window branding", () => {
+  // A 1×1 transparent PNG — the one icon shape `windowIcon.ts` can convert
+  // without a canvas, so it is the only one that yields bytes under jsdom.
+  const PNG_DATA_URI =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+  it("sets the window title to the mini-app's name once the store hydrates", async () => {
+    mocks.getMiniAppWindowId.mockResolvedValue("ma-1");
+    stageMiniApp({ name: "VPN Panel" });
+
+    await act(async () => {
+      render(<MiniAppWindowApp />);
+    });
+
+    await waitFor(() => {
+      expect(mocks.setTitle).toHaveBeenCalledWith("VPN Panel");
+    });
+  });
+
+  it("resolves a seed mini-app's nameKey through i18n for the title", async () => {
+    mocks.getMiniAppWindowId.mockResolvedValue("ma-1");
+    stageMiniApp({
+      name: "ignored-literal",
+      nameKey: "miniapps.seeds.systemInfo.name",
+    });
+
+    await act(async () => {
+      render(<MiniAppWindowApp />);
+    });
+
+    // The literal `name` must lose to the translated key (mirrors how the
+    // runner header renders it via `getMiniAppName`).
+    await waitFor(() => {
+      expect(mocks.setTitle).toHaveBeenCalledWith("System Info");
+    });
+    expect(mocks.setTitle).not.toHaveBeenCalledWith("ignored-literal");
+  });
+
+  it("does not touch the window icon for a mini-app without one", async () => {
+    mocks.getMiniAppWindowId.mockResolvedValue("ma-1");
+    stageMiniApp({});
+
+    await act(async () => {
+      render(<MiniAppWindowApp />);
+    });
+
+    await waitFor(() => expect(mocks.setTitle).toHaveBeenCalled());
+    // No icon configured → the bundled ProcMix icon must stay in place.
+    expect(mocks.setIcon).not.toHaveBeenCalled();
+  });
+
+  it("pushes PNG bytes to setIcon for a mini-app with a PNG icon", async () => {
+    mocks.getMiniAppWindowId.mockResolvedValue("ma-1");
+    stageMiniApp({ icon: PNG_DATA_URI });
+
+    await act(async () => {
+      render(<MiniAppWindowApp />);
+    });
+
+    await waitFor(() => {
+      expect(mocks.setIcon).toHaveBeenCalledTimes(1);
+    });
+    const [bytes] = mocks.setIcon.mock.calls[0] as [Uint8Array];
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it("skips setIcon when the icon cannot be rasterised (emoji under jsdom)", async () => {
+    mocks.getMiniAppWindowId.mockResolvedValue("ma-1");
+    stageMiniApp({ icon: "🔌" });
+
+    await act(async () => {
+      render(<MiniAppWindowApp />);
+    });
+
+    await waitFor(() => expect(mocks.setTitle).toHaveBeenCalled());
+    // jsdom has no 2D canvas, so the helper returns null and the effect must
+    // simply not call `setIcon` — the same path macOS/Wayland exercise.
+    expect(mocks.setIcon).not.toHaveBeenCalled();
+  });
+
+  it("survives a rejected setIcon — the runner still renders", async () => {
+    mocks.getMiniAppWindowId.mockResolvedValue("ma-1");
+    stageMiniApp({ name: "VPN Panel", icon: PNG_DATA_URI });
+    // macOS has no per-window icons; the command rejects there.
+    mocks.setIcon.mockRejectedValue(new Error("unsupported on this platform"));
+
+    await act(async () => {
+      render(<MiniAppWindowApp />);
+    });
+
+    await waitFor(() => expect(mocks.setIcon).toHaveBeenCalled());
+    expect(screen.getByText("VPN Panel")).toBeTruthy();
+  });
+
+  it("survives a rejected setTitle — the runner still renders", async () => {
+    mocks.getMiniAppWindowId.mockResolvedValue("ma-1");
+    stageMiniApp({ name: "VPN Panel" });
+    mocks.setTitle.mockRejectedValue(new Error("denied"));
+
+    await act(async () => {
+      render(<MiniAppWindowApp />);
+    });
+
+    await waitFor(() => expect(mocks.setTitle).toHaveBeenCalled());
+    expect(screen.getByText("VPN Panel")).toBeTruthy();
+  });
+
+  it("does not brand the window when the id resolves but the mini-app is absent", async () => {
+    mocks.getMiniAppWindowId.mockResolvedValue("ma-missing");
+    stageMiniApp({ id: "ma-1" });
+
+    await act(async () => {
+      render(<MiniAppWindowApp />);
+    });
+
+    await waitFor(() =>
+      expect(mocks.useExecutionBridge).toHaveBeenLastCalledWith("ma-missing"),
+    );
+    expect(mocks.setTitle).not.toHaveBeenCalled();
+    expect(mocks.setIcon).not.toHaveBeenCalled();
   });
 });
 

@@ -15,6 +15,8 @@ import { useMiniAppStore } from "../../stores/miniappStore";
 import { useUIStore } from "../../stores/uiStore";
 import { getMiniAppWindowId } from "../../services/miniappWindow";
 import { cancelExecution } from "../../utils/executor";
+import { getMiniAppName } from "../../utils/miniappLabels";
+import { miniAppIconToPngBytes } from "../../utils/windowIcon";
 import { AdminPasswordPrompt } from "../AdminPasswordPrompt";
 import { ContextMenuProvider } from "../ContextMenu";
 import { RemoteHostPrompt } from "../RemoteHostPrompt/RemoteHostPrompt";
@@ -59,6 +61,9 @@ const ARCO_LOCALE_MAP: Record<Language, Locale> = {
  *      processes when the user tries to close (native × / minimize is
  *      unaffected — only closing is intercepted), a confirmation dialog asks
  *      whether to kill them first (default: yes).
+ *   5. Brands the OS window with the mini-app's own name and icon, so two
+ *      open runners are distinguishable in the taskbar / Alt-Tab instead of
+ *      both reading "ProcMix" (see the effect's own comment).
  */
 export function MiniAppWindowApp(): ReactElement {
   const { t } = useTranslation();
@@ -67,6 +72,11 @@ export function MiniAppWindowApp(): ReactElement {
   useI18nBridge();
 
   const [miniappId, setMiniappId] = useState<string | null>(null);
+  // Whether `miniappStore` has finished its initial SQLite load. A stable
+  // boolean (flips false → true exactly once), so it can gate the
+  // window-branding effect below without dragging the mini-app OBJECT — whose
+  // identity churns on every store write — into a dependency array.
+  const hydrated = useMiniAppStore((s) => s.hydrated);
   // Gate the execution-event bridge to THIS mini-app's own tagged runs (see
   // `useExecutionBridge`'s doc comment) so a widget run's output never leaks
   // into the main window or a DIFFERENT mini-app's own window. `null` before
@@ -101,6 +111,68 @@ export function MiniAppWindowApp(): ReactElement {
       cancelled = true;
     };
   }, []);
+
+  // Brand the OS window with THIS mini-app's name and icon, replacing the
+  // build-time "ProcMix" title/bundle icon that `platform::miniapp_window`
+  // opens every runner with. Without this, two open mini-apps are
+  // indistinguishable in the taskbar and Alt-Tab.
+  //
+  // Platform reality (this is best-effort by design, not a bug):
+  //   - Windows: both the title and the icon apply; the taskbar preview shows
+  //     the mini-app's own icon. Windows still GROUPS the buttons under
+  //     ProcMix, since grouping keys off the AppUserModelID, not the icon.
+  //   - Linux: the title always applies. `set_icon` is a hint the window
+  //     manager may ignore — most Wayland compositors do, preferring the
+  //     app-id → `.desktop` icon lookup.
+  //   - macOS: the title applies. Per-window icons do not exist on macOS at
+  //     all (the Dock shows one icon per application), so `setIcon` is a
+  //     no-op or rejects outright.
+  // Both calls are therefore warned-about-and-dropped on failure rather than
+  // surfaced through `Message.error` — a missing window icon is cosmetic and
+  // expected on two of the three platforms.
+  //
+  // Deliberately one-shot per mount: `save_miniapp` emits no broadcast event,
+  // so an open window will not pick up a rename or icon change made in the
+  // main window's editor until it is reopened. Making that live needs a new
+  // Rust-side event; it is out of scope for this iteration.
+  //
+  // The dependency list is `[miniappId, hydrated, t]` — deliberately NOT the
+  // mini-app object. That object's identity changes on EVERY store write
+  // (`markMiniAppRun` from this window's own widget runs, for one), which
+  // would re-fire the effect constantly. `hydrated` is a stable boolean that
+  // flips exactly once, which is all this needs to know that `miniapps` is
+  // populated; the record itself is read imperatively via `getState()`.
+  useEffect(() => {
+    if (miniappId === null || !hydrated) return;
+    const miniapp = useMiniAppStore
+      .getState()
+      .miniapps.find((m) => m.id === miniappId);
+    if (miniapp === undefined) return;
+
+    let cancelled = false;
+    const win = getCurrentWindow();
+
+    void win.setTitle(getMiniAppName(miniapp, t)).catch((err: unknown) => {
+      console.warn("failed to set mini-app window title", miniappId, err);
+    });
+
+    void (async () => {
+      const bytes = await miniAppIconToPngBytes(miniapp.icon);
+      // `miniAppIconToPngBytes` never throws; `null` means "no icon to apply"
+      // (none configured, or it could not be rasterised) — leave the bundled
+      // ProcMix icon in place.
+      if (bytes === null || cancelled) return;
+      try {
+        await win.setIcon(bytes);
+      } catch (err: unknown) {
+        console.warn("failed to set mini-app window icon", miniappId, err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [miniappId, hydrated, t]);
 
   // Install the close guard once. Reads the LATEST execution snapshot at
   // close time (not a stale closure) via `getState()`, so a process started

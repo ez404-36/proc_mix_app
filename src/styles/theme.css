@@ -9837,9 +9837,13 @@ body.is-editor-fullscreen .output-panel {
   padding: 24px 28px;
 }
 
+/* No `min-height` here on purpose: the panel's height is supplied inline by
+   `MiniAppRunner` as `max(panelSize.h, contentBottom)`, matching what the
+   editor draws (`.ma-canvas-panel` renders at exactly `panelSize.h`). A CSS
+   floor would silently override that for any mini-app shorter than it — the
+   400px this used to carry stretched every 400x320 default panel. */
 .miniapp-runner__panel {
   position: relative;
-  min-height: 400px;
   border: 1px solid var(--color-border);
   border-radius: 10px;
   background: var(--color-surface);
