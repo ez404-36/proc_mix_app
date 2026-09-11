@@ -5,6 +5,38 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2026-09-11
+
+### Added
+
+- **Terminal layout presets (макеты терминала).** Named snapshots of the
+  console's Terminal mode: the display variant (dock position / fullscreen /
+  panel size), the region split tree, and per saved window its last typed
+  command plus the observed working directory — and, for windows inside an
+  SSH session, the running `ssh` command line (observed via
+  `terminal_describe_session`, Linux `/proc`) so applying reconnects instead
+  of replaying remote commands. A picker in the console header (right of the
+  Запуски/Терминал toggle) lists saved layouts with a per-layout summary and
+  a "•" dirty marker; a manage menu offers Save as… / Update / Rename /
+  Delete with duplicate-name validation. Applying a layout (after a
+  confirmation when sessions are open) replaces open terminals, restores the
+  display and the window tree, spawns one PTY per saved window (saved `cwd`
+  applied at spawn, capped by `MAX_TERMINAL_SESSIONS` with a skip toast) and
+  replays each window's command via the PTY (PTY input queues until the
+  shell is ready). Storage: a new `terminal_layouts` SQLite table with
+  `list/save/rename/delete_terminal_layout` commands; UI-only by design —
+  not reachable from the HTTP API server, scheduler, or workflows; live PTY
+  sessions themselves are still never persisted (the layout stores only the
+  user-saved snapshot; see `docs/interactive-terminal.md`, "Layouts").
+
+### Fixed
+
+- **Console fullscreen is remembered.** "Весь экран" now persists exactly
+  like the dock positions (Bottom/Left/Right): closing and reopening the
+  console, as well as restarting the app, keeps the fullscreen variant
+  instead of snapping back to the docked edge (`consoleFullscreen` added to
+  the persisted UI state; the reset-on-close behaviour removed).
+
 ## [0.15.1] - 2026-08-10
 
 ### Added
