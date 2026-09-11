@@ -19,6 +19,7 @@ pub mod plugin_state;
 pub mod schedules;
 pub mod sound;
 pub mod ssh_host_meta;
+pub mod terminal_layouts;
 pub mod window_behavior;
 pub mod workflows;
 

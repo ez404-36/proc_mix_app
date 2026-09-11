@@ -73,6 +73,19 @@ pub struct TerminalSessionHandle {
     pub child: Box<dyn Child + Send + Sync>,
 }
 
+/// What the backend can OBSERVE about a live session at one instant: the
+/// shell's current working directory and, when an `ssh` child is running,
+/// its full command line (the "connection script" a saved terminal layout
+/// can replay). Mirrors the TS `TerminalSessionDescription`. Both slots are
+/// `None` when unobservable (non-Linux, child already exited, /proc unread)
+/// — describing a session is best-effort, never fatal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDescription {
+    pub cwd: Option<String>,
+    pub remote_command: Option<String>,
+}
+
 /// Registry of live terminal sessions, managed as Tauri app state exactly
 /// like `core::executor::ExecutorState`. A `std::sync::Mutex` (not tokio's)
 /// is used because every access is a short, synchronous map operation with

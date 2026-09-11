@@ -32,6 +32,9 @@ mod session;
 mod types;
 
 pub use session::{
-    close_session, resize_session, shutdown_all_sync, spawn_session, write_to_session,
+    close_session, describe_session, resize_session, shutdown_all_sync, spawn_session,
+    write_to_session,
 };
-pub use types::{TerminalEvent, TerminalState, MAX_TERMINAL_SESSIONS, TERMINAL_EVENT};
+pub use types::{
+    SessionDescription, TerminalEvent, TerminalState, MAX_TERMINAL_SESSIONS, TERMINAL_EVENT,
+};

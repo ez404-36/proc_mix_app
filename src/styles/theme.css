@@ -1507,6 +1507,51 @@ body.is-editor-fullscreen .output-panel {
   width: auto;
 }
 
+/* Terminal layout presets ("макеты"): the picker sitting right of the
+ * Запуски/Терминал mode toggle in the console title row — a compact layout
+ * dropdown plus a small manage (⋯) button opening the Save/Update/Rename/
+ * Delete context menu. Mirrors the position-select treatment. */
+.output-panel__layout-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dropdown__trigger.output-panel__layout-select {
+  font-size: 12px;
+  padding: 3px 8px;
+  background: var(--console-btn-bg);
+  border-color: var(--console-btn-border);
+  color: var(--console-btn-text);
+  max-width: 180px;
+  width: auto;
+}
+
+.dropdown__trigger.output-panel__layout-select:hover:not(:disabled) {
+  border-color: var(--console-btn-hover-border);
+}
+
+.dropdown__trigger.output-panel__layout-select:focus,
+.dropdown__trigger.output-panel__layout-select[aria-expanded="true"] {
+  border-color: var(--console-btn-hover-border);
+  box-shadow: none;
+}
+
+.btn--icon.output-panel__layout-manage {
+  padding: 3px;
+  color: var(--console-btn-text);
+  background: transparent;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn--icon.output-panel__layout-manage:hover {
+  color: var(--console-btn-hover-border);
+}
+
 .dropdown__trigger.output-panel__position-select:hover:not(:disabled) {
   border-color: var(--console-btn-hover-border);
 }

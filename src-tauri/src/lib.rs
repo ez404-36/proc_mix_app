@@ -425,6 +425,11 @@ pub fn run() {
             commands::terminal_write,
             commands::terminal_resize,
             commands::terminal_close,
+            commands::terminal_describe_session,
+            commands::list_terminal_layouts,
+            commands::save_terminal_layout,
+            commands::rename_terminal_layout,
+            commands::delete_terminal_layout,
         ])
         // Build (not `run`) so we can observe `RunEvent`s. The exit hook below
         // needs `app` and the managed `ExecutorState` to tear running children

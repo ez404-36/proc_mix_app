@@ -15,6 +15,8 @@ function reset(): void {
     activeRegionId: null,
     reservedTabNumbers: new Set(),
     hasAutoOpenedTab: false,
+    lastCommands: {},
+    inputLines: {},
   });
 }
 
@@ -168,5 +170,124 @@ describe("terminalStore region actions", () => {
     if (!root || root.type === "region") throw new Error("expected a container");
     expect(root.sizes[0]).toBeCloseTo(0.7);
     expect(root.sizes[1]).toBeCloseTo(0.3);
+  });
+});
+
+describe("terminalStore last-command tracking", () => {
+  beforeEach(reset);
+
+  it("commits the typed line on Enter and keeps it as the last command", () => {
+    const store = useTerminalStore.getState();
+    store.recordTerminalInput("t1", "htop");
+    expect(useTerminalStore.getState().lastCommands.t1).toBeUndefined();
+    store.recordTerminalInput("t1", "\r");
+    expect(useTerminalStore.getState().lastCommands.t1).toBe("htop");
+    expect(useTerminalStore.getState().inputLines.t1).toBe("");
+  });
+
+  it("handles backspace, Ctrl+U, and pasted multi-char lines", () => {
+    const store = useTerminalStore.getState();
+    store.recordTerminalInput("t1", "ls -la");
+    store.recordTerminalInput("t1", "\x7f\x7f"); // two backspaces
+    store.recordTerminalInput("t1", "z\r");
+    expect(useTerminalStore.getState().lastCommands.t1).toBe("ls -z");
+
+    store.recordTerminalInput("t1", "wrong\x15fix\r"); // Ctrl+U clears the line
+    expect(useTerminalStore.getState().lastCommands.t1).toBe("fix");
+
+    store.recordTerminalInput("t1", "echo hi\r");
+    expect(useTerminalStore.getState().lastCommands.t1).toBe("echo hi");
+  });
+
+  it("drops the pending line on escape sequences and Tab (line rewritten)", () => {
+    const store = useTerminalStore.getState();
+    store.recordTerminalInput("t1", "git che");
+    store.recordTerminalInput("t1", "\t"); // completion rewrites the line
+    store.recordTerminalInput("t1", "\r");
+    expect(useTerminalStore.getState().lastCommands.t1).toBeUndefined();
+
+    store.recordTerminalInput("t1", "old");
+    store.recordTerminalInput("t1", "\x1b[A"); // history recall
+    store.recordTerminalInput("t1", "\r");
+    expect(useTerminalStore.getState().lastCommands.t1).toBeUndefined();
+  });
+
+  it("never commits after a cancelled (Ctrl+C) line and keeps last on empty Enter", () => {
+    const store = useTerminalStore.getState();
+    store.recordTerminalInput("t1", "first\r");
+    store.recordTerminalInput("t1", "cancelled\x03");
+    store.recordTerminalInput("t1", "\r");
+    expect(useTerminalStore.getState().lastCommands.t1).toBe("first");
+
+    store.recordTerminalInput("t1", "\r");
+    expect(useTerminalStore.getState().lastCommands.t1).toBe("first");
+  });
+
+  it("closeSession forgets the session's tracking state", () => {
+    const store = useTerminalStore.getState();
+    store.openSession("t1", "Terminal 1", 1);
+    store.recordTerminalInput("t1", "htop\r");
+    expect(useTerminalStore.getState().lastCommands.t1).toBe("htop");
+    store.closeSession("t1");
+    expect(useTerminalStore.getState().lastCommands.t1).toBeUndefined();
+    expect(useTerminalStore.getState().inputLines.t1).toBeUndefined();
+  });
+});
+
+describe("terminalStore.applyLayoutSnapshot", () => {
+  beforeEach(reset);
+
+  const twoByOne = {
+    type: "row" as const,
+    children: [
+      { type: "region" as const, tabs: [{ lastCommand: "htop" }], activeTabIndex: 0 },
+      { type: "region" as const, tabs: [{}, { title: "Logs", lastCommand: "tail -f" }], activeTabIndex: 1 },
+    ],
+    sizes: [0.5, 0.5],
+  };
+
+  it("builds sessions, regions, tree, and seeds lastCommands in one shot", () => {
+    useTerminalStore.getState().openSession("stale", "Stale", 1);
+
+    useTerminalStore.getState().applyLayoutSnapshot(twoByOne, [
+      { regionSlot: 0, tabIndex: 0, sessionId: "s1", number: 1, title: "Terminal 1" },
+      { regionSlot: 1, tabIndex: 0, sessionId: "s2", number: 2, title: "Terminal 2" },
+      { regionSlot: 1, tabIndex: 1, sessionId: "s3", number: 3, title: "Logs" },
+    ]);
+
+    const s = useTerminalStore.getState();
+    expect(Object.keys(s.sessions).sort()).toEqual(["s1", "s2", "s3"]);
+    expect(s.sessions.stale).toBeUndefined();
+    expect(s.panelMode).toBe("terminal");
+
+    expect(s.layoutRoot?.type).toBe("row");
+    const rids = collectRegionIds(s.layoutRoot!);
+    expect(rids).toHaveLength(2);
+    expect(s.regions[rids[0]].tabIds).toEqual(["s1"]);
+    expect(s.regions[rids[1]].tabIds).toEqual(["s2", "s3"]);
+    // Active tab per region comes from the snapshot (index 1 in the second).
+    expect(s.regions[rids[1]].activeTabId).toBe("s3");
+    expect(s.activeRegionId).toBe(rids[0]);
+
+    expect(s.lastCommands).toEqual({ s1: "htop", s3: "tail -f" });
+    expect(s.inputLines).toEqual({});
+    expect(s.reservedTabNumbers.has(1)).toBe(true);
+    expect(s.reservedTabNumbers.has(3)).toBe(true);
+  });
+
+  it("replaces a previous layout entirely", () => {
+    useTerminalStore.getState().applyLayoutSnapshot(twoByOne, [
+      { regionSlot: 0, tabIndex: 0, sessionId: "a", number: 1, title: "A" },
+      { regionSlot: 1, tabIndex: 0, sessionId: "b", number: 2, title: "B" },
+      { regionSlot: 1, tabIndex: 1, sessionId: "c", number: 3, title: "C" },
+    ]);
+    useTerminalStore.getState().applyLayoutSnapshot(
+      { type: "region", tabs: [{}], activeTabIndex: 0 },
+      [{ regionSlot: 0, tabIndex: 0, sessionId: "z", number: 4, title: "Z" }],
+    );
+    const s = useTerminalStore.getState();
+    expect(Object.keys(s.sessions)).toEqual(["z"]);
+    expect(collectRegionIds(s.layoutRoot!)).toHaveLength(1);
+    expect(s.reservedTabNumbers.has(4)).toBe(true);
   });
 });

@@ -22,6 +22,7 @@ pub mod shell_integration;
 pub mod sound;
 pub mod ssh;
 pub mod terminal;
+pub mod terminal_layouts;
 pub mod window_behavior;
 pub mod workflows;
 
@@ -61,5 +62,6 @@ pub use shell_integration::*;
 pub use sound::*;
 pub use ssh::*;
 pub use terminal::*;
+pub use terminal_layouts::*;
 pub use window_behavior::*;
 pub use workflows::*;

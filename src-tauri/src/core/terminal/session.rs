@@ -19,7 +19,8 @@ use tauri::{AppHandle, Emitter, Runtime};
 use uuid::Uuid;
 
 use super::types::{
-    TerminalEvent, TerminalSessionHandle, TerminalState, MAX_TERMINAL_SESSIONS, TERMINAL_EVENT,
+    SessionDescription, TerminalEvent, TerminalSessionHandle, TerminalState, MAX_TERMINAL_SESSIONS,
+    TERMINAL_EVENT,
 };
 
 /// Size in bytes of each blocking PTY read. Chunked (not line-buffered) —
@@ -290,6 +291,109 @@ pub fn close_session(state: &TerminalState, session_id: &str) -> Result<(), Stri
     Ok(())
 }
 
+/// Best-effort snapshot of a LIVE session's observable state, used by the
+/// terminal-layout save flow ("макеты"): the shell's current working
+/// directory and — when the user is inside an `ssh` session — the running
+/// `ssh` process's full command line, which is exactly the "connection
+/// script" a layout can replay to reconnect. See the "Layouts" section of
+/// `docs/interactive-terminal.md`.
+///
+/// Both slots degrade to `None` when unobservable (the child already
+/// exited, a non-Linux OS, or a /proc read race) — describing a session is
+/// never fatal. Only the shell's DIRECT children are inspected: an `ssh`
+/// typed at the prompt is a direct child; nested cases (tmux-in-ssh,
+/// `sudo ssh`) are not resolved.
+pub fn describe_session(
+    state: &TerminalState,
+    session_id: &str,
+) -> Result<SessionDescription, String> {
+    let pid = {
+        let sessions = state
+            .sessions
+            .lock()
+            .map_err(|_| "terminal session registry lock poisoned".to_string())?;
+        sessions
+            .get(session_id)
+            .ok_or_else(|| format!("unknown terminal session: {session_id}"))?
+            .child
+            .process_id()
+    };
+    Ok(describe_pid(pid))
+}
+
+/// `portable-pty` reports the child pid on Unix backends (forkpty); the
+/// Windows ConPTY backend reports `None`, so nothing is observable there.
+#[cfg(target_os = "linux")]
+fn describe_pid(pid: Option<u32>) -> SessionDescription {
+    let Some(pid) = pid else {
+        return SessionDescription::default();
+    };
+    SessionDescription {
+        cwd: read_proc_cwd(pid),
+        remote_command: find_ssh_command_line(pid),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn describe_pid(_pid: Option<u32>) -> SessionDescription {
+    SessionDescription::default()
+}
+
+/// The shell's current working directory, read from `/proc/<pid>/cwd`
+/// (Linux only — the process must belong to the same user, which ProcMix's
+/// own spawned shell does).
+#[cfg(target_os = "linux")]
+fn read_proc_cwd(pid: u32) -> Option<String> {
+    let path = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    path.to_str().map(str::to_string)
+}
+
+/// The full command line (`ssh host`, `ssh -A user@jump`, …) of a DIRECT
+/// `ssh` child of the shell, or `None`. When ssh has already exited (the
+/// user typed `exit`), the child is gone from /proc and the session
+/// correctly reads as local again.
+#[cfg(target_os = "linux")]
+fn find_ssh_command_line(shell_pid: u32) -> Option<String> {
+    let children =
+        std::fs::read_to_string(format!("/proc/{shell_pid}/task/{shell_pid}/children")).ok()?;
+    for child in children.split_whitespace() {
+        let Ok(child_pid) = child.parse::<u32>() else {
+            continue;
+        };
+        let Ok(cmdline) = std::fs::read(format!("/proc/{child_pid}/cmdline")) else {
+            continue; // exited between the enumeration and the read
+        };
+        if let Some(command) = ssh_command_from_cmdline(&cmdline) {
+            return Some(command);
+        }
+    }
+    None
+}
+
+/// Join a `/proc/<pid>/cmdline` payload (NUL-separated argv) into a command
+/// line IF the program basename is `ssh`; otherwise `None`. Split out for
+/// unit testing.
+#[cfg(target_os = "linux")]
+fn ssh_command_from_cmdline(cmdline: &[u8]) -> Option<String> {
+    let args: Vec<&[u8]> = cmdline
+        .split(|b| *b == 0)
+        .filter(|a| !a.is_empty())
+        .collect();
+    let program = String::from_utf8_lossy(args.first()?).into_owned();
+    let is_ssh = std::path::Path::new(&program)
+        .file_name()
+        .is_some_and(|name| name == "ssh");
+    if !is_ssh {
+        return None;
+    }
+    Some(
+        args.iter()
+            .map(|a| String::from_utf8_lossy(a).into_owned())
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
 /// Synchronously kill every live session's child process. Called from the
 /// Tauri exit hook (`RunEvent::ExitRequested`), mirroring
 /// `core::executor::shutdown_all_sync` — must not be async, must not depend
@@ -365,13 +469,58 @@ mod tests {
 
     /// The write/resize/close paths must return a clear error (not panic) for
     /// an id that was never registered — the frontend can race a close
-    /// against an already-exited session.
+    /// against an already-exited session. `describe_session` follows the
+    /// same contract.
     #[test]
     fn operations_on_unknown_session_return_errors_not_panics() {
         let state = TerminalState::new();
         assert!(write_to_session(&state, "nope", b"x").is_err());
         assert!(resize_session(&state, "nope", 80, 24).is_err());
+        assert!(describe_session(&state, "nope").is_err());
         // close is intentionally idempotent/ok for an unknown id.
         assert!(close_session(&state, "nope").is_ok());
+    }
+
+    /// `/proc` observation helpers (Linux-only): the cmdline joiner must
+    /// recognise `ssh` by its BASENAME (so `/usr/bin/ssh` matches but
+    /// `sshd` does not) and reassemble the full argv.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ssh_command_from_cmdline_matches_ssh_basename_only() {
+        assert_eq!(
+            ssh_command_from_cmdline(b"ssh\0user@host\0").as_deref(),
+            Some("ssh user@host")
+        );
+        assert_eq!(
+            ssh_command_from_cmdline(b"/usr/bin/ssh\x00-p\x002222\x00host\x00").as_deref(),
+            Some("/usr/bin/ssh -p 2222 host")
+        );
+        assert_eq!(ssh_command_from_cmdline(b"htop\0"), None);
+        assert_eq!(ssh_command_from_cmdline(b"sshd\0"), None);
+        assert_eq!(ssh_command_from_cmdline(b""), None);
+    }
+
+    /// The live walk over the test process's own children: a spawned
+    /// non-ssh child must not be reported as a remote connection.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn find_ssh_command_line_walks_direct_children_only() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.3")
+            .spawn()
+            .expect("spawn sleep");
+        let found = find_ssh_command_line(std::process::id());
+        let _ = child.kill();
+        let _ = child.wait(); // reap, so the test leaves no zombie
+        assert_eq!(found, None);
+    }
+
+    /// `/proc/<pid>/cwd` resolves for the test process itself.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_proc_cwd_resolves_own_process() {
+        let cwd = read_proc_cwd(std::process::id());
+        assert!(cwd.is_some(), "own /proc cwd must be readable");
+        assert!(cwd.unwrap().starts_with('/'));
     }
 }

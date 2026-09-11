@@ -10,6 +10,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { TerminalEvent } from "../types/terminal";
+import type { TerminalSessionDescription } from "../types/terminalLayout";
 
 const TERMINAL_EVENT_CHANNEL = "terminal-event";
 
@@ -57,6 +58,27 @@ export async function resizeTerminalSession(
 /** Close a terminal session (kills its shell). Idempotent. */
 export async function closeTerminalSession(sessionId: string): Promise<void> {
   await invoke("terminal_close", { sessionId });
+}
+
+/**
+ * Best-effort observable state of a LIVE session, for the terminal-layout
+ * save flow: the shell's current cwd and — when an `ssh` child is running —
+ * its full command line (the connection script a layout can replay).
+ * NEVER rejects: any failure (non-Linux OS, session already exited between
+ * listing and describing, /proc race) resolves to `null` = "unobservable",
+ * which the snapshot stores as absent fields. Describing a session is a
+ * best-effort observation, not an operation whose failure matters.
+ */
+export async function describeTerminalSession(
+  sessionId: string,
+): Promise<TerminalSessionDescription | null> {
+  try {
+    return await invoke<TerminalSessionDescription>("terminal_describe_session", {
+      sessionId,
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**

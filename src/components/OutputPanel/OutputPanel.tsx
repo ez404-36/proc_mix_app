@@ -32,7 +32,7 @@ import { cancelExecution } from "../../utils/executor";
 import { triggerCommandRun } from "../../services/commandRunner";
 import { triggerWorkflowRun } from "../../services/workflowRunner";
 import { cancelWorkflow } from "../../utils/workflowRunner";
-import { TerminalPanel } from "../Terminal";
+import { TerminalPanel, TerminalLayoutPicker } from "../Terminal";
 import {
   CancelIcon,
   ClearIcon,
@@ -323,12 +323,16 @@ export function OutputPanel(): ReactElement | null {
   const {
     consolePosition,
     setConsolePosition,
+    consoleFullscreen,
+    setConsoleFullscreen,
     editorTarget,
     editorLiveScript,
   } = useUIStore(
     useShallow((s) => ({
       consolePosition: s.consolePosition,
       setConsolePosition: s.setConsolePosition,
+      consoleFullscreen: s.consoleFullscreen,
+      setConsoleFullscreen: s.setConsoleFullscreen,
       editorTarget: s.commandEditorTarget,
       editorLiveScript: s.commandEditorLiveScript,
     })),
@@ -346,23 +350,20 @@ export function OutputPanel(): ReactElement | null {
 
   // Fullscreen: expands the console to fill the whole app window, ignoring
   // `consolePosition`/`panelHeight`/`panelWidth` (CSS-only overlay, see
-  // `.output-panel--fullscreen`). Local, transient component state —
-  // deliberately NOT persisted (a viewing mode, not a layout preference to
-  // reopen the app into) and reset whenever the panel closes so reopening
-  // the console never surprises the user with fullscreen still active from
-  // a previous session.
-  const [fullscreen, setFullscreen] = useState(false);
-  useEffect(() => {
-    if (!panelOpen) setFullscreen(false);
-  }, [panelOpen]);
+  // `.output-panel--fullscreen`). Lives in `useUIStore` rather than component
+  // state so the terminal-layout apply flow can restore a "fullscreen when
+  // saved" layout programmatically, and it is PERSISTED like the dock
+  // positions: "Весь экран" is the fourth option of the same position
+  // dropdown, so closing and reopening the console (or restarting the app)
+  // keeps it instead of snapping back to the docked edge.
 
   // "Fullscreen" is offered as a FOURTH option in the same position dropdown
   // (not a separate toggle button) — it reads as one more display mode
   // alongside Bottom/Right/Left, matching how the user thinks about it.
   // The underlying `consolePosition` store value is untouched by picking
-  // it: only the local `fullscreen` flag flips, so the dock position the
-  // user had before is exactly what they land back on when they pick
-  // Bottom/Right/Left again (or close and reopen the console).
+  // it: only the `consoleFullscreen` store flag flips, so picking
+  // Bottom/Right/Left again lands exactly on the dock position the user
+  // had before.
   const positionOptions: ReadonlyArray<DropdownOption> = [
     { value: "bottom", label: t("outputPanel.position.bottom", { defaultValue: "Снизу" }) },
     { value: "right", label: t("outputPanel.position.right", { defaultValue: "Справа" }) },
@@ -372,14 +373,14 @@ export function OutputPanel(): ReactElement | null {
       label: t("outputPanel.fullscreen", { defaultValue: "Весь экран" }),
     },
   ];
-  const positionValue = fullscreen ? "fullscreen" : consolePosition;
+  const positionValue = consoleFullscreen ? "fullscreen" : consolePosition;
 
   const handlePositionChange = (value: string): void => {
     if (value === "fullscreen") {
-      setFullscreen(true);
+      setConsoleFullscreen(true);
       return;
     }
-    setFullscreen(false);
+    setConsoleFullscreen(false);
     setConsolePosition(value as ConsoleDockPosition);
   };
 
@@ -681,7 +682,7 @@ export function OutputPanel(): ReactElement | null {
   // Fullscreen ignores the docked size entirely (CSS `inset: 0` overrides
   // any inline height/width), so no style is needed — and applying the
   // docked size anyway would fight the CSS override for no benefit.
-  const panelStyle = fullscreen
+  const panelStyle = consoleFullscreen
     ? undefined
     : consolePosition === "bottom"
       ? { height: panelHeight }
@@ -690,7 +691,7 @@ export function OutputPanel(): ReactElement | null {
   return (
     <div
       className={`output-panel output-panel--${consolePosition}${
-        fullscreen ? " output-panel--fullscreen" : ""
+        consoleFullscreen ? " output-panel--fullscreen" : ""
       }`}
       role="region"
       aria-label={t("outputPanel.ariaLabel")}
@@ -699,7 +700,7 @@ export function OutputPanel(): ReactElement | null {
       {/* Dragging to resize a docked size makes no sense once fullscreen
           already fills the window — hide the handle rather than let it
           fight the CSS override. */}
-      {!fullscreen ? (
+      {!consoleFullscreen ? (
         <div
           className="output-panel__resize"
           role="separator"
@@ -740,6 +741,11 @@ export function OutputPanel(): ReactElement | null {
               {t("outputPanel.modeToggle.terminal", { defaultValue: "Terminal" })}
             </button>
           </div>
+          {panelMode === "terminal" ? (
+            // Terminal layout presets ("макеты") — right of the mode toggle,
+            // per the feature's placement in the console header.
+            <TerminalLayoutPicker />
+          ) : null}
           {panelMode === "runs" ? (
             <span className="output-panel__title">
               {active

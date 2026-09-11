@@ -157,6 +157,16 @@ interface UIState {
   /** Which edge of the window the output console is docked to (persisted). */
   consolePosition: ConsoleDockPosition;
   /**
+   * Whether the console is expanded to fill the whole app window (persisted).
+   * "Весь экран" is offered as the FOURTH option in the same position
+   * dropdown as Bottom/Left/Right, so it is remembered exactly like a dock
+   * position — across close/reopen of the console AND across restarts —
+   * instead of snapping back to the docked edge. It lives here (not
+   * OutputPanel-local state) so the terminal-layout apply flow can also
+   * restore a fullscreen-when-saved layout programmatically.
+   */
+  consoleFullscreen: boolean;
+  /**
    * Per-list sort + display-mode preferences for the Library Commands /
    * Workflows tabs and the Scheduler list. Persisted so the user's chosen
    * sort, view mode, page size, and (commands-only) grouping survive
@@ -200,6 +210,7 @@ interface UIState {
   setLanguage: (lang: Language) => void;
   setProcessCaptureEnabled: (enabled: boolean) => void;
   setConsolePosition: (position: ConsoleDockPosition) => void;
+  setConsoleFullscreen: (fullscreen: boolean) => void;
   /** Merge a partial patch into the Commands list view preference. */
   updateCommandsView: (patch: Partial<CommandViewState>) => void;
   /** Merge a partial patch into the Workflows list view preference. */
@@ -252,6 +263,7 @@ interface PersistedUIState {
   processCaptureEnabled: boolean;
   sidebarCollapsed: boolean;
   consolePosition: ConsoleDockPosition;
+  consoleFullscreen: boolean;
   commandsView: CommandViewState;
   workflowsView: WorkflowViewState;
   miniappsView: MiniAppViewState;
@@ -279,6 +291,7 @@ export const useUIStore = create<UIState>()(
       language: detectInitialLanguage(),
       processCaptureEnabled: false,
       consolePosition: "bottom",
+      consoleFullscreen: false,
       commandsView: DEFAULT_COMMANDS_VIEW,
       workflowsView: DEFAULT_WORKFLOWS_VIEW,
       miniappsView: DEFAULT_MINIAPPS_VIEW,
@@ -339,6 +352,7 @@ export const useUIStore = create<UIState>()(
       setProcessCaptureEnabled: (enabled) =>
         set({ processCaptureEnabled: enabled }),
       setConsolePosition: (position) => set({ consolePosition: position }),
+      setConsoleFullscreen: (fullscreen) => set({ consoleFullscreen: fullscreen }),
       updateCommandsView: (patch) =>
         set((s) => ({ commandsView: { ...s.commandsView, ...patch } })),
       updateWorkflowsView: (patch) =>
@@ -357,6 +371,7 @@ export const useUIStore = create<UIState>()(
         processCaptureEnabled: state.processCaptureEnabled,
         sidebarCollapsed: state.sidebarCollapsed,
         consolePosition: state.consolePosition,
+        consoleFullscreen: state.consoleFullscreen,
         commandsView: state.commandsView,
         workflowsView: state.workflowsView,
         miniappsView: state.miniappsView,

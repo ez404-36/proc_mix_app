@@ -389,3 +389,27 @@ CREATE TABLE IF NOT EXISTS custom_sounds (
   stored_filename TEXT NOT NULL,
   created_at      TEXT NOT NULL
 );
+
+-- Terminal layout presets ("макеты терминала"). A NAMED snapshot of the
+-- console's Terminal-mode state, created ONLY by an explicit user save:
+--   position   — console dock position ('bottom' | 'left' | 'right');
+--   fullscreen — whether the console was in fullscreen when saved;
+--   size_json  — JSON `{"height":N}` (bottom dock) or `{"width":N}` (side
+--                dock); ignored when fullscreen is 1 (like the live CSS);
+--   layout_json— the region split tree, JSON-encoded LayoutSnapshotNode
+--                (mirrors the frontend `RegionNode` tree WITHOUT live
+--                region/session ids), each saved window carrying its last
+--                typed command for replay on apply.
+-- Live PTY sessions themselves are NEVER persisted — this table stores only
+-- the user-chosen, user-visible snapshot. See docs/interactive-terminal.md
+-- ("Layouts") and storage/terminal_layouts.rs.
+CREATE TABLE IF NOT EXISTS terminal_layouts (
+  id          TEXT PRIMARY KEY NOT NULL,
+  name        TEXT NOT NULL UNIQUE,
+  position    TEXT NOT NULL,
+  fullscreen  INTEGER NOT NULL DEFAULT 0,
+  size_json   TEXT NOT NULL DEFAULT '{}',
+  layout_json TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);

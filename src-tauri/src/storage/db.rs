@@ -61,6 +61,7 @@ pub async fn init_pool(db_path: PathBuf) -> Result<DbPool, String> {
     ensure_http_server_config(&pool).await?;
     ensure_autostart_config(&pool).await?;
     ensure_window_behavior_config(&pool).await?;
+    ensure_terminal_layouts_columns(&pool).await?;
 
     Ok(Arc::new(pool))
 }
@@ -413,6 +414,19 @@ async fn ensure_window_behavior_config(pool: &SqlitePool) -> Result<(), String> 
     .await
     .map_err(|e| format!("seed window_behavior_config default row: {e}"))?;
     Ok(())
+}
+
+/// Idempotent `ALTER TABLE … ADD COLUMN …` for the `terminal_layouts` table.
+///
+/// The table was introduced whole (v0.14.x), so on first release there are no
+/// missing columns to backfill — the migration list is intentionally empty.
+/// It exists now (rather than being added later) so future columns have an
+/// established, tested home that mirrors [`ensure_workflows_columns`]. The
+/// same `PRAGMA table_info` inspection guards idempotency.
+async fn ensure_terminal_layouts_columns(pool: &SqlitePool) -> Result<(), String> {
+    // (column_name, "ADD COLUMN …" fragment). Append future columns here.
+    let migrations: &[(&str, &'static str)] = &[];
+    apply_column_migrations(pool, "terminal_layouts", migrations).await
 }
 
 /// Idempotent `ALTER TABLE … ADD COLUMN …` for the `schedules` table.

@@ -5,6 +5,10 @@ import type {
   TerminalRegion,
   TerminalSessionMeta,
 } from "../types/terminal";
+import type { LayoutSnapshotNode, LayoutSnapshotRegion } from "../types/terminalLayout";
+import {
+  buildLayoutTree,
+} from "../utils/terminalLayoutSnapshot";
 import {
   collectRegionIds,
   findAdjacentRegion,
@@ -28,6 +32,77 @@ export type ConsolePanelMode = "runs" | "terminal";
  *  app session. */
 function newRegionId(): string {
   return `region-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Feed one chunk of user input (an xterm.js `onData` payload — a keystroke,
+ * a paste, or an escape sequence) through the per-session LINE tracker.
+ *
+ * This is a deliberately HEURISTIC stdin-level model of what the user is
+ * typing — the shell's prompt state is unknowable from outside the PTY.
+ * Handled inputs:
+ *   - `\r` / `\n`      — commit the accumulated line as the session's "last
+ *                        command" (the closest observable equivalent of
+ *                        "the user launched a command") and reset the line;
+ *   - `\x7f` / `\b`    — delete the last typed character;
+ *   - `\x15` (Ctrl+U)  — clear the line (readline's clear-line);
+ *   - `\x1b` / `\t`    — an escape sequence (history recall, cursor motion)
+ *                        or Tab completion REWRITES the line in ways stdin
+ *                        cannot observe, so the tracker DROPS the line
+ *                        rather than commit a stale text later;
+ *   - other controls   — ignored (e.g. Ctrl+C leaves the previous tracking
+ *                        untouched only until the next Enter — the cancelled
+ *                        text is dropped, so it can never be committed);
+ *   - printable chars  — appended (multi-char pastes included).
+ *
+ * Used ONLY to fill the `lastCommand` field of an explicitly saved terminal
+ * layout ("макет"); nothing here is ever persisted automatically.
+ */
+function applyInputToLine(line: string, data: string): { line: string; commit: string | null } {
+  let next = line;
+  let commit: string | null = null;
+  // After an ESC we are inside an escape sequence: `ESC [` introduces a CSI
+  // sequence whose PARAMS are skipped up to the FINAL byte (0x40–0x7E, e.g.
+  // the `A` of `\x1b[A`); any other byte after ESC terminates a 2-char
+  // sequence. Without this, printable-looking payloads ("[A") would leak
+  // into the tracked line.
+  let pendingEsc = false;
+  let inCsi = false;
+  for (const ch of data) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (pendingEsc) {
+      pendingEsc = false;
+      if (ch === "[") inCsi = true;
+      continue;
+    }
+    if (inCsi) {
+      if (code >= 0x40 && code <= 0x7e) inCsi = false;
+      continue;
+    }
+    if (ch === "\r" || ch === "\n") {
+      if (next.length > 0) commit = next;
+      next = "";
+    } else if (ch === "\x7f" || ch === "\b") {
+      next = next.slice(0, -1);
+    } else if (ch === "\x15") {
+      next = "";
+    } else if (ch === "\x1b") {
+      // An escape sequence (history recall, cursor motion) REWRITES the line
+      // in ways stdin cannot observe — drop the pending line like Tab does.
+      pendingEsc = true;
+      next = "";
+    } else if (ch === "\t") {
+      next = "";
+    } else if (code < 0x20) {
+      // Other control characters (Ctrl+C, Ctrl+L, …): drop the pending line
+      // — after Ctrl+C the shell discards the typed text, and we cannot tell
+      // which control rewrites the line, so never commit stale text.
+      next = "";
+    } else {
+      next += ch;
+    }
+  }
+  return { line: next, commit };
 }
 
 /**
@@ -70,11 +145,25 @@ interface TerminalState {
    * once per `TerminalPanel` mount. See `docs/interactive-terminal.md`.
    */
   hasAutoOpenedTab: boolean;
+  /**
+   * The last COMMITTED input line per session ("the last command the user
+   * launched") and the in-flight line currently being typed, tracked by
+   * `recordTerminalInput` from xterm.js `onData` (a heuristic stdin-level
+   * model — see that action's doc). In-memory ONLY and never persisted with
+   * the store; it reaches SQLite solely inside a layout the user explicitly
+   * saves (the `lastCommand` of a saved window, see
+   * `docs/interactive-terminal.md` "Layouts"). Cleaned up in `closeSession`.
+   */
+  lastCommands: Record<string, string>;
+  inputLines: Record<string, string>;
 
   setPanelMode: (mode: ConsolePanelMode) => void;
   reserveTabNumber: () => number;
   releaseTabNumber: (number: number) => void;
   consumeAutoOpen: () => boolean;
+
+  /** Track one chunk of user input for a session's "last command". */
+  recordTerminalInput: (sessionId: string, data: string) => void;
 
   /**
    * Open a new tab. When `regionId` is given (and still exists) the tab joins
@@ -120,6 +209,27 @@ interface TerminalState {
   /** Persist a resize drag on the border at `index` of the container at
    *  `containerPath` in the layout tree (see `resizeInTree`). */
   setSizes: (containerPath: number[], index: number, delta: number) => void;
+
+  /**
+   * Atomically replace the WHOLE terminal state with a layout built from a
+   * validated snapshot ("применить макет"). The caller spawns one PTY per
+   * saved window FIRST (`assignments`: one entry per snapshot tab, keyed by
+   * the depth-first region slot index and the tab index within it) and then
+   * calls this ONCE — so the panel never renders a half-built layout and the
+   * TerminalPanel auto-open (guarded by `consumeAutoOpen`) never fires on
+   * top of it. Fresh region ids are generated here; `lastCommands` is seeded
+   * from the snapshot so re-saving an applied layout round-trips unchanged.
+   */
+  applyLayoutSnapshot: (
+    spec: LayoutSnapshotNode,
+    assignments: Array<{
+      regionSlot: number;
+      tabIndex: number;
+      sessionId: string;
+      number: number;
+      title: string;
+    }>,
+  ) => void;
 }
 
 /** Remove `tabId` from every region; return the updated regions map plus the
@@ -169,6 +279,8 @@ export const useTerminalStore = create<TerminalState>()((set, get) => ({
   activeRegionId: null,
   reservedTabNumbers: new Set(),
   hasAutoOpenedTab: false,
+  lastCommands: {},
+  inputLines: {},
 
   setPanelMode: (mode) => set({ panelMode: mode }),
 
@@ -193,6 +305,18 @@ export const useTerminalStore = create<TerminalState>()((set, get) => ({
     set({ hasAutoOpenedTab: true });
     return true;
   },
+
+  recordTerminalInput: (sessionId, data) =>
+    set((state) => {
+      const { line, commit } = applyInputToLine(state.inputLines[sessionId] ?? "", data);
+      if (line === (state.inputLines[sessionId] ?? "") && commit === null) return {};
+      const inputLines = { ...state.inputLines, [sessionId]: line };
+      let lastCommands = state.lastCommands;
+      if (commit !== null) {
+        lastCommands = { ...state.lastCommands, [sessionId]: commit };
+      }
+      return { inputLines, lastCommands };
+    }),
 
   openSession: (id, title, number, regionId) =>
     set((state) => {
@@ -243,6 +367,12 @@ export const useTerminalStore = create<TerminalState>()((set, get) => ({
       const sessions = { ...state.sessions };
       delete sessions[id];
 
+      // Drop the closed session's command-tracking state (in-memory only).
+      const lastCommands = { ...state.lastCommands };
+      delete lastCommands[id];
+      const inputLines = { ...state.inputLines };
+      delete inputLines[id];
+
       const { regions, emptiedRegionId } = detachTab(state.regions, id);
 
       let layoutRoot = state.layoutRoot;
@@ -260,7 +390,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => ({
         reservedTabNumbers.delete(closedSession.number);
       }
 
-      return { sessions, regions, layoutRoot, activeRegionId, reservedTabNumbers };
+      return { sessions, lastCommands, inputLines, regions, layoutRoot, activeRegionId, reservedTabNumbers };
     }),
 
   markExited: (id, exitCode) =>
@@ -373,5 +503,82 @@ export const useTerminalStore = create<TerminalState>()((set, get) => ({
       const layoutRoot = resizeInTree(state.layoutRoot, containerPath, index, delta);
       if (layoutRoot === state.layoutRoot) return {};
       return { layoutRoot };
+    }),
+
+  applyLayoutSnapshot: (spec, assignments) =>
+    set((state) => {
+      // Fresh region ids, allocated in the SAME depth-first order the
+      // snapshot's slots were counted in (see `specRegionSlots`) so
+      // `assignments` slot indexes line up with `buildLayoutTree`'s walk.
+      const regionIdBySlot: string[] = [];
+      const layoutRoot = buildLayoutTree(spec, (slot) => {
+        const rid = newRegionId();
+        regionIdBySlot[slot] = rid;
+        return rid;
+      });
+
+      // Snapshot region leaves in depth-first order — for each tab's
+      // `lastCommand` seed and the per-region active tab.
+      const specRegions: LayoutSnapshotRegion[] = [];
+      const walk = (node: LayoutSnapshotNode): void => {
+        if (node.type === "region") specRegions.push(node);
+        else node.children.forEach(walk);
+      };
+      walk(spec);
+
+      const sessions: Record<string, TerminalSessionMeta> = {};
+      const lastCommands: Record<string, string> = {};
+      const reserved = new Set(state.reservedTabNumbers);
+      const regions: Record<string, TerminalRegion> = {};
+
+      // Group assignments per slot, ordered by tab index.
+      const bySlot = new Map<number, typeof assignments>();
+      for (const assignment of assignments) {
+        const list = bySlot.get(assignment.regionSlot) ?? [];
+        list.push(assignment);
+        bySlot.set(assignment.regionSlot, list);
+      }
+
+      for (const [slot, list] of bySlot) {
+        const rid = regionIdBySlot[slot];
+        if (!rid) continue; // slot beyond the built tree — should not happen
+        const ordered = [...list].sort((a, b) => a.tabIndex - b.tabIndex);
+        for (const { sessionId, number, title } of ordered) {
+          sessions[sessionId] = {
+            id: sessionId,
+            title,
+            number,
+            createdAt: Date.now(),
+            exited: false,
+          };
+          reserved.add(number);
+        }
+        // Seed last commands + pick the active tab from the snapshot spec.
+        const specRegion = specRegions[slot];
+        const activeSessionId =
+          specRegion && specRegion.activeTabIndex >= 0 && specRegion.activeTabIndex < ordered.length
+            ? ordered[specRegion.activeTabIndex].sessionId
+            : (ordered[0]?.sessionId ?? "");
+        for (const assignment of ordered) {
+          const cmd = specRegion?.tabs[assignment.tabIndex]?.lastCommand;
+          if (cmd) lastCommands[assignment.sessionId] = cmd;
+        }
+        regions[rid] = {
+          id: rid,
+          tabIds: ordered.map((a) => a.sessionId),
+          activeTabId: activeSessionId,
+        };
+      }
+
+      return {
+        sessions,
+        regions,
+        layoutRoot,
+        activeRegionId: regionIdBySlot[0] ?? null,
+        lastCommands,
+        inputLines: {},
+        reservedTabNumbers: reserved,
+        panelMode: "terminal",
+      };
     }),
 }));

@@ -124,8 +124,12 @@ export function useTerminalSession(
 
     // Deliver the user's input straight to the PTY's stdin. Fire-and-forget:
     // a transient write failure (session already exited) surfaces via the
-    // `exit` event instead of needing to be handled here.
+    // `exit` event instead of needing to be handled here. Before writing,
+    // the chunk feeds the store's heuristic "last typed command" tracker —
+    // the source of a saved layout's per-window `lastCommand` (in-memory
+    // only, persisted solely by an explicit layout save).
     const dataDisposable = term.onData((data) => {
+      useTerminalStore.getState().recordTerminalInput(sessionId, data);
       void writeTerminalSession(sessionId, data);
     });
 

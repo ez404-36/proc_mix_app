@@ -66,3 +66,16 @@ pub async fn terminal_close(
 ) -> Result<(), String> {
     terminal::close_session(state.inner(), &session_id)
 }
+
+/// Best-effort observable state of a LIVE session for the terminal-layout
+/// save flow: the shell's current working directory and, when an `ssh`
+/// child is running, its full command line (the connection script a layout
+/// can replay to reconnect). Both slots are `null` when unobservable —
+/// see `core::terminal::describe_session`.
+#[tauri::command]
+pub async fn terminal_describe_session(
+    state: State<'_, Arc<TerminalState>>,
+    session_id: String,
+) -> Result<terminal::SessionDescription, String> {
+    terminal::describe_session(state.inner(), &session_id)
+}

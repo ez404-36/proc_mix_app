@@ -19,6 +19,8 @@ beforeEach(() => {
     miniappEditorDirty: false,
     miniappEditorId: null,
     pendingNavigation: null,
+    consolePosition: "bottom",
+    consoleFullscreen: false,
   });
   // Wipe persisted slice so tests can re-observe localStorage writes.
   if (typeof localStorage !== "undefined") localStorage.clear();
@@ -366,6 +368,32 @@ describe("uiStore.setConsolePosition", () => {
   it("updates the console dock position", () => {
     useUIStore.getState().setConsolePosition("right");
     expect(useUIStore.getState().consolePosition).toBe("right");
+  });
+});
+
+describe("uiStore.setConsoleFullscreen", () => {
+  it("flips the fullscreen display flag", () => {
+    expect(useUIStore.getState().consoleFullscreen).toBe(false);
+    useUIStore.getState().setConsoleFullscreen(true);
+    expect(useUIStore.getState().consoleFullscreen).toBe(true);
+    // The store-level position setter does NOT touch the fullscreen flag
+    // (the "picking a dock exits fullscreen" behaviour lives in the
+    // OutputPanel dropdown handler).
+    useUIStore.getState().setConsolePosition("left");
+    expect(useUIStore.getState().consolePosition).toBe("left");
+    expect(useUIStore.getState().consoleFullscreen).toBe(true);
+    useUIStore.getState().setConsoleFullscreen(false);
+    expect(useUIStore.getState().consoleFullscreen).toBe(false);
+  });
+
+  it("should persist consoleFullscreen into localStorage under 'procmix-ui'", () => {
+    useUIStore.getState().setConsoleFullscreen(true);
+    const raw = localStorage.getItem("procmix-ui");
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw as string) as {
+      state: { consoleFullscreen: boolean };
+    };
+    expect(parsed.state.consoleFullscreen).toBe(true);
   });
 });
 
