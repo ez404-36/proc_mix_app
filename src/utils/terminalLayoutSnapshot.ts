@@ -219,7 +219,9 @@ export function layoutSnapshotEquals(a: LayoutSnapshotNode, b: LayoutSnapshotNod
     }
     if (value !== null && typeof value === "object") {
       const entries = Object.entries(value as Record<string, unknown>)
-        .filter(([, v]) => v !== undefined)
+        // Optional snapshot fields use `null` live and are omitted by serde
+        // after a save. They mean "not observed"; normalize both to absent.
+        .filter(([, v]) => v !== undefined && v !== null)
         .sort(([k1], [k2]) => (k1 < k2 ? -1 : k1 > k2 ? 1 : 0));
       return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
     }

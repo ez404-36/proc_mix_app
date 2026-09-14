@@ -275,6 +275,20 @@ describe("equality helpers", () => {
     ).toBe(false);
   });
 
+  it("layoutSnapshotEquals treats null optional fields as omitted", () => {
+    const live: LayoutSnapshotNode = {
+      type: "region",
+      tabs: [{ title: "T", lastCommand: "ls", cwd: null, remoteCommand: null }],
+      activeTabIndex: 0,
+    };
+    const saved: LayoutSnapshotNode = {
+      type: "region",
+      tabs: [{ title: "T", lastCommand: "ls" }],
+      activeTabIndex: 0,
+    };
+    expect(layoutSnapshotEquals(live, saved)).toBe(true);
+  });
+
   it("terminalLayoutStateEquals compares display state and layout", () => {
     const current = {
       position: "bottom" as const,

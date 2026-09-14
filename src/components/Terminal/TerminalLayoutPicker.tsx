@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChangeEvent,
   FormEvent,
@@ -87,9 +87,11 @@ export function TerminalLayoutPicker(): ReactElement {
 
   // Backend observations (cwd / ssh connection command) per open session,
   // refreshed whenever the SET of open sessions changes — they feed the
-  // dirty marker and the default snapshot of save/update. A save still
-  // takes a FRESH measurement at commit time (below), so a stale cache can
-  // never be persisted.
+  // dirty marker. A save/update takes a FRESH measurement at commit time
+  // (below) and puts that result back into the cache; otherwise the marker
+  // would keep comparing the just-saved record against stale observations.
+  // The epoch makes an older observation lose to a newer explicit refresh.
+  const descriptionEpochRef = useRef(0);
   const [descriptions, setDescriptions] = useState<
     Record<string, TerminalSessionDescription>
   >({});
@@ -97,10 +99,12 @@ export function TerminalLayoutPicker(): ReactElement {
   useEffect(() => {
     let cancelled = false;
     const ids = sessionKey === "" ? [] : sessionKey.split(",");
+    const epoch = descriptionEpochRef.current + 1;
+    descriptionEpochRef.current = epoch;
     void Promise.all(
       ids.map((id) => describeTerminalSession(id).then((d) => [id, d] as const)),
     ).then((pairs) => {
-      if (cancelled) return;
+      if (cancelled || epoch !== descriptionEpochRef.current) return;
       const next: Record<string, TerminalSessionDescription> = {};
       for (const [id, description] of pairs) {
         if (description !== null) next[id] = description;
@@ -117,6 +121,8 @@ export function TerminalLayoutPicker(): ReactElement {
     Record<string, TerminalSessionDescription>
   > => {
     const ids = Object.keys(useTerminalStore.getState().sessions);
+    const epoch = descriptionEpochRef.current + 1;
+    descriptionEpochRef.current = epoch;
     const pairs = await Promise.all(
       ids.map((id) => describeTerminalSession(id).then((d) => [id, d] as const)),
     );
@@ -124,6 +130,7 @@ export function TerminalLayoutPicker(): ReactElement {
     for (const [id, description] of pairs) {
       if (description !== null) next[id] = description;
     }
+    if (epoch === descriptionEpochRef.current) setDescriptions(next);
     return next;
   };
 
