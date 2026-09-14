@@ -5,6 +5,17 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3] - 2026-09-14
+
+### Fixed
+
+- **Terminal layout dirty marker clears after saving.** Live snapshots store
+  unset optional fields as `null`, while persisted snapshots omit them;
+  equality now treats both forms as absent. Saving also refreshes the cached
+  session observations (`cwd` / SSH connection command) used by the dirty
+  marker, so a just-saved layout no longer remains marked with “•” because
+  of stale observations.
+
 ## [0.15.2] - 2026-09-11
 
 ### Added
