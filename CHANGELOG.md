@@ -5,6 +5,22 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-10-10
+
+### Added
+
+- **Automatic fixed-width table parsing.** The output-schema table parser can
+  infer column boundaries from the header, an optional dashed ruler, and
+  aligned rows. Values containing spaces stay in one column, and empty cells
+  are preserved.
+
+### Changed
+
+- **Explicit table layout modes.** The editor now distinguishes the existing
+  delimited mode from automatic and manual fixed-width parsing. Manual mode
+  accepts comma-separated character widths, with the final column extending
+  to end-of-line.
+
 ## [0.15.4] - 2026-10-09
 
 ### Added
