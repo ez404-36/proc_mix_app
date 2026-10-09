@@ -5,6 +5,27 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.4] - 2026-10-09
+
+### Added
+
+- **New terminal tabs inherit the working directory.** Opening a terminal tab
+  now starts in the current working directory of the reference terminal when
+  it can be observed, instead of always falling back to the shell default.
+
+### Changed
+
+- **Terminal layout saving is clearer.** The layout manage menu now uses
+  "Save" instead of "Update", marks the action with "*" when the saved layout
+  has unsaved changes, and keeps it disabled while the console matches the
+  saved state. The manage control uses a vertical-dots icon.
+
+### Fixed
+
+- **Mini-app window size is persisted on close.** Closing a mini-app window
+  immediately saves its observed size, so reopening keeps the resized window
+  dimensions.
+
 ## [0.15.3] - 2026-09-14
 
 ### Fixed
