@@ -1509,8 +1509,8 @@ body.is-editor-fullscreen .output-panel {
 
 /* Terminal layout presets ("макеты"): the picker sitting right of the
  * Запуски/Терминал mode toggle in the console title row — a compact layout
- * dropdown plus a small manage (⋯) button opening the Save/Update/Rename/
- * Delete context menu. Mirrors the position-select treatment. */
+ * dropdown plus a small manage (⋯) button opening the Save/Rename/Delete
+ * context menu. Mirrors the position-select treatment. */
 .output-panel__layout-picker {
   display: flex;
   align-items: center;

@@ -25,6 +25,7 @@ export { ImportIcon } from "./ImportIcon";
 export { InfoIcon } from "./InfoIcon";
 export { LibraryIcon } from "./LibraryIcon";
 export { LockIcon } from "./LockIcon";
+export { MoreVerticalIcon } from "./MoreVerticalIcon";
 export { PasteIcon } from "./PasteIcon";
 export { PinIcon } from "./PinIcon";
 export { PluginsIcon } from "./PluginsIcon";

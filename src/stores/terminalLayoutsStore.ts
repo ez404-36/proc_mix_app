@@ -8,7 +8,7 @@
 //
 // `activeLayoutId` tracks which saved layout the console currently matches
 // (set on apply, cleared on delete); the header uses it together with
-// `isDirtyFor` to offer "Update" when any saved parameter changed.
+// `isDirtyFor` to offer "Save" when any saved parameter changed.
 
 import { create } from "zustand";
 import type {

@@ -20,8 +20,8 @@ import type { ContextMenuEntry } from "../ContextMenu";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { PromptModal } from "../PromptModal/PromptModal";
 import {
-  ChevronIcon,
   EditIcon,
+  MoreVerticalIcon,
   SaveIcon,
   TrashIcon,
 } from "../icons";
@@ -46,7 +46,7 @@ import { useApplyTerminalLayout } from "./useApplyTerminalLayout";
  * shown right of the Запуски/Терминал mode toggle while Terminal mode is
  * active. A compact dropdown lists the saved layouts (applying one restores
  * the display variant + windows and re-runs each saved window's command),
- * next to a small "manage" button opening Save as / Update / Rename / Delete.
+ * next to a small "manage" button opening Save as / Save / Rename / Delete.
  *
  * All persistence goes through `terminalLayoutsStore` (SQLite-backed); all
  * state reads are store subscriptions so the dirty marker ("•" after the
@@ -314,7 +314,9 @@ export function TerminalLayoutPicker(): ReactElement {
       },
       {
         id: "update",
-        label: t("outputPanel.terminalLayouts.update"),
+        label: isDirty
+          ? `${t("outputPanel.terminalLayouts.update")} ${t("outputPanel.terminalLayouts.unsavedMarker")}`
+          : t("outputPanel.terminalLayouts.update"),
         icon: <SaveIcon />,
         disabled: activeLayout === null || !isDirty,
         onSelect: () => {
@@ -381,7 +383,7 @@ export function TerminalLayoutPicker(): ReactElement {
         title={t("outputPanel.terminalLayouts.manage")}
         aria-label={t("outputPanel.terminalLayouts.manage")}
       >
-        <ChevronIcon />
+        <MoreVerticalIcon />
       </button>
 
       {nameDialog !== null ? (

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  describeTerminalSession,
   spawnTerminalSession,
   terminalBridgeReady,
 } from "../../services/terminalService";
@@ -8,10 +9,10 @@ import { useTerminalStore } from "../../stores/terminalStore";
 
 /**
  * Shared "open a new terminal tab" action: spawns a backend PTY session and
- * registers it in the store under a default "Terminal N" title. Used by the
- * console header's "New terminal" button (which also switches the panel into
- * Terminal mode) and each region's tab-strip "+" button, so the spawn logic
- * is defined exactly once.
+ * registers it in the store under a default "Terminal N" title, starting in
+ * the active terminal's cwd when one is observable. Used by the console
+ * header's "New terminal" button and each region's tab-strip "+" button, so
+ * the spawn logic is defined exactly once.
  *
  * The returned callback takes an optional `regionId`: a region's "+" passes
  * its own id so the new tab joins THAT region's strip; the header button and
@@ -26,6 +27,19 @@ export function useOpenTerminalTab(): (regionId?: string) => void {
 
   return useCallback(
     (regionId?: string): void => {
+      const terminalState = useTerminalStore.getState();
+      const targetRegion =
+        (regionId !== undefined ? terminalState.regions[regionId] : undefined) ??
+        (terminalState.activeRegionId
+          ? terminalState.regions[terminalState.activeRegionId]
+          : undefined) ??
+        Object.values(terminalState.regions)[0];
+      const referenceSessionId = targetRegion?.activeTabId ?? null;
+      const referenceSession =
+        referenceSessionId === null
+          ? null
+          : (terminalState.sessions[referenceSessionId] ?? null);
+
       // Reserve the number BEFORE the async spawn call (not after it
       // resolves) so two tabs opened back-to-back can't both compute the
       // same "lowest free number" — see `terminalStore.reserveTabNumber`.
@@ -37,7 +51,14 @@ export function useOpenTerminalTab(): (regionId?: string) => void {
       // buffering in `terminalService` only covers a tab mounting later than
       // the listener, not the listener itself not existing yet).
       void terminalBridgeReady()
-        .then(() => spawnTerminalSession())
+        .then(() =>
+          referenceSession && !referenceSession.exited
+            ? describeTerminalSession(referenceSession.id)
+            : Promise.resolve(null),
+        )
+        .then((description) =>
+          spawnTerminalSession(undefined, description?.cwd ?? undefined),
+        )
         .then((sessionId) => {
           openSession(
             sessionId,

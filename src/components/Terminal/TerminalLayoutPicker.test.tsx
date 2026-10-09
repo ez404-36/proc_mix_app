@@ -27,7 +27,11 @@ vi.mock("react-i18next", () => ({
   initReactI18next: { type: "3rdParty", init: () => {} },
   useTranslation: () => ({
     t: (key: string) =>
-      key === "outputPanel.terminalLayouts.dirtyMarker" ? "•" : key,
+      key === "outputPanel.terminalLayouts.dirtyMarker"
+        ? "•"
+        : key === "outputPanel.terminalLayouts.unsavedMarker"
+          ? "*"
+          : key,
   }),
 }));
 vi.mock("@arco-design/web-react", () => ({
@@ -97,10 +101,22 @@ function resetStores(): void {
   });
 }
 
-function contextMenuItems(): Array<{ id: string; onSelect: () => void }> {
+function contextMenuItems(): Array<{
+  id: string;
+  label: string;
+  disabled?: boolean;
+  onSelect: () => void;
+}> {
   const lastCall = mocks.show.mock.calls[mocks.show.mock.calls.length - 1];
   const call = lastCall?.[0] as
-    | { items: Array<{ id: string; onSelect: () => void }> }
+    | {
+        items: Array<{
+          id: string;
+          label: string;
+          disabled?: boolean;
+          onSelect: () => void;
+        }>;
+      }
     | undefined;
   return call?.items ?? [];
 }
@@ -132,6 +148,10 @@ describe("TerminalLayoutPicker", () => {
     fireEvent.click(
       screen.getByTitle("outputPanel.terminalLayouts.manage"),
     );
+    const updateItem = contextMenuItems().find((item) => item.id === "update");
+    expect(updateItem?.label).toBe("outputPanel.terminalLayouts.update *");
+    expect(updateItem?.disabled).toBe(false);
+
     act(() => {
       contextMenuItems()
         .find((item) => item.id === "save-as")
@@ -154,5 +174,20 @@ describe("TerminalLayoutPicker", () => {
     });
     expect(selectTrigger().textContent).toContain("Beta");
     expect(selectTrigger().textContent).not.toContain("•");
+  });
+
+  it("keeps the save action disabled without a layout change", async () => {
+    mocks.describe.mockReset();
+    mocks.describe.mockResolvedValue({ cwd: "/tmp", remoteCommand: null });
+
+    render(<TerminalLayoutPicker />);
+    await act(async () => {});
+
+    fireEvent.click(
+      screen.getByTitle("outputPanel.terminalLayouts.manage"),
+    );
+    const updateItem = contextMenuItems().find((item) => item.id === "update");
+    expect(updateItem?.label).toBe("outputPanel.terminalLayouts.update");
+    expect(updateItem?.disabled).toBe(true);
   });
 });

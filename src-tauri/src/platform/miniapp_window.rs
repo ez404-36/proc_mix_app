@@ -77,6 +77,19 @@ fn emit_window_event<R: Runtime>(app: &AppHandle<R>, event: &MiniAppWindowEvent)
     }
 }
 
+/// Flush the window-state plugin immediately after a Mini-App window closes.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn persist_window_state<R: Runtime>(app: &AppHandle<R>) {
+    use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+
+    if let Err(err) = app.save_window_state(StateFlags::SIZE) {
+        tracing::warn!("failed to persist mini-app window size: {err}");
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn persist_window_state<R: Runtime>(_app: &AppHandle<R>) {}
+
 /// Default window size for a newly-opened mini-app runner. Deliberately
 /// smaller than the main window's 1200×800 default — most mini-app panels
 /// are compact control surfaces (see `DEFAULT_PANEL_SIZE` in
@@ -146,6 +159,7 @@ pub fn open<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
                     id: id_for_close.clone(),
                 },
             );
+            persist_window_state(&app_for_close);
         }
     });
 
