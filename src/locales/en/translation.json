@@ -1246,6 +1246,16 @@
       "delimiterKeyValuePlaceholder": "leave empty to auto-detect = or :",
       "delimiterTablePlaceholder": "leave empty to split on spaces",
       "delimiterTableHint": "Leave empty for output whose columns are separated by spaces (e.g. df, ls, ps). Set a delimiter only for CSV/TSV (e.g. , or \\t).",
+      "tableMode": "Table layout",
+      "tableModes": {
+        "delimited": "Delimited (current)",
+        "fixedWidthAuto": "By width (automatic)",
+        "fixedWidthManual": "By width (manual)"
+      },
+      "fixedWidthAutoHint": "Detects columns from the header, a dashed ruler, and aligned rows. Requires the first row to be a header.",
+      "columnWidths": "Column widths",
+      "columnWidthsPlaceholder": "10, 16, 8, 9, 11, 23",
+      "columnWidthsHint": "Comma-separated character widths. The last column extends to end-of-line.",
       "hasHeader": "First row is a header",
       "maxColumns": "Max columns",
       "maxColumnsPlaceholder": "no limit",

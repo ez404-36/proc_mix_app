@@ -152,6 +152,77 @@ describe("OutputSchemaEditor", () => {
     expect(options).not.toContain("result");
   });
 
+  it("table layout modes persist only their own configuration", () => {
+    const onChange = vi.fn();
+    const value: OutputSchema = {
+      pipeline: [
+        {
+          parser: "table",
+          delimiter: ",",
+          maxColumns: 3,
+          hasHeader: true,
+          fields: [],
+        },
+      ],
+    };
+    const { rerender } = render(
+      <OutputSchemaEditor value={value} onChange={onChange} t={t} />,
+    );
+
+    const selectMode = (label: string): void => {
+      fireEvent.click(screen.getByRole("button", { name: "Table layout" }));
+      const option = screen
+        .getAllByRole("option")
+        .find((el) => el.textContent === label);
+      expect(option).toBeTruthy();
+      fireEvent.click(option as HTMLElement);
+    };
+
+    selectMode("By width (automatic)");
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenLastCalledWith({
+      pipeline: [
+        {
+          parser: "table",
+          hasHeader: true,
+          columnMode: "fixedWidthAuto",
+          fields: [],
+        },
+      ],
+    });
+
+    const manualStep: OutputSchema = {
+      pipeline: [
+        {
+          parser: "table",
+          hasHeader: true,
+          columnMode: "fixedWidthManual",
+          columnWidths: [],
+          fields: [],
+        },
+      ],
+    };
+    onChange.mockClear();
+    rerender(<OutputSchemaEditor value={manualStep} onChange={onChange} t={t} />);
+
+    // ...then manual widths commit on Enter without losing separators while
+    // the user is still typing.
+    const widths = screen.getByLabelText("Column widths");
+    fireEvent.change(widths, { target: { value: "10, 16," } });
+    fireEvent.keyDown(widths, { key: "Enter" });
+    expect(onChange).toHaveBeenLastCalledWith({
+      pipeline: [
+        {
+          parser: "table",
+          hasHeader: true,
+          columnMode: "fixedWidthManual",
+          columnWidths: [10, 16],
+          fields: [],
+        },
+      ],
+    });
+  });
+
   it("return value dropdown shows only Whole result when no fields declared", () => {
     // Without declared fields and without a preview, only "Whole result" appears.
     const value: OutputSchema = { pipeline: [{ parser: "lines", fields: [] }] };

@@ -127,6 +127,13 @@ pub struct OutputPipelineStepRecord {
     /// like `ls -l` where the last column is a path that may contain spaces).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_columns: Option<usize>,
+    /// Table layout mode: `"delimited"` (the legacy whitespace/CSV split),
+    /// `"fixedWidthAuto"`, or `"fixedWidthManual"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column_mode: Option<String>,
+    /// Character widths for `fixedWidthManual`; the final width is open-ended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub column_widths: Vec<usize>,
     #[serde(default)]
     pub fields: Vec<OutputFieldRecord>,
     /// User-written `function parse(data) { … }` source for the `javascript`
@@ -174,6 +181,10 @@ pub struct OutputSchemaRecord {
     pub has_header: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_columns: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub column_widths: Vec<usize>,
     #[serde(default)]
     pub fields: Vec<OutputFieldRecord>,
     /// Pipeline of parser steps. When non-empty, takes precedence over
@@ -788,6 +799,8 @@ mod wire_format_tests {
                 delimiter: None,
                 has_header: None,
                 max_columns: None,
+                column_mode: None,
+                column_widths: Vec::new(),
                 fields: vec![OutputFieldRecord {
                     name: "count".into(),
                     path: Some("items.length".into()),
@@ -1338,6 +1351,8 @@ mod sqlite_integration_tests {
             delimiter: None,
             has_header: None,
             max_columns: None,
+            column_mode: None,
+            column_widths: Vec::new(),
             fields: vec![OutputFieldRecord {
                 name: "ip".into(),
                 path: None,
@@ -1370,6 +1385,8 @@ mod sqlite_integration_tests {
             delimiter: None,
             has_header: None,
             max_columns: None,
+            column_mode: None,
+            column_widths: Vec::new(),
             fields: Vec::new(),
             pipeline: Vec::new(),
             return_field: None,

@@ -19,7 +19,8 @@
  *   - "json"     → parse stdout as JSON; fields extracted by `path`.
  *   - "regex"    → match a pattern; each named capture group is a field.
  *   - "keyValue" → parse `key: value` / `key=value` lines into an object.
- *   - "table"    → split rows by `delimiter` into columns; the full table
+ *   - "table"    → split rows into columns by delimiter/whitespace, an
+ *     inferred fixed-width layout, or manual character widths; the full table
  *     is the `rows` field (objects keyed by header or `col0`, `col1`, …),
  *     and a declared field with a `column` locator projects that column
  *     as an array of its values across all rows.
@@ -35,6 +36,19 @@ export type OutputParserKind =
   | "keyValue"
   | "table"
   | "javascript";
+
+/**
+ * How the table parser finds column boundaries.
+ *   - "delimited"        → the legacy mode: a literal delimiter, with
+ *     whitespace runs used when no delimiter is set.
+ *   - "fixedWidthAuto"   → infer character ranges from the header, an
+ *     optional dashed ruler line, and the aligned data.
+ *   - "fixedWidthManual" → slice each line using `columnWidths`.
+ */
+export type OutputTableColumnMode =
+  | "delimited"
+  | "fixedWidthAuto"
+  | "fixedWidthManual";
 
 /**
  * A single field extracted from stdout. The meaning of the locator
@@ -86,6 +100,13 @@ export interface OutputPipelineStep {
    * like `ls -l` where the last column is a path that may contain spaces.
    */
   maxColumns?: number;
+  /** How a table finds its column boundaries. Defaults to "delimited". */
+  columnMode?: OutputTableColumnMode;
+  /**
+   * Character widths for fixedWidthManual. The final width extends to
+   * end-of-line, so the last value is never truncated.
+   */
+  columnWidths?: number[];
   /**
    * User-written `function parse(data) { … }` source (javascript parser).
    * Ignored by every other parser kind. Executed in a sandboxed JS engine

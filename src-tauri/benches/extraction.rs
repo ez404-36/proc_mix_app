@@ -41,6 +41,8 @@ fn schema(parser: &str) -> OutputSchemaRecord {
         delimiter: None,
         has_header: None,
         max_columns: None,
+        column_mode: None,
+        column_widths: Vec::new(),
         fields: Vec::new(),
         pipeline: Vec::new(),
         return_field: None,
@@ -56,6 +58,8 @@ fn step(parser: &str) -> OutputPipelineStepRecord {
         delimiter: None,
         has_header: None,
         max_columns: None,
+        column_mode: None,
+        column_widths: Vec::new(),
         fields: Vec::new(),
         code: None,
     }

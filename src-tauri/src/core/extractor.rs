@@ -33,10 +33,12 @@
 //     used directly (no text re-parse).
 //   - regex    → first match of `pattern`; each named group is a field.
 //   - keyValue → `key<sep>value` lines parsed into an object.
-//   - table    → rows split by `delimiter` into columns; the full table
-//     is the `rows` field (objects keyed by header or `col0`, `col1`, …),
-//     and each declared field with a `column` locator projects that one
-//     column as an array of its values across all rows.
+//   - table    → columns come from a literal delimiter/whitespace runs
+//     (`delimited`), an inferred fixed-width layout (`fixedWidthAuto`), or
+//     explicit character widths (`fixedWidthManual`). The full table is the
+//     `rows` field (objects keyed by header or `col0`, `col1`, …), and each
+//     declared field with a `column` locator projects that one column as an
+//     array of its values across all rows.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
@@ -143,6 +145,14 @@ pub enum ExtractError {
     NoMatch,
     #[error("regex field {field} references unknown capture group {group}")]
     UnknownGroup { field: String, group: String },
+    #[error("fixed-width table mode requires the first row to be a header")]
+    FixedWidthHeaderRequired,
+    #[error("manual fixed-width table mode requires at least one column width")]
+    FixedWidthWidthsRequired,
+    #[error("table column widths must be greater than zero")]
+    FixedWidthInvalidWidths,
+    #[error("unknown table column mode: {0}")]
+    UnknownColumnMode(String),
     #[error("return field {0} is not present in the extracted fields")]
     UnknownReturnField(String),
     #[error("pipeline step {step} ({parser}): {source}")]
@@ -186,6 +196,8 @@ struct StepConfig<'a> {
     delimiter: Option<&'a str>,
     has_header: Option<bool>,
     max_columns: Option<usize>,
+    column_mode: Option<&'a str>,
+    column_widths: &'a [usize],
     fields: &'a [OutputFieldRecord],
 }
 
@@ -196,6 +208,8 @@ impl<'a> StepConfig<'a> {
             delimiter: step.delimiter.as_deref(),
             has_header: step.has_header,
             max_columns: step.max_columns,
+            column_mode: step.column_mode.as_deref(),
+            column_widths: &step.column_widths,
             fields: &step.fields,
         }
     }
@@ -426,7 +440,7 @@ fn step_to_pipeline_value(
             Ok(PipelineValue::Json(fields_to_object(&fields)))
         }
         "table" => {
-            let rows = parse_table(cfg, text);
+            let rows = parse_table(cfg, text)?;
 
             // If the step declares fields, project each row to only the
             // requested columns (field.name → column value). This lets the
@@ -495,6 +509,8 @@ pub fn extract(schema: &OutputSchemaRecord, stdout: &str) -> Result<ExtractedOut
             delimiter: schema.delimiter.clone(),
             has_header: schema.has_header,
             max_columns: schema.max_columns,
+            column_mode: schema.column_mode.clone(),
+            column_widths: schema.column_widths.clone(),
             fields: schema.fields.clone(),
             code: None,
         }])
@@ -717,6 +733,206 @@ fn key_value_pairs(stdout: &str, delimiter: Option<&str>) -> Vec<(String, String
     pairs
 }
 
+/// A half-open span measured in `char` positions. Fixed-width output is a
+/// presentation contract in characters; using byte offsets directly would
+/// panic or mis-slice text containing Cyrillic or other multi-byte input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TextSpan {
+    start: usize,
+    end: usize,
+}
+
+/// A fixed-width column before its final boundaries are calculated.
+/// `span` accumulates the header and all data atoms assigned to the column;
+/// `anchor` stays fixed so assignment is stable as the span grows.
+#[derive(Debug, Clone, Copy)]
+struct AutoColumn {
+    span: TextSpan,
+    anchor: TextSpan,
+}
+
+/// A ready-to-slice table range; `end == None` means end-of-line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ColumnRange {
+    start: usize,
+    end: Option<usize>,
+}
+
+/// Non-whitespace runs in a line, as character-index spans.
+fn char_spans(line: &str) -> Vec<TextSpan> {
+    let mut spans = Vec::new();
+    let mut start: Option<usize> = None;
+    let mut index = 0;
+
+    for ch in line.chars() {
+        if ch.is_whitespace() {
+            if let Some(end) = start.take() {
+                spans.push(TextSpan {
+                    start: end,
+                    end: index,
+                });
+            }
+        } else {
+            start.get_or_insert(index);
+        }
+        index += 1;
+    }
+
+    if let Some(start) = start {
+        spans.push(TextSpan { start, end: index });
+    }
+    spans
+}
+
+/// Recognise a table's dashed separator line and return its dash runs.
+/// `None` means "not a ruler"; an empty line is handled by the normal
+/// line filter before this is called.
+fn dash_ruler_spans(line: &str) -> Option<Vec<TextSpan>> {
+    let is_ruler =
+        line.chars().all(|ch| ch.is_whitespace() || ch == '-') && line.chars().any(|ch| ch == '-');
+    is_ruler.then(|| char_spans(line))
+}
+
+/// Distance between span centres, in character positions.
+fn span_distance(left: TextSpan, right: TextSpan) -> usize {
+    let center = |span: TextSpan| span.start + (span.end - span.start) / 2;
+    center(left).abs_diff(center(right))
+}
+
+fn nearest_span_index(spans: &[TextSpan], span: TextSpan) -> Option<usize> {
+    spans
+        .iter()
+        .copied()
+        .enumerate()
+        .min_by_key(|(_, candidate)| span_distance(*candidate, span))
+        .map(|(idx, _)| idx)
+}
+
+fn merge_spans(spans: Vec<TextSpan>) -> Option<TextSpan> {
+    spans.into_iter().reduce(|left, right| TextSpan {
+        start: left.start.min(right.start),
+        end: left.end.max(right.end),
+    })
+}
+
+/// Turn header tokens into fixed-width column anchors. When a ruler is
+/// present, header tokens assigned to the same dash run form one multi-word
+/// column; otherwise every whitespace-delimited header token is a column.
+fn header_column_anchors(header: &str, ruler: Option<&[TextSpan]>) -> Vec<AutoColumn> {
+    let tokens = char_spans(header);
+    let Some(ruler) = ruler.filter(|runs| !runs.is_empty()) else {
+        return tokens
+            .into_iter()
+            .map(|span| AutoColumn { span, anchor: span })
+            .collect();
+    };
+
+    let mut groups: Vec<Vec<TextSpan>> = vec![Vec::new(); ruler.len()];
+    for token in tokens {
+        if let Some(idx) = nearest_span_index(ruler, token) {
+            groups[idx].push(token);
+        }
+    }
+
+    groups
+        .into_iter()
+        .filter_map(|group| merge_spans(group).map(|span| AutoColumn { span, anchor: span }))
+        .collect()
+}
+
+/// Infer character ranges for a fixed-width table. Header anchors determine
+/// which column a whitespace-delimited data atom belongs to; their extents
+/// are then accumulated across every row. This preserves spaces inside values
+/// (`Mi Monitor`, `2560 0`, `1920x1080@60 Hz`) while allowing blank columns.
+fn infer_fixed_width_columns(
+    header: &str,
+    ruler: Option<&[TextSpan]>,
+    data: &[&str],
+) -> Vec<AutoColumn> {
+    let mut columns = header_column_anchors(header, ruler);
+    let anchors: Vec<TextSpan> = columns.iter().map(|col| col.anchor).collect();
+
+    for line in data {
+        for atom in char_spans(line) {
+            if let Some(idx) = nearest_span_index(&anchors, atom) {
+                let span = &mut columns[idx].span;
+                span.start = span.start.min(atom.start);
+                span.end = span.end.max(atom.end);
+            }
+        }
+    }
+
+    columns
+}
+
+/// Convert calibrated column extents into half-open character ranges. A
+/// boundary lies midway through the whitespace gap between neighbouring
+/// extents. If pathological rows make extents overlap, fall back to the
+/// original header anchors; automatic mode is best-effort, while manual
+/// widths remain available for ambiguous output.
+fn fixed_width_ranges(columns: &[AutoColumn]) -> Vec<ColumnRange> {
+    if columns.is_empty() {
+        return Vec::new();
+    }
+
+    let mut ranges = Vec::with_capacity(columns.len());
+    let mut start = 0;
+    for idx in 0..columns.len() {
+        let end = if idx + 1 == columns.len() {
+            None
+        } else {
+            let left = columns[idx].span;
+            let right = columns[idx + 1].span;
+            let boundary = if right.start >= left.end {
+                (left.end + right.start) / 2
+            } else {
+                (columns[idx].anchor.end + columns[idx + 1].anchor.start) / 2
+            };
+            Some(boundary.max(start + 1))
+        };
+        ranges.push(ColumnRange { start, end });
+        if let Some(end) = end {
+            start = end;
+        }
+    }
+
+    ranges
+}
+
+/// Slice a line by character positions; a missing end means end-of-line.
+fn slice_chars(line: &str, range: ColumnRange) -> String {
+    let chars = line.chars().skip(range.start);
+    match range.end {
+        Some(end) => chars.take(end.saturating_sub(range.start)).collect(),
+        None => chars.collect(),
+    }
+}
+
+/// Slice a line into manual fixed-width columns. All widths except the last
+/// are exact; the last column extends to end-of-line so a long path or name
+/// is not silently truncated. Short lines produce empty trailing columns.
+fn slice_by_widths(line: &str, widths: &[usize]) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut cells = Vec::with_capacity(widths.len());
+    let mut start = 0;
+
+    for (idx, width) in widths.iter().enumerate() {
+        if start >= chars.len() {
+            cells.push(String::new());
+            continue;
+        }
+        let end = if idx + 1 == widths.len() {
+            chars.len()
+        } else {
+            (start + width).min(chars.len())
+        };
+        cells.push(chars[start..end].iter().collect());
+        start = end;
+    }
+
+    cells
+}
+
 /// `table` parser: split each row by `delimiter` (default: runs of
 /// whitespace) into columns and return the table as a vector of row objects.
 /// With `has_header`, the first row supplies column names; otherwise columns
@@ -729,24 +945,94 @@ fn key_value_pairs(stdout: &str, delimiter: Option<&str>) -> Vec<(String, String
 /// array and corrupted every downstream lookup. Column projection is the
 /// caller's concern (`step_to_pipeline_value`), keeping the two kinds of data
 /// in separate namespaces by construction.
-fn parse_table(cfg: StepConfig, stdout: &str) -> Vec<Value> {
-    let rows: Vec<Vec<String>> = split_lines(stdout)
+fn parse_table(cfg: StepConfig, stdout: &str) -> Result<Vec<Value>, ExtractError> {
+    let lines: Vec<&str> = split_lines(stdout)
         .into_iter()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| split_columns(l, cfg.delimiter, cfg.max_columns))
         .collect();
 
-    let mut iter = rows.iter();
-    let header: Vec<String> = if cfg.has_header.unwrap_or(false) {
-        iter.next()
-            .map(|r| r.iter().map(|c| c.trim().to_string()).collect())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
+    let (data_lines, header): (Vec<Vec<String>>, Vec<String>) = match cfg.column_mode {
+        Some("delimited") | None => {
+            let mut rows = lines
+                .iter()
+                .map(|l| split_columns(l, cfg.delimiter, cfg.max_columns))
+                .peekable();
+            let header = if cfg.has_header.unwrap_or(false) {
+                rows.next()
+                    .map(|r| r.iter().map(|c| c.trim().to_string()).collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let data_lines: Vec<Vec<String>> = rows.collect();
+            (data_lines, header)
+        }
+        Some("fixedWidthAuto") => {
+            if !cfg.has_header.unwrap_or(false) {
+                return Err(ExtractError::FixedWidthHeaderRequired);
+            }
+            let Some((header_line, data_refs)) = lines.split_first() else {
+                return Err(ExtractError::FixedWidthHeaderRequired);
+            };
+            let header_line = *header_line;
+            let ruler = data_refs.first().and_then(|line| dash_ruler_spans(line));
+            let data_refs = if ruler.is_some() {
+                &data_refs[1..]
+            } else {
+                data_refs
+            };
+            let columns = infer_fixed_width_columns(header_line, ruler.as_deref(), data_refs);
+            let header = columns
+                .iter()
+                .map(|col| {
+                    slice_chars(
+                        header_line,
+                        ColumnRange {
+                            start: col.anchor.start,
+                            end: Some(col.anchor.end),
+                        },
+                    )
+                    .trim()
+                    .to_string()
+                })
+                .collect();
+            let ranges = fixed_width_ranges(&columns);
+            let data_lines = data_refs
+                .iter()
+                .map(|line| {
+                    ranges
+                        .iter()
+                        .map(|range| slice_chars(line, *range).trim().to_string())
+                        .collect()
+                })
+                .collect();
+            (data_lines, header)
+        }
+        Some("fixedWidthManual") => {
+            if cfg.column_widths.is_empty() {
+                return Err(ExtractError::FixedWidthWidthsRequired);
+            }
+            if cfg.column_widths.contains(&0) {
+                return Err(ExtractError::FixedWidthInvalidWidths);
+            }
+            let mut rows = lines
+                .iter()
+                .map(|l| slice_by_widths(l, cfg.column_widths))
+                .peekable();
+            let header = if cfg.has_header.unwrap_or(false) {
+                rows.next()
+                    .map(|r| r.iter().map(|c| c.trim().to_string()).collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            (rows.collect(), header)
+        }
+        Some(mode) => return Err(ExtractError::UnknownColumnMode(mode.to_string())),
     };
 
     let mut records: Vec<Value> = Vec::new();
-    for row in iter {
+    for row in data_lines {
         let mut obj = Map::new();
         for (i, cell) in row.iter().enumerate() {
             let key = header
@@ -759,7 +1045,7 @@ fn parse_table(cfg: StepConfig, stdout: &str) -> Vec<Value> {
         records.push(Value::Object(obj));
     }
 
-    records
+    Ok(records)
 }
 
 /// Resolve a table column locator to the object key used in the row
@@ -934,6 +1220,8 @@ mod tests {
             delimiter: None,
             has_header: None,
             max_columns: None,
+            column_mode: None,
+            column_widths: Vec::new(),
             fields: Vec::new(),
             pipeline: Vec::new(),
             return_field: None,
@@ -1269,6 +1557,121 @@ mod tests {
     }
 
     #[test]
+    fn table_fixed_width_auto_preserves_values_with_spaces() {
+        let mut s = schema("table");
+        s.has_header = Some(true);
+        s.column_mode = Some("fixedWidthAuto".into());
+        s.fields = vec![field("names")];
+        s.fields[0].column = Some("DisplayName".into());
+        s.return_field = Some("names".into());
+        let stdout = concat!(
+            "DisplayId DisplayName      Active  Primary Position    Mode                  ConnectionType\n",
+            " --------- -----------      ------  ------- --------    ----                  --------------\n",
+            "         1 Mi Monitor         True    False 2560 0      1920x1080@60 Hz                  DVI\n",
+            "         2 ARZOPA             True    False 408 1080    1920x1080@60 Hz                  DVI\n",
+            "         3 Beyond TV         False    False 0 0                                  DisplayPort\n",
+            "         4 LG ULTRAWIDE       True     True 0 0         2560x1080@60 Hz                 HDMI\n",
+        );
+
+        let out = extract(&s, stdout).unwrap();
+        assert_eq!(
+            out.return_value,
+            Value::Array(vec![
+                Value::String("Mi Monitor".into()),
+                Value::String("ARZOPA".into()),
+                Value::String("Beyond TV".into()),
+                Value::String("LG ULTRAWIDE".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn table_fixed_width_auto_keeps_empty_columns() {
+        let mut s = schema("table");
+        s.has_header = Some(true);
+        s.column_mode = Some("fixedWidthAuto".into());
+        let stdout = concat!(
+            "DisplayId DisplayName      Active  Primary Position    Mode                  ConnectionType\n",
+            " --------- -----------      ------  ------- --------    ----                  --------------\n",
+            "         3 Beyond TV         False    False 0 0                                  DisplayPort\n",
+            "         4 LG ULTRAWIDE       True     True 0 0         2560x1080@60 Hz                 HDMI\n",
+        );
+
+        let out = extract(&s, stdout).unwrap();
+        let rows = out.return_value.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["DisplayName"], Value::String("Beyond TV".into()));
+        assert_eq!(rows[0]["Mode"], Value::String("".into()));
+        assert_eq!(rows[0]["Position"], Value::String("0 0".into()));
+        assert_eq!(
+            rows[0]["ConnectionType"],
+            Value::String("DisplayPort".into())
+        );
+        assert_eq!(rows[1]["Mode"], Value::String("2560x1080@60 Hz".into()));
+    }
+
+    #[test]
+    fn table_fixed_width_manual_uses_character_widths() {
+        let mut s = schema("table");
+        s.has_header = Some(true);
+        s.column_mode = Some("fixedWidthManual".into());
+        s.column_widths = vec![10, 16, 8, 9, 11, 23, 14];
+        let stdout = concat!(
+            "DisplayId DisplayName      Active  Primary Position    Mode                  ConnectionType\n",
+            "         1 Mi Monitor         True    False 2560 0      1920x1080@60 Hz                  DVI\n",
+            "         3 Beyond TV         False    False 0 0                                  DisplayPort\n",
+        );
+
+        let out = extract(&s, stdout).unwrap();
+        let rows = out.return_value.as_array().unwrap();
+        assert_eq!(rows[0]["DisplayName"], Value::String("Mi Monitor".into()));
+        assert_eq!(rows[0]["Position"], Value::String("2560 0".into()));
+        assert_eq!(rows[0]["Mode"], Value::String("1920x1080@60 Hz".into()));
+        assert_eq!(rows[1]["Mode"], Value::String("".into()));
+        assert_eq!(
+            rows[1]["ConnectionType"],
+            Value::String("DisplayPort".into())
+        );
+    }
+
+    #[test]
+    fn table_fixed_width_manual_uses_character_counts() {
+        let mut s = schema("table");
+        s.has_header = Some(true);
+        s.column_mode = Some("fixedWidthManual".into());
+        s.column_widths = vec![4, 10];
+        let out = extract(&s, "Код Значение\nРаз Два\n").unwrap();
+        let row = out.return_value.as_object().unwrap();
+        assert_eq!(row["Код"], Value::String("Раз".into()));
+        assert_eq!(row["Значение"], Value::String("Два".into()));
+    }
+
+    #[test]
+    fn table_fixed_width_modes_validate_configuration() {
+        let mut auto = schema("table");
+        auto.column_mode = Some("fixedWidthAuto".into());
+        assert_eq!(
+            extract(&auto, "A B\n1 2\n"),
+            Err(ExtractError::PipelineStep {
+                step: 0,
+                parser: "table".into(),
+                source: Box::new(ExtractError::FixedWidthHeaderRequired),
+            })
+        );
+
+        let mut manual = schema("table");
+        manual.column_mode = Some("fixedWidthManual".into());
+        assert_eq!(
+            extract(&manual, "one line"),
+            Err(ExtractError::PipelineStep {
+                step: 0,
+                parser: "table".into(),
+                source: Box::new(ExtractError::FixedWidthWidthsRequired),
+            })
+        );
+    }
+
+    #[test]
     fn table_field_named_rows_does_not_collide() {
         // Regression: a field literally named `rows` must not collide with
         // the implicit row array — it is an ordinary field name.
@@ -1409,6 +1812,8 @@ mod tests {
             delimiter: None,
             has_header: None,
             max_columns: None,
+            column_mode: None,
+            column_widths: Vec::new(),
             fields: Vec::new(),
             code: None,
         }
@@ -1422,6 +1827,8 @@ mod tests {
             delimiter: None,
             has_header: None,
             max_columns: None,
+            column_mode: None,
+            column_widths: Vec::new(),
             fields: Vec::new(),
             code: Some(code.into()),
         }

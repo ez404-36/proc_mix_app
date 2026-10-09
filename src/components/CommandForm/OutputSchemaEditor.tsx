@@ -14,6 +14,7 @@ import type {
   OutputParserKind,
   OutputPipelineStep,
   OutputSchema,
+  OutputTableColumnMode,
 } from "../../types";
 import { Message } from "@arco-design/web-react";
 import { ArrowDownIcon } from "../icons";
@@ -43,9 +44,6 @@ const PARSER_KINDS: readonly OutputParserKind[] = [
 function usesPattern(parser: OutputParserKind): boolean {
   return parser === "regex";
 }
-function usesDelimiter(parser: OutputParserKind): boolean {
-  return parser === "keyValue" || parser === "table";
-}
 function usesHeader(parser: OutputParserKind): boolean {
   return parser === "table";
 }
@@ -62,6 +60,105 @@ function usesFields(parser: OutputParserKind): boolean {
  *  pattern/delimiter/header/fields config. */
 function usesCode(parser: OutputParserKind): boolean {
   return parser === "javascript";
+}
+
+const TABLE_COLUMN_MODES: readonly OutputTableColumnMode[] = [
+  "delimited",
+  "fixedWidthAuto",
+  "fixedWidthManual",
+];
+
+function tableColumnMode(step: OutputPipelineStep): OutputTableColumnMode {
+  return step.columnMode ?? "delimited";
+}
+
+/** Switching table layout must leave no contradictory parser config behind. */
+function nextTableMode(
+  step: OutputPipelineStep,
+  mode: OutputTableColumnMode,
+): OutputPipelineStep {
+  const next = { ...step };
+  // `patchStep` merges patches onto the current step, so explicit `undefined`
+  // values are required to remove layout-specific fields.
+  next.columnMode = undefined;
+  next.columnWidths = undefined;
+  next.delimiter = undefined;
+  next.maxColumns = undefined;
+  if (mode === "delimited") {
+    return next;
+  }
+  return {
+    ...next,
+    columnMode: mode,
+    hasHeader: mode === "fixedWidthAuto" ? true : step.hasHeader,
+    columnWidths: mode === "fixedWidthManual" ? (step.columnWidths ?? []) : undefined,
+  };
+}
+
+/** Parse a comma/space-separated width list, dropping incomplete entries. */
+function parseColumnWidths(raw: string): number[] {
+  return raw
+    .split(/[,\s]+/)
+    .filter(Boolean)
+    .map(Number)
+    .filter((width) => Number.isInteger(width) && width > 0);
+}
+
+interface ColumnWidthsInputProps {
+  value: ReadonlyArray<number>;
+  onChange: (next: number[]) => void;
+  t: TFunction;
+}
+
+/**
+ * Keep raw keystrokes local so users can type `10, 16,` without the parent
+ * immediately normalising away the trailing separator.
+ */
+function ColumnWidthsInput({
+  value,
+  onChange,
+  t,
+}: ColumnWidthsInputProps): ReactElement {
+  const serialized = value.join(", ");
+  const [draft, setDraft] = useState(serialized);
+  const isFocusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isFocusedRef.current) {
+      setDraft(serialized);
+    }
+  }, [serialized]);
+
+  return (
+    <input
+      type="text"
+      className="input"
+      value={draft}
+      onFocus={() => {
+        isFocusedRef.current = true;
+      }}
+      onBlur={() => {
+        isFocusedRef.current = false;
+        const next = parseColumnWidths(draft);
+        onChange(next);
+        setDraft(serialized);
+      }}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          const next = parseColumnWidths(draft);
+          onChange(next);
+          setDraft(next.join(", "));
+        }
+      }}
+      placeholder={t("commandForm.outputSchema.columnWidthsPlaceholder", {
+        defaultValue: "10, 16, 8, 9, 11, 23",
+      })}
+      aria-label={t("commandForm.outputSchema.columnWidths", {
+        defaultValue: "Column widths",
+      })}
+    />
+  );
 }
 
 
@@ -462,6 +559,14 @@ export function OutputSchemaEditor(
       label: t(`commandForm.outputSchema.parsers.${k}`, { defaultValue: k }),
     }),
   );
+  const tableModeOptions: ReadonlyArray<DropdownOption> = TABLE_COLUMN_MODES.map(
+    (mode) => ({
+      value: mode,
+      label: t(`commandForm.outputSchema.tableModes.${mode}`, {
+        defaultValue: mode,
+      }),
+    }),
+  );
 
 
   const lastStepFields: readonly OutputField[] =
@@ -687,7 +792,7 @@ export function OutputSchemaEditor(
                       </label>
                     ) : null}
 
-                    {usesDelimiter(step.parser) ? (
+                    {step.parser === "keyValue" ? (
                       <label className="command-form__field">
                         <span className="command-form__label">
                           {t("commandForm.outputSchema.delimiter", { defaultValue: "Delimiter" })}
@@ -697,18 +802,43 @@ export function OutputSchemaEditor(
                           className="input"
                           value={step.delimiter ?? ""}
                           onChange={(e) => patchStep(si, { delimiter: e.target.value })}
-                          placeholder={
-                            step.parser === "table"
-                              ? t("commandForm.outputSchema.delimiterTablePlaceholder", { defaultValue: "leave empty to split on spaces" })
-                              : t("commandForm.outputSchema.delimiterKeyValuePlaceholder", { defaultValue: "leave empty to auto-detect = or :" })
-                          }
+                          placeholder={t("commandForm.outputSchema.delimiterKeyValuePlaceholder", { defaultValue: "leave empty to auto-detect = or :" })}
                         />
-                        {step.parser === "table" ? (
-                          <span className="command-form__hint" role="note">
-                            {t("commandForm.outputSchema.delimiterTableHint", {
-                              defaultValue: "Leave empty for output whose columns are separated by spaces (e.g. df, ls, ps). Set a delimiter only for CSV/TSV (e.g. , or \\t).",
-                            })}
-                          </span>
+                      </label>
+                    ) : null}
+
+                    {step.parser === "table" ? (
+                      <label className="command-form__field">
+                        <span className="command-form__label">
+                          {t("commandForm.outputSchema.tableMode", {
+                            defaultValue: "Table layout",
+                          })}
+                        </span>
+                        <Dropdown
+                          value={tableColumnMode(step)}
+                          options={tableModeOptions}
+                          onChange={(next) =>
+                            patchStep(si, nextTableMode(step, next as OutputTableColumnMode))
+                          }
+                          ariaLabel={t("commandForm.outputSchema.tableMode", {
+                            defaultValue: "Table layout",
+                          })}
+                        />
+                        {tableColumnMode(step) === "delimited" ? (
+                          <>
+                            <input
+                              type="text"
+                              className="input"
+                              value={step.delimiter ?? ""}
+                              onChange={(e) => patchStep(si, { delimiter: e.target.value })}
+                              placeholder={t("commandForm.outputSchema.delimiterTablePlaceholder", { defaultValue: "leave empty to split on spaces" })}
+                            />
+                            <span className="command-form__hint" role="note">
+                              {t("commandForm.outputSchema.delimiterTableHint", {
+                                defaultValue: "Leave empty for output whose columns are separated by spaces (e.g. df, ls, ps). Set a delimiter only for CSV/TSV (e.g. , or \\t).",
+                              })}
+                            </span>
+                          </>
                         ) : null}
                       </label>
                     ) : null}
@@ -718,6 +848,10 @@ export function OutputSchemaEditor(
                         <input
                           type="checkbox"
                           checked={step.hasHeader ?? false}
+                          disabled={
+                            step.parser === "table" &&
+                            tableColumnMode(step) === "fixedWidthAuto"
+                          }
                           onChange={(e) => patchStep(si, { hasHeader: e.target.checked })}
                         />
                         <span>
@@ -726,7 +860,7 @@ export function OutputSchemaEditor(
                       </label>
                     ) : null}
 
-                    {step.parser === "table" ? (
+                    {step.parser === "table" && tableColumnMode(step) === "delimited" ? (
                       <label className="command-form__field">
                         <span className="command-form__label">
                           {t("commandForm.outputSchema.maxColumns", {
@@ -764,6 +898,36 @@ export function OutputSchemaEditor(
                           })}
                         </span>
                       </label>
+                    ) : null}
+
+                    {step.parser === "table" && tableColumnMode(step) === "fixedWidthManual" ? (
+                      <div className="command-form__field">
+                        <span className="command-form__label">
+                          {t("commandForm.outputSchema.columnWidths", {
+                            defaultValue: "Column widths",
+                          })}
+                        </span>
+                        <ColumnWidthsInput
+                          value={step.columnWidths ?? []}
+                          onChange={(next) => patchStep(si, { columnWidths: next })}
+                          t={t}
+                        />
+                        <span className="command-form__hint" role="note">
+                          {t("commandForm.outputSchema.columnWidthsHint", {
+                            defaultValue:
+                              "Comma-separated character widths. The last column extends to end-of-line.",
+                          })}
+                        </span>
+                      </div>
+                    ) : null}
+
+                    {step.parser === "table" && tableColumnMode(step) === "fixedWidthAuto" ? (
+                      <span className="command-form__hint" role="note">
+                        {t("commandForm.outputSchema.fixedWidthAutoHint", {
+                          defaultValue:
+                            "Detects columns from the header, a dashed ruler, and aligned rows. Requires the first row to be a header.",
+                        })}
+                      </span>
                     ) : null}
 
                     {usesCode(step.parser) ? (

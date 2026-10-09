@@ -655,6 +655,8 @@ async fn extracted_field_flows_into_next_node_variable() {
         delimiter: None,
         has_header: None,
         max_columns: None,
+        column_mode: None,
+        column_widths: Vec::new(),
         fields: vec![OutputFieldRecord {
             name: "who".into(),
             path: Some("name".into()),
@@ -763,6 +765,8 @@ async fn node_variable_value_overrides_data_flow_field() {
         delimiter: None,
         has_header: None,
         max_columns: None,
+        column_mode: None,
+        column_widths: Vec::new(),
         fields: vec![OutputFieldRecord {
             name: "who".into(),
             path: Some("name".into()),
