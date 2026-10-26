@@ -1,3 +1,4 @@
+pub mod assistant;
 pub mod capture_filter;
 pub mod env_files;
 pub mod env_sources;

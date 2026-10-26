@@ -72,6 +72,17 @@ describe("parseUtilityName", () => {
     expect(parseUtilityName("$TOOL run")).toBeNull();
   });
 
+  it("returns null for shell compound-command keywords", () => {
+    expect(parseUtilityName("for pid in a b")).toBeNull();
+    expect(parseUtilityName("done")).toBeNull();
+  });
+
+  it("finds the command after a shell condition introducer", () => {
+    expect(parseUtilityName("if kill -0 123")).toBe("kill");
+    expect(parseUtilityName("while read line")).toBe("read");
+    expect(parseUtilityName("if FOO=1 sudo kill 123")).toBe("kill");
+  });
+
   it("returns null for empty / comment-only input", () => {
     expect(parseUtilityName("")).toBeNull();
     expect(parseUtilityName("   \n\n  ")).toBeNull();
@@ -301,6 +312,21 @@ describe("parseUtilityNamesWithRanges", () => {
     expectRanges("ls | ${tool} x | grep y", [
       { name: "ls", slice: "ls" },
       { name: "grep", slice: "grep" },
+    ]);
+  });
+
+  it("skips compound keywords but resolves the real command", () => {
+    const script = [
+      "for pid in a b; do",
+      "  if kill -0 \"$pid\"; then",
+      "    echo alive",
+      "  fi",
+      "done",
+    ].join("\n");
+
+    expectRanges(script, [
+      { name: "kill", slice: "kill" },
+      { name: "echo", slice: "echo" },
     ]);
   });
 

@@ -23,6 +23,7 @@
      primary; subtle backgrounds are slightly off the base bg. */
   --color-accent: #4f8cf7;
   --color-accent-subtle: rgba(79, 140, 247, 0.12);
+  --color-selection: rgba(37, 99, 235, 0.35);
   --color-success: #16a34a;
   --color-bg-subtle: #f1f5f9;
   /* Background for popups floating ABOVE the page (dropdown / tag-suggest /
@@ -108,6 +109,7 @@
      --font-mono is theme-independent and inherited from the light block. */
   --color-accent: #60a5fa;
   --color-accent-subtle: rgba(96, 165, 250, 0.18);
+  --color-selection: rgba(96, 165, 250, 0.28);
   --color-success: #4ade80;
   --color-bg-subtle: #162133;
   /* One step lighter than `--color-surface`, so a popup reads as floating
@@ -3159,7 +3161,9 @@ body.is-editor-fullscreen .output-panel {
 .command-form__script {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
-  line-height: 1.5;
+  /* Keep selection rectangles and overlay line boxes on the same integer
+   * metric: 13px * 1.5 = 19.5px rounds differently between WebView layers. */
+  line-height: 20px;
   resize: vertical;
   min-height: 140px;
 }
@@ -3301,6 +3305,26 @@ body.is-editor-fullscreen .output-panel {
   min-height: 140px;
 }
 
+/* Native textarea selections are clipped to text fragments. This layer
+ * mirrors their visual rows and expands them to the full content width,
+ * including blank rows inside the selected range. */
+.command-form__script-editor-selection {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* Match the textarea scrollport, not the overlay padding box: without
+   * this, a partially scrolled line can be painted in the textarea's
+   * bottom padding and appear outside its visible area. */
+  clip-path: inset(1px 1px 9px);
+  pointer-events: none;
+}
+
+.command-form__script-editor-selection-mark {
+  position: absolute;
+  background: var(--color-selection);
+  border-radius: 2px;
+}
+
 /* Overlay sits behind the textarea (z-index 0 vs 1). `aria-hidden`
  * keeps it out of the accessibility tree — the textarea is the
  * authoritative input. Pointer events are disabled so right-click
@@ -3312,13 +3336,17 @@ body.is-editor-fullscreen .output-panel {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  /* See `.command-form__script-editor-selection`: the textarea clips its
+   * scrolled content at the padding edge, while `overflow: hidden` would
+   * still render the next line inside the bottom padding. */
+  clip-path: inset(1px 1px 9px);
   /* Must mirror the textarea exactly: */
   padding: 8px 12px;
   border: 1px solid transparent;
   border-radius: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 20px;
   white-space: pre-wrap;
   word-break: break-word;
   /* `color: transparent` is a safety net for plain-text segments —
@@ -3333,33 +3361,28 @@ body.is-editor-fullscreen .output-panel {
  * visible via `caret-color`. Background is also transparent so the
  * overlay's highlight backgrounds show through. */
 .command-form__script-editor-input {
+  /* Keep the overlay container exactly the textarea's height. The default
+   * inline-level replaced box adds the line-height descender below it. */
+  display: block;
   position: relative;
   z-index: 1;
   width: 100%;
   background: transparent;
   /* `color: transparent` hides the textarea's own text rendering;
    * the overlay below paints the visible glyphs. `caret-color`
-   * keeps the cursor visible. Selection still works natively —
-   * selected text uses the browser's selection background, which
-   * sits ABOVE the overlay in the textarea, so the highlight
-   * colour is replaced while selected. That's a deliberate trade-
-   * off: native selection behaviour > perfect highlight overlay. */
+   * keeps the cursor visible. Selection interaction remains native;
+   * its visual rows are drawn by the dedicated selection layer. */
   color: transparent;
   caret-color: var(--color-text);
   resize: vertical;
   min-height: 140px;
-  /* Selection colour kept readable: use the theme's selection
-   * tokens if defined; otherwise rely on the browser default. */
 }
 
 .command-form__script-editor-input::selection {
   /* Browser default may use a low-contrast tint on transparent
-   * text; bumping to a brand-aware shade keeps the selection
-   * visible. The text under selection is rendered by the browser
-   * here (not the overlay) because the overlay can't reproduce
-   * native selection geometry. */
-  background: rgba(37, 99, 235, 0.35);
-  color: var(--color-text);
+   * text. The full-row visual selection is drawn by
+   * `.command-form__script-editor-selection`; do NOT paint it twice. */
+  background: transparent;
 }
 
 /* Highlighted variable token: declared in the Variables section.
@@ -6127,6 +6150,7 @@ body.is-editor-fullscreen .output-panel {
    menu. Keeps the visible `.input` border (1px); the overlay mirrors that
    width with a transparent border so the two layers line up. */
 .wf-text-editor__input {
+  display: block;
   position: relative;
   z-index: 1;
   min-height: 140px;
@@ -6151,6 +6175,9 @@ body.is-editor-fullscreen .output-panel {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  /* Match the textarea scrollport so a partially scrolled line is not
+   * rendered into the textarea's bottom padding. */
+  clip-path: inset(1px 1px 9px);
   border: 1px solid transparent;
   color: var(--color-text);
   background: transparent;
@@ -11026,6 +11053,7 @@ body.is-editor-fullscreen .output-panel {
 /* Transparent text so the overlay shows through; the caret stays visible.
    The field sits on top of the overlay and owns input/selection/scroll. */
 .artifact-ref-input__field--overlay {
+  display: block;
   position: relative;
   z-index: 1;
   color: transparent;
@@ -11048,6 +11076,9 @@ body.is-editor-fullscreen .output-panel {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  /* Match the input/textarea scrollport so partially scrolled content
+   * cannot leak into the visible field's bottom padding. */
+  clip-path: inset(1px 1px 9px);
   padding: 8px 12px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -11125,4 +11156,345 @@ body.is-editor-fullscreen .output-panel {
 .artifact-ref-input__option:hover {
   background: var(--color-bg-subtle);
   color: var(--color-primary);
+}
+
+/* ---- Assistant editor panel ---------------------------------------------- */
+.assistant-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  display: flex;
+  width: min(360px, calc(100vw - 32px));
+  height: 100vh;
+  max-height: none;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: none;
+  border-left: 1px solid var(--color-border);
+  border-radius: 0;
+  transition: width 0.2s ease;
+}
+.assistant-panel--collapsed {
+  width: 48px;
+  transition: width 0.2s ease;
+}
+.assistant-panel__collapsed-trigger {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 12px 0 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.assistant-panel__collapsed-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+}
+.assistant-panel__collapsed-trigger:hover {
+  background: var(--color-surface-hover);
+}
+.assistant-panel__collapsed-trigger:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.assistant-panel__toggle-icon {
+  display: inline-flex;
+  color: var(--color-text-muted);
+  transform: scaleX(-1);
+}
+.assistant-panel__collapse-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.assistant-panel__collapse-toggle:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.assistant-panel__header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:14px; border-bottom:1px solid var(--color-border); }
+.assistant-panel__eyebrow, .assistant-panel__hint { color: var(--color-text-muted); font-size:12px; }
+.assistant-panel__title { margin:2px 0 0; font-size:16px; }
+.assistant-panel__messages { min-height:0; flex:1; overflow:auto; padding:12px; }
+.assistant-panel__status { color:var(--color-text-muted); }
+.assistant-panel__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.assistant-panel__status-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--color-primary);
+  animation: output-panel-spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-panel {
+    transition: none;
+  }
+  .assistant-panel__status-spinner {
+    animation: none;
+  }
+}
+.assistant-panel__message { margin-bottom:10px; padding:10px; border:1px solid var(--color-border); border-radius:8px; }
+.assistant-panel__message--user { background:var(--color-accent-subtle); }
+.assistant-panel__message p { margin:0; }
+.assistant-panel__retry-toggle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.assistant-panel__retry-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.assistant-panel__retry-title { color: var(--color-danger); }
+.assistant-panel__retry-chevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.assistant-panel__retry-chevron.is-open { transform: rotate(90deg); }
+.assistant-panel__markdown { overflow-wrap:anywhere; }
+.assistant-panel__markdown > :first-child { margin-top:0; }
+.assistant-panel__markdown > :last-child { margin-bottom:0; }
+.assistant-panel__markdown p { margin:8px 0; }
+.assistant-panel__markdown h1, .assistant-panel__markdown h2, .assistant-panel__markdown h3,
+.assistant-panel__markdown h4, .assistant-panel__markdown h5, .assistant-panel__markdown h6 {
+  margin: 14px 0 8px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.assistant-panel__markdown ul, .assistant-panel__markdown ol { margin:8px 0; padding-left:20px; }
+.assistant-panel__markdown li + li { margin-top:4px; }
+.assistant-panel__markdown blockquote {
+  margin: 8px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+.assistant-panel__markdown code {
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.assistant-panel__markdown pre {
+  margin: 8px 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
+}
+.assistant-panel__markdown pre code {
+  padding: 0;
+  background: transparent;
+  white-space: pre;
+}
+.assistant-panel__markdown a { color: var(--color-primary); }
+.assistant-panel__markdown hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+.assistant-panel__markdown table {
+  width: 100%;
+  margin: 8px 0;
+  border-collapse: collapse;
+}
+.assistant-panel__markdown th, .assistant-panel__markdown td {
+  padding: 5px 6px;
+  border: 1px solid var(--color-border);
+  text-align: left;
+}
+.assistant-panel__markdown th { font-weight: 600; }
+.assistant-panel__action { margin-top:8px; padding-top:8px; border-top:1px solid var(--color-border); }
+.assistant-panel__action ul { margin:6px 0 0; padding-left:18px; }
+.assistant-panel__error { color:var(--color-danger); }
+.assistant-panel__composer { display:flex; flex-direction:column; gap:8px; padding:12px; border-top:1px solid var(--color-border); }
+.assistant-panel__composer textarea { flex:0 0 auto; min-height:72px; resize:vertical; }
+.assistant-panel__composer-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.assistant-panel__patch-list { margin:8px 0 0; padding:0; list-style:none; display:grid; gap:8px; }
+.assistant-panel__patch-path { display:block; font-weight:600; }
+.assistant-panel__patch-before, .assistant-panel__patch-after { display:block; overflow-wrap:anywhere; color:var(--color-text-muted); }
+.assistant-panel__warning { margin:8px 0 0; color:var(--app-color-edit); }
+.assistant-panel__run {
+  margin: 12px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.assistant-panel__run-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  color: var(--color-text-muted);
+}
+
+.assistant-panel__run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.assistant-panel__run-preview {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--color-bg-subtle);
+  font-size: 12px;
+}
+
+.assistant-settings__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin: 16px;
+}
+
+.assistant-settings__warning {
+  color: var(--app-color-edit);
+}
+
+.assistant-settings__consent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-settings__providers-section {
+  margin-top: 40px;
+}
+
+.assistant-settings__providers {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.assistant-provider-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.assistant-provider-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-provider-card__header span {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.assistant-provider-card__url {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.assistant-provider-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.assistant-provider-card__models-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistant-provider-card__models-toggle:hover .form-field__label {
+  color: var(--color-accent);
+}
+
+.assistant-provider-card__models-chevron {
+  display: inline-flex;
+  color: var(--color-text-muted);
+  transition: transform 0.15s;
+}
+
+.assistant-provider-card__models-toggle.is-open .assistant-provider-card__models-chevron {
+  transform: rotate(90deg);
+}
+
+.assistant-provider-card__models {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.assistant-provider-card__model {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.assistant-provider-card__model-name {
+  overflow-wrap: anywhere;
+}
+
+.assistant-provider-card__model-name.is-hidden {
+  color: var(--color-text-muted);
+}
+
+.assistant-provider-card__test-status {
+  margin: 0;
+  color: var(--color-text-muted);
 }

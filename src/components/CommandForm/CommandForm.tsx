@@ -69,6 +69,22 @@ import {
 } from "../../services/environmentService";
 
 import { useEnvManagerStore } from "../../stores/envManagerStore";
+import { AssistantPanel } from "../Assistant";
+import type { AssistantPatch } from "../../types/assistant";
+import type { AssistantRunSnapshot } from "../../types/assistant";
+import {
+  buildCommandFormAssistantContext,
+  createAssistantDraftVersion,
+} from "../../utils/assistantContext";
+import {
+  buildAssistantRunSnapshot,
+  buildExecutionRunResult,
+  isAssistantRunSnapshotAvailable,
+} from "../../utils/assistantRunSnapshot";
+import {
+  applyAssistantPatchToCommandForm,
+  type AssistantPatchApplyError,
+} from "../../utils/assistantPatches";
 
 export interface CommandFormProps {
   /**
@@ -265,7 +281,6 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   // unmounted) when inactive so the ScriptEditor state, focus, and any
   // in-flight live-run stay intact across tab switches.
   const [activeTab, setActiveTab] = useState<FormTab>("main");
-
   // Snapshot of process environment variables, used to detect when a
   // command's env overrides shadow a system variable. Loaded once on
   // mount and cached for the lifetime of the app (env vars don't
@@ -298,6 +313,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   // plumbing, admin-password sentinel retries, and teardown.
   const {
     runResult,
+    extractedResult,
     outputCollapsed,
     setOutputCollapsed,
     globalExecution,
@@ -746,6 +762,52 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
     }
   }, []);
 
+  const assistantContext = useMemo(
+    () => buildCommandFormAssistantContext(form, createAssistantDraftVersion(form)),
+    [form],
+  );
+  const [assistantApplyError, setAssistantApplyError] = useState<
+    AssistantPatchApplyError | null
+  >(null);
+  const applyAssistantPatch = useCallback(
+    (
+      patch: AssistantPatch,
+    ): { ok: boolean; error?: AssistantPatchApplyError } => {
+      const result = applyAssistantPatchToCommandForm(patch, form);
+      if (!result.ok) {
+        setAssistantApplyError(result.error);
+        return { ok: false, error: result.error };
+      }
+      setForm(result.value);
+      setAssistantApplyError(null);
+      return { ok: true };
+    },
+    [form],
+  );
+  const activeRunResult =
+    runTarget === "global" && globalExecution !== undefined
+      ? buildExecutionRunResult(globalExecution)
+      : runResult;
+  const assistantRunSnapshot = useMemo((): AssistantRunSnapshot | null => {
+    if (!isAssistantRunSnapshotAvailable(activeRunResult)) return null;
+    return buildAssistantRunSnapshot({
+      id: `run-${activeRunResult.status}-${activeRunResult.durationMs ?? 0}-${activeRunResult.lines.length}`,
+      target: "command",
+      draftVersion: assistantContext.draftVersion,
+      result: activeRunResult,
+      outputSchema: form.outputSchema,
+      extracted:
+        runTarget === "global" ? globalExecution?.result : extractedResult,
+    });
+  }, [
+    activeRunResult,
+    assistantContext.draftVersion,
+    extractedResult,
+    form.outputSchema,
+    globalExecution,
+    runTarget,
+  ]);
+
   if (command === null && mode === "edit") return null;
 
   // For a local create launched from a workflow editor, scope the header to
@@ -816,6 +878,7 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
   })();
 
   return (
+      <>
       <div className="command-form">
         {/*
          * Top bar: the form title on the left, the primary actions
@@ -1082,5 +1145,24 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
           </div>
         ) : null}
       </div>
+      <AssistantPanel
+          target="command"
+          objectId={command?.id ?? null}
+          draftVersion={assistantContext.draftVersion}
+          context={assistantContext}
+          title={title}
+          onApplyPatch={applyAssistantPatch}
+          runSnapshot={assistantRunSnapshot}
+          onRequestRun={() => {
+            if (runTarget === "global") void handleRunGlobal();
+            else void handleRun();
+          }}
+      />
+      {assistantApplyError !== null ? (
+        <p className="assistant-panel__error" role="alert">
+          {t("assistant.applyFailed")}
+        </p>
+      ) : null}
+      </>
   );
 }

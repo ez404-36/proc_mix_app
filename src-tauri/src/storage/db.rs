@@ -55,6 +55,9 @@ pub async fn init_pool(db_path: PathBuf) -> Result<DbPool, String> {
     ensure_workflows_columns(&pool).await?;
     ensure_miniapps_columns(&pool).await?;
     ensure_schedules_columns(&pool).await?;
+    ensure_assistant_settings_columns(&pool).await?;
+    ensure_assistant_settings(&pool).await?;
+    ensure_assistant_provider_endpoints(&pool).await?;
     ensure_history_columns(&pool).await?;
     ensure_ssh_host_meta_columns(&pool).await?;
     ensure_http_server_config_columns(&pool).await?;
@@ -346,6 +349,83 @@ async fn ensure_http_server_config_columns(pool: &SqlitePool) -> Result<(), Stri
     apply_column_migrations(pool, "http_server_config", migrations).await
 }
 
+/// Ensure the single default row of the `assistant_settings` table exists.
+/// Assistant is opt-in, so the row only provides defaults — not activation.
+pub(crate) async fn ensure_assistant_settings(pool: &SqlitePool) -> Result<(), String> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO assistant_settings \
+         (id, enabled, timeout_ms, active_provider_id, active_model_id, \
+          allow_run_snapshots, allow_remote_endpoints, created_at, updated_at) \
+         VALUES (1, 0, 60000, NULL, NULL, \
+                 0, 0, '', '')",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("seed assistant_settings default row: {e}"))?;
+    Ok(())
+}
+
+/// Existing databases opt out of remote assistant endpoints until consent.
+async fn ensure_assistant_settings_columns(pool: &SqlitePool) -> Result<(), String> {
+    let migrations: &[(&str, &'static str)] = &[
+        (
+            "allow_remote_endpoints",
+            "ALTER TABLE assistant_settings ADD COLUMN allow_remote_endpoints INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "active_provider_id",
+            "ALTER TABLE assistant_settings ADD COLUMN active_provider_id TEXT",
+        ),
+        (
+            "active_model_id",
+            "ALTER TABLE assistant_settings ADD COLUMN active_model_id TEXT",
+        ),
+    ];
+    apply_column_migrations(pool, "assistant_settings", migrations).await
+}
+
+/// The first Coding Plan integration used the chat-completions route. Existing
+/// instances move to the same Responses API route as BB/Codex; keychain keys
+/// remain bound to the unchanged provider instance id.
+async fn ensure_assistant_provider_endpoints(pool: &SqlitePool) -> Result<(), String> {
+    let updated = sqlx::query(
+        "UPDATE assistant_providers \
+         SET kind = 'zai-responses', base_url = 'https://api.z.ai/api/v1', updated_at = ? \
+         WHERE kind = 'zhipu-coding'",
+    )
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    .map_err(|e| format!("migrate assistant provider to Responses API: {e}"))?;
+
+    if updated.rows_affected() == 0 {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "DELETE FROM assistant_provider_models \
+         WHERE provider_id IN (\
+           SELECT id FROM assistant_providers WHERE kind = 'zai-responses'\
+         )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("clear migrated Responses model cache: {e}"))?;
+
+    sqlx::query(
+        "UPDATE assistant_settings \
+         SET active_model_id = NULL, updated_at = ? \
+         WHERE active_provider_id IN (\
+           SELECT id FROM assistant_providers WHERE kind = 'zai-responses'\
+         )",
+    )
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    .map_err(|e| format!("reset migrated Responses model selection: {e}"))?;
+    Ok(())
+}
+
 /// Ensure the single default row of the `http_server_config` table exists.
 ///
 /// The table itself is created by `schema.sql`'s `CREATE TABLE IF NOT EXISTS`;
@@ -525,6 +605,139 @@ mod tests {
             .connect_with(opts)
             .await
             .unwrap()
+    }
+
+    /// Simulate the first assistant settings migration. Existing installations
+    /// must default remote endpoint consent to OFF, even if the row was
+    /// previously enabled for a local provider.
+    #[tokio::test]
+    async fn ensure_assistant_settings_columns_adds_remote_consent() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(
+            "CREATE TABLE assistant_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                enabled INTEGER NOT NULL DEFAULT 0,
+                base_url TEXT NOT NULL DEFAULT 'http://127.0.0.1:11434/v1',
+                model TEXT NOT NULL DEFAULT '',
+                timeout_ms INTEGER NOT NULL DEFAULT 60000,
+                max_input_chars INTEGER NOT NULL DEFAULT 24000,
+                max_output_tokens INTEGER NOT NULL DEFAULT 4000,
+                allow_run_snapshots INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO assistant_settings \
+             (id, enabled, base_url, model, timeout_ms, max_input_chars, \
+              max_output_tokens, allow_run_snapshots, created_at, updated_at) \
+             VALUES (1, 1, 'http://127.0.0.1:11434/v1', 'test', 60000, 24000, \
+                     4000, 0, '', '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_assistant_settings_columns(&pool).await.unwrap();
+        ensure_assistant_settings_columns(&pool).await.unwrap();
+
+        let row = sqlx::query(
+            "SELECT enabled, allow_remote_endpoints FROM assistant_settings WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.try_get::<i64, _>("enabled").unwrap(), 1);
+        assert_eq!(
+            row.try_get::<i64, _>("allow_remote_endpoints").unwrap(),
+            0,
+            "upgraded rows must require explicit remote endpoint consent"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_assistant_provider_endpoints_migrates_to_responses_once() {
+        let pool = fresh_pool().await;
+        sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_assistant_settings_columns(&pool).await.unwrap();
+        ensure_assistant_settings(&pool).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO assistant_providers \
+             (id, name, kind, base_url, enabled, created_at, updated_at) \
+             VALUES ('provider', 'Zhipu Coding', 'zhipu-coding', \
+                     'https://api.z.ai/api/coding/paas/v4', 1, '', '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO assistant_provider_models \
+             (provider_id, model_id, name, verified, hidden, updated_at) \
+             VALUES ('provider', 'stale-model', 'Stale Model', 1, 0, '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE assistant_settings \
+             SET active_provider_id = 'provider', active_model_id = 'stale-model' \
+             WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        ensure_assistant_provider_endpoints(&pool).await.unwrap();
+        ensure_assistant_provider_endpoints(&pool).await.unwrap();
+
+        let provider =
+            sqlx::query("SELECT kind, base_url FROM assistant_providers WHERE id = 'provider'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            provider.try_get::<String, _>("kind").unwrap(),
+            "zai-responses"
+        );
+        assert_eq!(
+            provider.try_get::<String, _>("base_url").unwrap(),
+            "https://api.z.ai/api/v1"
+        );
+        assert_eq!(
+            sqlx::query("SELECT COUNT(*) AS count FROM assistant_provider_models")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .try_get::<i64, _>("count")
+                .unwrap(),
+            0
+        );
+        let settings = sqlx::query(
+            "SELECT active_provider_id, active_model_id \
+             FROM assistant_settings WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            settings
+                .try_get::<Option<String>, _>("active_provider_id")
+                .unwrap(),
+            Some("provider".to_string())
+        );
+        assert_eq!(
+            settings
+                .try_get::<Option<String>, _>("active_model_id")
+                .unwrap(),
+            None
+        );
     }
 
     /// Simulate an old database that was created BEFORE `run_as_admin`

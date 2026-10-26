@@ -126,6 +126,9 @@ pub fn run() {
         // holds the running handle + shutdown signal + request log the Tauri
         // commands operate on.
         .manage(Arc::new(HttpServerState::new()))
+        .manage(Arc::new(
+            crate::core::assistant::state::AssistantState::new(),
+        ))
         // Shared SSH inventory baseline: the watcher diffs against it and the
         // save/delete commands advance it to echo-suppress ProcMix's own
         // writes (so they aren't logged as external changes).
@@ -314,6 +317,23 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::execute_command,
+            commands::get_assistant_settings,
+            commands::set_assistant_settings,
+            commands::list_assistant_provider_presets,
+            commands::list_assistant_providers,
+            commands::save_assistant_provider,
+            commands::set_assistant_provider_enabled,
+            commands::delete_assistant_provider,
+            commands::assistant_provider_api_key_status,
+            commands::set_assistant_provider_api_key,
+            commands::clear_assistant_provider_api_key,
+            commands::test_assistant_provider,
+            commands::list_assistant_provider_models,
+            commands::set_assistant_provider_model_hidden,
+            commands::set_assistant_active_provider,
+            commands::set_assistant_active_model,
+            commands::assistant_generate,
+            commands::assistant_cancel,
             commands::cancel_execution,
             commands::list_running_executions,
             commands::update_tray_menu,

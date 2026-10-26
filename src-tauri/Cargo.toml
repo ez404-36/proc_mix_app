@@ -1,6 +1,6 @@
 [package]
 name = "procmix"
-version = "0.15.5"
+version = "0.6.0"
 description = "ProcMix - cross-platform automation tool"
 authors = ["Zenkin Egor Andreevich"]
 edition = "2021"
@@ -139,6 +139,11 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 thiserror = "2"
 
+# Reads the local Codex CLI's minimal `config.toml` settings for the direct
+# Codex assistant provider. Only typed fields needed for provider discovery are
+# deserialized; secrets are kept in memory and are never logged or returned.
+toml = "0.8"
+
 # Structured, level-based diagnostic logging (replaces the previous ad-hoc
 # `eprintln!` calls scattered across the backend). `tracing` provides the
 # `error!`/`warn!`/`info!`/`debug!` macros and span support for request flows;
@@ -193,7 +198,12 @@ cron = "0.15"
 # HTTPS client for the activate / trial / refresh calls to the license
 # server. `rustls` (NOT native-tls / OpenSSL) keeps the dependency tree
 # pure-Rust and the cross-platform build simple. `json` for serde bodies.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+
+# Async iterator adaptor for `reqwest::Response::bytes_stream` in the
+# assistant provider SSE streaming path. Already a transitive dependency of
+# reqwest / tokio; declared explicitly so the usage is auditable.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 # Regular-expression engine for the `regex` output parser in
 # `core::extractor`. The `regex` crate is RE2-style (linear-time, no

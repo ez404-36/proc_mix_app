@@ -8,6 +8,7 @@
 
 pub mod admin_password;
 pub mod api_token;
+pub mod assistant_api_key;
 pub mod schedule_secrets;
 pub mod ssh_oneshot;
 pub mod ssh_password;

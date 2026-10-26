@@ -115,6 +115,96 @@ export interface ScriptEditorProps {
   flagsByUtility?: ReadonlyMap<string, ParsedCli>;
 }
 
+/** A full-width visual row occupied by the textarea selection. */
+interface SelectionRect {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
+/** Map a plain-text offset in `value` to the matching overlay text node. */
+function locateOverlayOffset(
+  root: Node,
+  offset: number,
+): { node: Text; offset: number } | null {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let seen = 0;
+  let last: Text | null = null;
+
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const text = node as Text;
+    const nextSeen = seen + text.data.length;
+    if (offset <= nextSeen) return { node: text, offset: offset - seen };
+    seen = nextSeen;
+    last = text;
+  }
+
+  return last === null ? null : { node: last, offset: last.data.length };
+}
+
+function cssPixels(style: CSSStyleDeclaration, property: keyof CSSStyleDeclaration): number {
+  const value = style[property];
+  return typeof value === "string" ? Number.parseFloat(value) || 0 : 0;
+}
+
+/**
+ * The native textarea selection is clipped to text fragments, so it can
+ * miss blank rows and trailing line space. Measure the equivalent range in
+ * the metrically-identical overlay, then expand each visual row to the
+ * textarea's content width for an editor-style selection.
+ */
+function measureSelectionRects(
+  textarea: HTMLTextAreaElement,
+  overlay: HTMLPreElement,
+  container: HTMLElement,
+): SelectionRect[] {
+  const start = textarea.selectionStart ?? 0;
+  const end = textarea.selectionEnd ?? 0;
+  if (start === end) return [];
+
+  const startLocation = locateOverlayOffset(overlay, start);
+  const endLocation = locateOverlayOffset(overlay, end);
+  if (startLocation === null || endLocation === null) return [];
+
+  const range = document.createRange();
+  range.setStart(startLocation.node, startLocation.offset);
+  range.setEnd(endLocation.node, endLocation.offset);
+
+  const containerRect = container.getBoundingClientRect();
+  const textareaRect = textarea.getBoundingClientRect();
+  const style = window.getComputedStyle(textarea);
+  const lineHeight = cssPixels(style, "lineHeight") || 20;
+  const contentLeft =
+    textareaRect.left +
+    cssPixels(style, "borderLeftWidth") +
+    cssPixels(style, "paddingLeft");
+  const contentRight =
+    textareaRect.right -
+    cssPixels(style, "borderRightWidth") -
+    cssPixels(style, "paddingRight");
+  const contentTop =
+    textareaRect.top +
+    cssPixels(style, "borderTopWidth") +
+    cssPixels(style, "paddingTop");
+  const width = Math.max(0, contentRight - contentLeft);
+
+  const rows = new Map<number, SelectionRect>();
+  for (const rect of range.getClientRects()) {
+    if (rect.height <= 0 && rect.width <= 0) continue;
+    const row = Math.round((rect.top - contentTop) / lineHeight);
+    const top = contentTop + row * lineHeight - containerRect.top;
+    rows.set(row, {
+      top,
+      left: contentLeft - containerRect.left,
+      width,
+      height: lineHeight,
+    });
+  }
+
+  return [...rows.values()].sort((a, b) => a.top - b.top);
+}
+
 export function ScriptEditor(props: ScriptEditorProps): ReactElement {
   const {
     value,
@@ -134,10 +224,13 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
   const { show: showContextMenu } = useContextMenu();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const overlayRef = useRef<HTMLPreElement | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
   // Refs to each utility <span> in the overlay, keyed by segment index.
   const utilitySpanRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
   // Refs to each flag <span> in the overlay, keyed by segment index.
   const flagSpanRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
+  const selectionFrameRef = useRef<number | null>(null);
+  const [selectionRects, setSelectionRects] = useState<SelectionRect[]>([]);
 
   const knownNames = useMemo<ReadonlySet<string>>(() => {
     const set = new Set<string>();
@@ -177,6 +270,34 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
     flagSpanRefs.current.clear();
     utilitySpanRefs.current.clear();
   }, [segments]);
+
+  // Measure after the overlay has committed so selection rows always use the
+  // same text layout as the visible glyphs.
+  const scheduleSelectionMeasure = useCallback((): void => {
+    if (selectionFrameRef.current !== null) {
+      window.cancelAnimationFrame(selectionFrameRef.current);
+    }
+    selectionFrameRef.current = window.requestAnimationFrame(() => {
+      selectionFrameRef.current = null;
+      const textarea = textareaRef.current;
+      const overlay = overlayRef.current;
+      const container = editorRef.current;
+      setSelectionRects(
+        textarea === null || overlay === null || container === null
+          ? []
+          : measureSelectionRects(textarea, overlay, container),
+      );
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (selectionFrameRef.current !== null) {
+        window.cancelAnimationFrame(selectionFrameRef.current);
+      }
+    },
+    [],
+  );
 
   // ---------------------------------------------------------------------------
   // Utility hover popover
@@ -360,13 +481,42 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
     [onChange],
   );
 
-  const handleScroll = useCallback((e: SyntheticEvent<HTMLTextAreaElement>) => {
-    const el = e.currentTarget;
-    const overlay = overlayRef.current;
-    if (!overlay) return;
-    overlay.scrollTop = el.scrollTop;
-    overlay.scrollLeft = el.scrollLeft;
-  }, []);
+  const handleScroll = useCallback(
+    (e: SyntheticEvent<HTMLTextAreaElement>) => {
+      const el = e.currentTarget;
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      overlay.scrollTop = el.scrollTop;
+      overlay.scrollLeft = el.scrollLeft;
+      scheduleSelectionMeasure();
+    },
+    [scheduleSelectionMeasure],
+  );
+
+  // `selectionchange` covers drag-selection, keyboard selection and
+  // programmatic `.select()`; the value effect covers edits that move the
+  // selection as a side effect. Resize keeps the expanded rows aligned.
+  useEffect(() => {
+    scheduleSelectionMeasure();
+    document.addEventListener("selectionchange", scheduleSelectionMeasure);
+    window.addEventListener("resize", scheduleSelectionMeasure);
+
+    const textarea = textareaRef.current;
+    const container = editorRef.current;
+    const observer = new ResizeObserver(scheduleSelectionMeasure);
+    if (textarea !== null) observer.observe(textarea);
+    if (container !== null) observer.observe(container);
+
+    return () => {
+      document.removeEventListener("selectionchange", scheduleSelectionMeasure);
+      window.removeEventListener("resize", scheduleSelectionMeasure);
+      observer.disconnect();
+    };
+  }, [scheduleSelectionMeasure]);
+
+  useEffect(() => {
+    scheduleSelectionMeasure();
+  }, [value, segments, scheduleSelectionMeasure]);
 
   /**
    * Replace the current selection in the textarea with `text`,
@@ -490,7 +640,24 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
   }, [variables, t, insertAtCursor, showContextMenu]);
 
   return (
-    <div className="command-form__script-editor">
+    <div ref={editorRef} className="command-form__script-editor">
+      <div
+        className="command-form__script-editor-selection"
+        aria-hidden="true"
+      >
+        {selectionRects.map((rect, i) => (
+          <span
+            key={`${rect.top}-${i}`}
+            className="command-form__script-editor-selection-mark"
+            style={{
+              top: `${rect.top}px`,
+              left: `${rect.left}px`,
+              width: `${rect.width}px`,
+              height: `${rect.height}px`,
+            }}
+          />
+        ))}
+      </div>
       <pre
         ref={overlayRef}
         className="command-form__script-editor-overlay"
@@ -572,6 +739,7 @@ export function ScriptEditor(props: ScriptEditorProps): ReactElement {
         value={value}
         onChange={handleChange}
         onScroll={handleScroll}
+        onSelect={scheduleSelectionMeasure}
         onMouseMove={handleTextareaMouseMove}
         onMouseLeave={handleMouseLeave}
         placeholder={placeholder}

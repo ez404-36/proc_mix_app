@@ -1,3 +1,4 @@
+export * from "./assistant";
 export * from "./command";
 export * from "./execution";
 export * from "./history";

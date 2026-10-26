@@ -39,6 +39,8 @@ import {
 } from "../../utils/commandFilters";
 import { nodeRunOutput } from "../../utils/nodePreviewData";
 import {
+  flowToWorkflow,
+  workflowToFlow,
   APPEND_GAP_X,
   applyRunStateToNodes,
   connectTailToNode,
@@ -57,6 +59,7 @@ import {
   type WorkflowFlowNode,
   type WorkflowNodeData,
 } from "../../utils/workflowGraph";
+import { validateWorkflow } from "../../utils/workflowValidation";
 
 /**
  * Node kinds the palette can create. Every kind except `start` (which is
@@ -108,6 +111,16 @@ import { useWorkflowCanvasDnD } from "./useWorkflowCanvasDnD";
 import { useCanvasNodeCommands } from "./useCanvasNodeCommands";
 import { useCanvasModals } from "./useCanvasModals";
 import { useEditorFullscreen } from "./useEditorFullscreen";
+import { AssistantPanel } from "../Assistant";
+import type { AssistantPatch } from "../../types/assistant";
+import {
+  buildWorkflowAssistantContext,
+  createAssistantDraftVersion,
+} from "../../utils/assistantContext";
+import {
+  applyAssistantPatchToWorkflowDraft,
+  type AssistantPatchApplyError,
+} from "../../utils/assistantPatches";
 
 interface WorkflowCanvasProps {
   /** Existing workflow id to edit, or `null` to start a new graph. */
@@ -219,6 +232,58 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
   const isDirty = useMemo(
     () => isDraftDirty({ nodes, edges, meta, baseline }),
     [nodes, edges, meta, baseline],
+  );
+  const workflowAssistantContext = useMemo(
+    () =>
+      buildWorkflowAssistantContext(
+        { ...meta, nodes, edges },
+        createAssistantDraftVersion({ ...meta, nodes, edges }),
+      ),
+    [edges, meta, nodes],
+  );
+  const [assistantApplyError, setAssistantApplyError] = useState<
+    AssistantPatchApplyError | null
+  >(null);
+  const applyAssistantPatch = useCallback(
+    (
+      patch: AssistantPatch,
+    ): { ok: boolean; error?: AssistantPatchApplyError } => {
+      const result = applyAssistantPatchToWorkflowDraft(patch, {
+        ...meta,
+        nodes,
+        edges,
+      });
+      if (!result.ok) {
+        setAssistantApplyError(result.error);
+        return { ok: false };
+      }
+      const normalized = flowToWorkflow(
+        {
+          ...meta,
+          name: result.value.name,
+          description: result.value.description,
+          tags: result.value.tags,
+        },
+        result.value.nodes as typeof nodes,
+        result.value.edges as typeof edges,
+      );
+      const validation = validateWorkflow(normalized);
+      if (!validation.runnable) {
+        setAssistantApplyError("invalidValue");
+        return { ok: false };
+      }
+      setMeta({
+        name: result.value.name,
+        description: result.value.description,
+        tags: result.value.tags,
+      });
+      const flow = workflowToFlow(normalized);
+      setEdges(flow.edges);
+      setNodes(syncParallelBranchCounts(flow.nodes, flow.edges));
+      setAssistantApplyError(null);
+      return { ok: true };
+    },
+    [edges, meta, nodes, setEdges, setMeta, setNodes],
   );
 
   // \"Last saved: <datetime>\" header indicator. Always rendered: when there is
@@ -1204,6 +1269,20 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
         onDelete={onDeleteViewedCommand}
         onPromote={(cmd) => onPromoteCommand(cmd.id)}
       />
+
+      <AssistantPanel
+          target="workflow"
+          objectId={currentId}
+          draftVersion={workflowAssistantContext.draftVersion}
+          context={workflowAssistantContext}
+          title={headerTitle}
+          onApplyPatch={applyAssistantPatch}
+      />
+      {assistantApplyError !== null ? (
+        <p className="assistant-panel__error" role="alert">
+          {t("assistant.applyFailed")}
+        </p>
+      ) : null}
 
       <ConfirmDialog
         open={promotePendingOpen}
