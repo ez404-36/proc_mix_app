@@ -219,6 +219,12 @@ async fn ensure_commands_columns(pool: &SqlitePool) -> Result<(), String> {
             "prompt_ssh_password",
             "ALTER TABLE commands ADD COLUMN prompt_ssh_password INTEGER NOT NULL DEFAULT 0",
         ),
+        (
+            // Per-object assistant snapshot policy. Existing objects inherit
+            // the global assistant setting until the user chooses an override.
+            "assistant_run_access",
+            "ALTER TABLE commands ADD COLUMN assistant_run_access TEXT NOT NULL DEFAULT 'inherit'",
+        ),
     ];
 
     apply_column_migrations(pool, "commands", migrations).await?;
@@ -267,6 +273,11 @@ async fn ensure_workflows_columns(pool: &SqlitePool) -> Result<(), String> {
             // NULL on existing rows → inherit the global sound settings.
             "sound_config",
             "ALTER TABLE workflows ADD COLUMN sound_config TEXT",
+        ),
+        (
+            // Per-object assistant snapshot policy; mirrors commands.
+            "assistant_run_access",
+            "ALTER TABLE workflows ADD COLUMN assistant_run_access TEXT NOT NULL DEFAULT 'inherit'",
         ),
     ];
 

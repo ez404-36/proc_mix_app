@@ -42,6 +42,11 @@ export interface DropdownProps {
   options: ReadonlyArray<DropdownOption>;
   onChange: (value: string) => void;
   ariaLabel: string;
+  /**
+   * Icon-only trigger content. The popup list still uses option labels; the
+   * accessible name comes from `ariaLabel`.
+   */
+  triggerIcon?: ReactElement;
   disabled?: boolean;
   /** Optional className to apply to the trigger button. */
   className?: string;
@@ -52,6 +57,17 @@ export interface DropdownProps {
    * popup (and its options) to match a compact trigger.
    */
   popupClassName?: string;
+  /**
+   * Edge used when placing a compact popup. `end` keeps an icon trigger near
+   * the right edge of the viewport instead of extending its popup offscreen.
+   */
+  popupAlign?: "start" | "end";
+  /** Native hover tooltip for the trigger; visible state belongs to the caller. */
+  triggerTitle?: string;
+  /** Optional heading shown above all options in a portal-rendered popup. */
+  popupTitle?: string;
+  /** Optional secondary heading, for example a settings-group caption. */
+  popupSubtitle?: string;
   /** Optional id for the trigger; useful for label `htmlFor`. */
   id?: string;
   /**
@@ -103,6 +119,8 @@ interface PopupPosition {
 
 const POPUP_MARGIN = 4;
 const VIEWPORT_PADDING = 8;
+/** Compact icon popups need room for labels, regardless of the trigger width. */
+const COMPACT_POPUP_WIDTH = 240;
 
 /**
  * Generic single-select dropdown with a portal-rendered popup.
@@ -137,9 +155,14 @@ export function Dropdown(props: DropdownProps): ReactElement {
     options,
     onChange,
     ariaLabel,
+    triggerIcon,
     disabled = false,
     className,
     popupClassName,
+    popupAlign = "start",
+    triggerTitle,
+    popupTitle,
+    popupSubtitle,
     id,
     searchable = false,
     searchPlaceholder = "Search…",
@@ -284,13 +307,18 @@ export function Dropdown(props: DropdownProps): ReactElement {
     const top = flipped
       ? Math.max(VIEWPORT_PADDING, rect.top - POPUP_MARGIN)
       : rect.bottom + POPUP_MARGIN;
+    const width = popupAlign === "end" ? COMPACT_POPUP_WIDTH : rect.width;
+    const left =
+      popupAlign === "end"
+        ? Math.max(VIEWPORT_PADDING, rect.right - width)
+        : rect.left;
     return {
-      left: rect.left,
+      left,
       top,
-      width: rect.width,
+      width,
       flipped,
     };
-  }, [measureEl]);
+  }, [popupAlign, measureEl]);
 
   const openPopup = useCallback((): void => {
     if (disabled) return;
@@ -560,6 +588,7 @@ export function Dropdown(props: DropdownProps): ReactElement {
       aria-haspopup="listbox"
       aria-expanded={open}
       aria-label={ariaLabel}
+      title={triggerTitle}
       aria-activedescendant={
         open && activeIndex >= 0 ? optionId(activeIndex) : undefined
       }
@@ -567,10 +596,18 @@ export function Dropdown(props: DropdownProps): ReactElement {
       onClick={handleTriggerClick}
       onKeyDown={handleTriggerKeyDown}
     >
-      <span className="dropdown__value">{selectedLabel}</span>
-      <span className="dropdown__chevron" aria-hidden="true">
-        ▾
-      </span>
+      {triggerIcon === undefined ? (
+        <span className="dropdown__value">{selectedLabel}</span>
+      ) : null}
+      {triggerIcon === undefined ? (
+        <span className="dropdown__chevron" aria-hidden="true">
+          ▾
+        </span>
+      ) : (
+        <span className="dropdown__trigger-icon" aria-hidden="true">
+          {triggerIcon}
+        </span>
+      )}
     </button>
   );
 
@@ -654,6 +691,14 @@ export function Dropdown(props: DropdownProps): ReactElement {
           if (target.tagName !== "INPUT") e.preventDefault();
         }}
       >
+        {popupTitle !== undefined ? (
+          <div className="dropdown__popup-header">
+            <span className="dropdown__popup-title">{popupTitle}</span>
+            {popupSubtitle !== undefined ? (
+              <span className="dropdown__popup-subtitle">{popupSubtitle}</span>
+            ) : null}
+          </div>
+        ) : null}
         {searchable ? (
           <div className="dropdown__search">
             <input

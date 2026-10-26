@@ -6,6 +6,9 @@
 
 export type AssistantTarget = "command" | "workflow" | "miniapp" | "schedule";
 
+/** Per-object override for attaching completed-run snapshots. */
+export type AssistantRunAccess = "inherit" | "allow" | "deny";
+
 /** Stable machine-readable errors returned from the assistant backend. */
 export type AssistantBackendError =
   | "disabled"
@@ -16,7 +19,8 @@ export type AssistantBackendError =
   | "provider"
   | "invalidAssistantResponse"
   | "inputTooLarge"
-  | "runSnapshotsDisabled";
+  | "runSnapshotsDisabled"
+  | "runSnapshotObjectDenied";
 
 /** Provider failures preserve only the non-sensitive HTTP status. */
 export interface AssistantProviderHttpError {

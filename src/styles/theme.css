@@ -1974,6 +1974,61 @@ body.is-editor-fullscreen .output-panel {
   outline-offset: -2px;
 }
 
+/* Icon-only access selector. Color reflects the effective permission. */
+.run-assistant__access.dropdown__trigger {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.run-assistant__access .dropdown__value {
+  display: none;
+}
+
+.run-assistant__access.is-allowed {
+  color: var(--app-color-run);
+}
+
+.run-assistant__access.is-denied {
+  color: var(--color-danger);
+}
+
+.run-assistant__access:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+/* Keep the compact permission menu inside the run-assistant viewport edge. */
+.run-assistant__access-popup {
+  width: 240px;
+  font-size: 12px;
+}
+
+.run-assistant__access-popup .dropdown__option {
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.run-assistant__access-popup .dropdown__option-label {
+  white-space: normal;
+}
+
+.run-assistant__access-popup .dropdown__option-check {
+  font-size: 10px;
+}
+
+.run-assistant__notice-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
 .run-assistant__messages {
   flex: 1 1 auto;
   min-height: 0;
@@ -4045,6 +4100,12 @@ body.is-editor-fullscreen .output-panel {
   margin-bottom: 8px;
 }
 
+/* Keep the timeout NumberStepper compact; the input can read “No limit”, so
+   without a cap the control stretches to the full command-form column. */
+.command-form__timeout-stepper {
+  max-width: 180px;
+}
+
 /* Constrain the "Max columns" NumberStepper to a compact, fixed width
    (~1.5× the old 120px raw input) so it reads as a small numeric field and
    doesn't stretch across the schema panel. */
@@ -4737,6 +4798,12 @@ body.is-editor-fullscreen .output-panel {
   white-space: nowrap;
 }
 
+.dropdown__trigger-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .dropdown__chevron {
   flex-shrink: 0;
   color: var(--color-text-muted);
@@ -4758,6 +4825,32 @@ body.is-editor-fullscreen .output-panel {
   font-size: 14px;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.dropdown__popup-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: -4px 0 0;
+  padding: 8px 10px 6px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dropdown__popup-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dropdown__popup-subtitle {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
 }
 
 .dropdown__option {
@@ -11540,6 +11633,28 @@ body.is-editor-fullscreen .output-panel {
   align-items: flex-start;
   gap: 4px;
   margin-top: -2px;
+}
+.assistant-panel__access.dropdown__trigger {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+.assistant-panel__access .dropdown__value {
+  display: none;
+}
+.assistant-panel__access.is-allowed {
+  color: var(--app-color-run);
+}
+.assistant-panel__access.is-denied {
+  color: var(--color-danger);
+}
+.assistant-panel__access:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
 }
 .assistant-panel__clear-chat {
   display: flex;

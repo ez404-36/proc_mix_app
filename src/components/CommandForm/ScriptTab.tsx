@@ -303,30 +303,32 @@ export function ScriptTab(props: ScriptTabProps): ReactElement {
          * native spinner arrows and renders the app's ghost-button
          * steppers.
          */}
-        <NumberStepper
-          allowEmpty
-          value={
-            form.timeoutSeconds.trim() === ""
-              ? null
-              : Number.parseInt(form.timeoutSeconds, 10)
-          }
-          onChange={(next) =>
-            setForm((s) => ({
-              ...s,
-              timeoutSeconds: next === null ? "" : String(next),
-            }))
-          }
-          min={1}
-          max={Number.MAX_SAFE_INTEGER}
-          placeholder={t("commandForm.placeholders.timeoutSeconds", {
-            defaultValue: "No limit",
-          })}
-          ariaLabel={t("commandForm.fields.timeoutSeconds", {
-            defaultValue: "Timeout (seconds)",
-          })}
-          decrementLabel={t("commandForm.timeout.decrement")}
-          incrementLabel={t("commandForm.timeout.increment")}
-        />
+        <div className="command-form__timeout-stepper">
+          <NumberStepper
+            allowEmpty
+            value={
+              form.timeoutSeconds.trim() === ""
+                ? null
+                : Number.parseInt(form.timeoutSeconds, 10)
+            }
+            onChange={(next) =>
+              setForm((s) => ({
+                ...s,
+                timeoutSeconds: next === null ? "" : String(next),
+              }))
+            }
+            min={1}
+            max={Number.MAX_SAFE_INTEGER}
+            placeholder={t("commandForm.placeholders.timeoutSeconds", {
+              defaultValue: "No limit",
+            })}
+            ariaLabel={t("commandForm.fields.timeoutSeconds", {
+              defaultValue: "Timeout (seconds)",
+            })}
+            decrementLabel={t("commandForm.timeout.decrement")}
+            incrementLabel={t("commandForm.timeout.increment")}
+          />
+        </div>
       </div>
 
       {/*

@@ -12,6 +12,7 @@ import type {
   AssistantObjectContext,
   AssistantPatch,
   AssistantPatchOperation,
+  AssistantRunAccess,
   AssistantSettings,
   AssistantTarget,
 } from "../types/assistant";
@@ -99,6 +100,14 @@ export function isAssistantSettings(value: unknown): value is AssistantSettings 
   );
 }
 
+export function isAssistantRunAccess(
+  value: unknown,
+): value is AssistantRunAccess {
+  return (
+    value === "inherit" || value === "allow" || value === "deny"
+  );
+}
+
 export function serializeAssistantContext(
   context: AssistantObjectContext<unknown>,
   maxChars: number,
@@ -125,7 +134,8 @@ export function isAssistantBackendError(
     value === "provider" ||
     value === "invalidAssistantResponse" ||
     value === "inputTooLarge" ||
-    value === "runSnapshotsDisabled"
+    value === "runSnapshotsDisabled" ||
+    value === "runSnapshotObjectDenied"
   );
 }
 

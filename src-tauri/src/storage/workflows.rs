@@ -279,7 +279,7 @@ pub async fn list_all(pool: &DbPool) -> Result<Vec<WorkflowRecord>, String> {
     let rows = sqlx::query(
         "SELECT id, name, description, icon, nodes_json, edges_json, tags_json, \
                 category_id, favorite, created_at, updated_at, last_run_at, run_count, \
-                api_slug, api_enabled, sound_config \
+            api_slug, api_enabled, sound_config \
          FROM workflows \
          ORDER BY created_at ASC",
     )
@@ -328,7 +328,7 @@ pub async fn upsert(pool: &DbPool, wf: &WorkflowRecord) -> Result<(), String> {
         "INSERT INTO workflows ( \
             id, name, description, icon, nodes_json, edges_json, tags_json, \
             category_id, favorite, created_at, updated_at, last_run_at, run_count, \
-            api_slug, api_enabled, sound_config \
+                api_slug, api_enabled, sound_config \
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(id) DO UPDATE SET \
             name = excluded.name, \

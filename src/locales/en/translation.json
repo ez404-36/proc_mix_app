@@ -982,6 +982,8 @@
       "appearance": "Appearance",
       "sound": "Sound",
       "system": "System",
+      "systemAllowed": "System (Allow)",
+      "systemDenied": "System (Deny)",
       "security": "Security & data",
       "assistant": "AI Assistant",
       "about": "About"
@@ -1554,16 +1556,25 @@
       "clearChat": "Clear chat history",
       "clearChatTitle": "Clear chat history?",
       "clearChatMessage": "All messages in this run’s assistant chat will be removed. This cannot be undone.",
+      "access": {
+        "ariaLabel": "Assistant access to run results",
+        "tooltip": "Assistant permissions",
+        "title": "Assistant permissions",
+        "section": "Operation result reading",
+        "systemAllowed": "System (Allow)",
+        "systemDenied": "System (Deny)",
+        "allow": "Allow",
+        "deny": "Deny"
+      },
       "consent": {
         "loading": "Checking run access…",
         "title": "Allow reading this run?",
         "description": "The assistant can use the bounded, redacted output and execution result. Choose what to allow.",
-        "allowCommand": "Allow this command",
-        "allowWorkflow": "Allow this workflow",
-        "allowAll": "Allow all runs",
         "deny": "Deny",
-        "deniedHint": "Without permission, the assistant can see only metadata for this run; its output and result are unavailable."
+        "deniedHint": "The assistant will see only metadata for this run. Its output and result are unavailable; you can paste the relevant output into the chat manually."
       },
+      "objectDeniedTitle": "Access is denied for this object",
+      "objectDeniedHint": "The assistant can see only run metadata. Paste the output into the chat if you want help with it.",
       "placeholder": "Ask about this run…",
       "resize": "Resize run assistant",
       "composerLabel": "Run assistant request"
@@ -2082,6 +2093,17 @@
     "clearChat": "Clear chat history",
     "clearChatTitle": "Clear chat history?",
     "clearChatMessage": "All messages in this object’s assistant chat will be removed. This cannot be undone.",
+    "access": {
+      "ariaLabel": "Assistant access to run results",
+      "tooltip": "Assistant permissions",
+      "title": "Assistant permissions",
+      "section": "Operation result reading",
+      "systemAllowed": "System (Allow)",
+      "systemDenied": "System (Deny)",
+      "allow": "Allow",
+      "deny": "Deny",
+      "saveError": "Failed to change assistant permissions"
+    },
     "placeholder": "Describe the change…",
     "composerLabel": "Assistant request",
     "sendHint": "Enter sends, Shift+Enter adds a line",
@@ -2133,6 +2155,7 @@
       "invalidAssistantResponse": "The assistant returned an invalid response.",
       "inputTooLarge": "The draft is too large to send.",
       "runSnapshotsDisabled": "The run result was not sent because “Allow run snapshots” is disabled in AI Assistant settings. Enable it and try again.",
+      "runSnapshotObjectDenied": "The run result was not sent because access is denied for this object.",
       "invalidResponse": "The assistant response could not be used."
     },
     "backendCode": "Assistant error: {{code}}.",

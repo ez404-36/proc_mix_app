@@ -82,6 +82,11 @@ CREATE TABLE IF NOT EXISTS commands (
   -- companion idempotent ALTER in db.rs::ensure_commands_columns handles
   -- databases created before this column existed. Added in v0.10.0.
   api_enabled     INTEGER NOT NULL DEFAULT 0,
+  -- AI-assistant access to this command's completed-run snapshots.
+  -- 'inherit' follows the global assistant setting; 'allow' and 'deny'
+  -- are explicit per-object overrides ('deny' always wins). Added with an
+  -- idempotent ALTER in db.rs for databases created before this column.
+  assistant_run_access TEXT NOT NULL DEFAULT 'inherit',
   -- Whether this command appears in the OS file-manager ("Explorer") context
   -- menu. Default 0 — a command is out of the menu until the user opts in. This
   -- is INDEPENDENT of `favorite`. The companion idempotent ALTER in
@@ -174,6 +179,9 @@ CREATE TABLE IF NOT EXISTS workflows (
   -- invisible to the API until the user explicitly opts in. The companion ALTER
   -- in db.rs::ensure_workflows_columns handles older databases. Added in v0.10.0.
   api_enabled   INTEGER NOT NULL DEFAULT 0,
+  -- AI-assistant access to this workflow's completed-run snapshots.
+  -- Values and inheritance rules mirror commands.assistant_run_access.
+  assistant_run_access TEXT NOT NULL DEFAULT 'inherit',
   -- Optional per-workflow sound-notification override, JSON-encoded
   -- `EntitySoundConfig`. NULL = inherit the global sound settings for both
   -- outcomes. Added in v0.12.x; see db.rs::ensure_workflows_columns.

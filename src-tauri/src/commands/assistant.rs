@@ -18,11 +18,12 @@ use crate::core::assistant::providers::{
 use crate::core::assistant::state::AssistantState;
 use crate::core::assistant::types::{
     AssistantAction, AssistantBackendError, AssistantGenerateRequest, AssistantGenerateResponse,
-    AssistantPatch, AssistantRunSnapshot, AssistantTarget,
+    AssistantPatch, AssistantRunAccess, AssistantRunSnapshot, AssistantTarget,
 };
 use crate::storage::assistant as storage_assistant;
 use crate::storage::assistant_providers as storage_providers;
 use crate::storage::assistant_providers::{AssistantProvider, AssistantProviderInput};
+use crate::storage::assistant_run_access as storage_run_access;
 use crate::storage::DbPool;
 
 const MAX_USER_MESSAGE_CHARS: usize = 8_000;
@@ -37,6 +38,7 @@ const ERR_DISABLED: &str = "ASSISTANT_DISABLED";
 const ERR_NOT_CONFIGURED: &str = "ASSISTANT_NOT_CONFIGURED";
 const ERR_INPUT_TOO_LARGE: &str = "ASSISTANT_INPUT_TOO_LARGE";
 const ERR_RUN_SNAPSHOTS_DISABLED: &str = "ASSISTANT_RUN_SNAPSHOTS_DISABLED";
+const ERR_RUN_SNAPSHOT_OBJECT_DENIED: &str = "ASSISTANT_RUN_SNAPSHOT_DENIED_FOR_OBJECT";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,6 +210,25 @@ pub async fn set_assistant_settings(
     settings: storage_assistant::AssistantSettings,
 ) -> Result<(), String> {
     storage_assistant::save(pool.inner(), &settings).await
+}
+
+#[tauri::command]
+pub async fn get_assistant_run_access(
+    pool: State<'_, DbPool>,
+    target: AssistantTarget,
+    object_id: String,
+) -> Result<AssistantRunAccess, String> {
+    storage_run_access::load(pool.inner(), target, &object_id).await
+}
+
+#[tauri::command]
+pub async fn set_assistant_run_access(
+    pool: State<'_, DbPool>,
+    target: AssistantTarget,
+    object_id: String,
+    access: AssistantRunAccess,
+) -> Result<(), String> {
+    storage_run_access::save(pool.inner(), target, &object_id, access).await
 }
 
 #[tauri::command]
@@ -463,7 +484,18 @@ pub async fn assistant_generate(
 
     let run_snapshot_json = match run_snapshot {
         Some(snapshot) => {
-            if !settings.allow_run_snapshots && !request.run_snapshot_consent {
+            let object_access = match request.object_id.as_deref() {
+                Some(object_id) => {
+                    storage_run_access::load(pool.inner(), request.target, object_id).await?
+                }
+                None => AssistantRunAccess::Inherit,
+            };
+            if object_access == AssistantRunAccess::Deny {
+                return Err(ERR_RUN_SNAPSHOT_OBJECT_DENIED.to_string());
+            }
+            let permitted_by_defaults =
+                settings.allow_run_snapshots || object_access == AssistantRunAccess::Allow;
+            if !permitted_by_defaults && !request.run_snapshot_consent {
                 return Err(ERR_RUN_SNAPSHOTS_DISABLED.to_string());
             }
             if snapshot.id != request.attached_run_snapshot_id.unwrap_or_default()

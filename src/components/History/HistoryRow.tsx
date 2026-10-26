@@ -175,7 +175,13 @@ function RunDisclosure({
     >
       <summary
         className="history-row__summary"
-        onClick={() => setIsOpen((open) => !open)}
+        onClick={(summaryEvent) => {
+          // The details state is controlled. Suppress the browser's own
+          // activation toggle; otherwise it cancels this state change in a
+          // real browser and the run appears impossible to expand.
+          summaryEvent.preventDefault();
+          setIsOpen((open) => !open);
+        }}
       >
         {summary}
       </summary>

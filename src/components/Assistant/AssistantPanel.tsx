@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+import { Message } from "@arco-design/web-react";
 import {
   CancelIcon,
   ChevronIcon,
@@ -8,7 +9,9 @@ import {
   SidebarToggleIcon,
   SpinnerIcon,
   TrashIcon,
+  UserIcon,
 } from "../icons";
+import { Dropdown } from "../Dropdown/Dropdown";
 import { useContextMenu } from "../ContextMenu";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -19,8 +22,14 @@ import type {
   AssistantObjectContext,
   AssistantPatch,
   AssistantRunSnapshot,
+  AssistantRunAccess,
   AssistantTarget,
 } from "../../types/assistant";
+import {
+  getAssistantSettings,
+  getAssistantRunAccess,
+  setAssistantRunAccess,
+} from "../../services/assistantService";
 import { previewAssistantPatch } from "../../utils/assistantPatches";
 import { buildAssistantRunSnapshotPrompt } from "../../utils/assistantRunPrompt";
 import {
@@ -97,6 +106,11 @@ export function AssistantPanel({
     !(defaultExpanded || placement.isExpanded),
   );
   const setRunSnapshot = useAssistantStore((state) => state.setRunSnapshot);
+  const [runAccess, setRunAccess] = useState<AssistantRunAccess | null>(null);
+  const [globalRunAllowed, setGlobalRunAllowed] = useState<boolean | null>(null);
+  const [isSavingRunAccess, setIsSavingRunAccess] = useState(false);
+  const supportsRunAccess =
+    (target === "command" || target === "workflow") && objectId !== null;
 
   useEffect(() => {
     startSession(target, objectId, draftVersion, resolvedSessionKey);
@@ -117,6 +131,34 @@ export function AssistantPanel({
   }, [isCollapsed, resolvedSessionKey]);
 
   useEffect(() => {
+    if (!supportsRunAccess || objectId === null) {
+      setRunAccess(null);
+      setGlobalRunAllowed(null);
+      return;
+    }
+
+    let isSubscribed = true;
+    void Promise.all([
+      getAssistantSettings(),
+      getAssistantRunAccess(target, objectId),
+    ])
+      .then(([settings, access]) => {
+        if (!isSubscribed) return;
+        setGlobalRunAllowed(settings.allowRunSnapshots);
+        setRunAccess(access);
+      })
+      .catch(() => {
+        if (!isSubscribed) return;
+        setGlobalRunAllowed(false);
+        setRunAccess("inherit");
+      });
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [objectId, supportsRunAccess, target]);
+
+  useEffect(() => {
     const element = composerInputRef.current;
     if (element === null) return;
     element.style.height = "auto";
@@ -129,6 +171,22 @@ export function AssistantPanel({
     setApplyError(null);
     clearSession();
     setIsClearConfirmOpen(false);
+  };
+
+  const changeRunAccess = (value: string): void => {
+    const access =
+      value === "allow" || value === "deny" ? value : "inherit";
+    if (!supportsRunAccess || objectId === null || isSavingRunAccess) return;
+    setIsSavingRunAccess(true);
+
+    void setAssistantRunAccess(target, objectId, access)
+      .then(() => setRunAccess(access))
+      .catch(() => {
+        Message.error(t("assistant.access.saveError"));
+      })
+      .finally(() => {
+        setIsSavingRunAccess(false);
+      });
   };
 
   const submit = (): void => {
@@ -248,6 +306,38 @@ export function AssistantPanel({
           <h2 className="assistant-panel__title">{title}</h2>
         </div>
         <div className="assistant-panel__header-actions">
+          {supportsRunAccess && objectId !== null ? (
+            <Dropdown
+              value={runAccess ?? "inherit"}
+              className={`assistant-panel__access${
+                runAccess === "allow" ||
+                (runAccess === "inherit" && globalRunAllowed === true)
+                  ? " is-allowed"
+                  : " is-denied"
+              }`}
+              popupClassName="run-assistant__access-popup"
+              popupAlign="end"
+              popupTitle={t("assistant.access.title")}
+              popupSubtitle={t("assistant.access.section")}
+              ariaLabel={t("assistant.access.ariaLabel")}
+              triggerTitle={t("assistant.access.tooltip")}
+              triggerIcon={<UserIcon />}
+              disabled={runAccess === null || isSavingRunAccess}
+              onChange={changeRunAccess}
+              options={[
+                {
+                  value: "inherit",
+                  label: t(
+                    globalRunAllowed === true
+                      ? "assistant.access.systemAllowed"
+                      : "assistant.access.systemDenied",
+                  ),
+                },
+                { value: "allow", label: t("assistant.access.allow") },
+                { value: "deny", label: t("assistant.access.deny") },
+              ]}
+            />
+          ) : null}
           <button
             type="button"
             className="assistant-panel__clear-chat"

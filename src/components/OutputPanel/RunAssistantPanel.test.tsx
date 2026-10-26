@@ -11,13 +11,19 @@ import { RunAssistantPanel } from "./RunAssistantPanel";
 
 const getAssistantSettings = vi.fn();
 const setAssistantSettings = vi.fn();
+const getAssistantRunAccess = vi.fn();
+const setAssistantRunAccess = vi.fn();
 const generateAssistantResponseMock = vi.mocked(generateAssistantResponse);
 
 vi.mock("../../services/assistantService", () => ({
   getAssistantSettings: (...args: unknown[]) =>
     getAssistantSettings(...args),
+  getAssistantRunAccess: (...args: unknown[]) =>
+    getAssistantRunAccess(...args),
   setAssistantSettings: (...args: unknown[]) =>
     setAssistantSettings(...args),
+  setAssistantRunAccess: (...args: unknown[]) =>
+    setAssistantRunAccess(...args),
   cancelAssistantGeneration: vi.fn(async () => undefined),
   generateAssistantResponse: vi.fn(),
 }));
@@ -43,6 +49,8 @@ describe("RunAssistantPanel consent", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+    getAssistantRunAccess.mockResolvedValue("inherit");
+    setAssistantRunAccess.mockResolvedValue(undefined);
   });
 
   it("asks for access immediately after opening and can allow one subject", async () => {
@@ -56,7 +64,7 @@ describe("RunAssistantPanel consent", () => {
     );
     expect(await screen.findByText("Allow reading this run?")).toBeTruthy();
     fireEvent.click(
-      screen.getByRole("button", { name: "Allow this command" }),
+      screen.getByRole("button", { name: "Allow" }),
     );
 
     await waitFor(() => {
@@ -65,6 +73,11 @@ describe("RunAssistantPanel consent", () => {
       ).toBeTruthy();
     });
     expect(screen.queryByText("Allow reading this run?")).toBeNull();
+    expect(setAssistantRunAccess).toHaveBeenCalledWith(
+      "command",
+      "cmd-1",
+      "allow",
+    );
   });
 
   it("explains metadata-only access after denial", async () => {
@@ -80,17 +93,14 @@ describe("RunAssistantPanel consent", () => {
 
     expect(
       await screen.findByText(
-        "Without permission, the assistant can see only metadata for this run; its output and result are unavailable.",
+        "The assistant will see only metadata for this run. Its output and result are unavailable; you can paste the relevant output into the chat manually.",
       ),
     ).toBeTruthy();
     expect(screen.getByLabelText("Run assistant request")).toBeTruthy();
   });
 
-  it("saves the global all-runs permission", async () => {
-    getAssistantSettings
-      .mockResolvedValueOnce({ allowRunSnapshots: false })
-      .mockResolvedValueOnce({ allowRunSnapshots: false });
-    setAssistantSettings.mockResolvedValue(undefined);
+  it("saves an explicit object-level denial", async () => {
+    getAssistantSettings.mockResolvedValue({ allowRunSnapshots: true });
     render(<RunAssistantPanel assistant={assistant} title="Disk usage"
       sessionKey="test:assistant-1"
     />);
@@ -99,14 +109,37 @@ describe("RunAssistantPanel consent", () => {
       screen.getByRole("button", { name: "Open run assistant" }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "Allow all runs" }),
+      screen.getByRole("button", { name: "Assistant access to run results" }),
     );
+    const accessTrigger = screen.getByRole("button", {
+      name: "Assistant access to run results",
+    }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(accessTrigger.disabled).toBe(false);
+    });
+    fireEvent.click(accessTrigger);
+    await waitFor(() => {
+      expect(accessTrigger.getAttribute("aria-expanded")).toBe("true");
+    });
+    expect(screen.getByText("Assistant permissions")).toBeTruthy();
+    expect(screen.getByText("Operation result reading")).toBeTruthy();
+    expect(
+      screen.getByRole("option", { name: "System (Allow)" }),
+    ).toBeTruthy();
+    fireEvent.keyDown(accessTrigger, { key: "ArrowDown" });
+    fireEvent.keyDown(accessTrigger, { key: "ArrowDown" });
+    fireEvent.keyDown(accessTrigger, { key: "Enter" });
 
     await waitFor(() => {
-      expect(setAssistantSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ allowRunSnapshots: true }),
+      expect(setAssistantRunAccess).toHaveBeenCalledWith(
+        "command",
+        "cmd-1",
+        "deny",
       );
     });
+    expect(
+      await screen.findByText("Access is denied for this object"),
+    ).toBeTruthy();
   });
 
   it("restores a chat for the same run and clears it from the header", async () => {

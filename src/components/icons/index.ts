@@ -53,4 +53,5 @@ export { TerminalIcon } from "./TerminalIcon";
 export { ThemeIcon } from "./ThemeIcon";
 export { TilesViewIcon } from "./TilesViewIcon";
 export { TrashIcon } from "./TrashIcon";
+export { UserIcon } from "./UserIcon";
 export { ViewIcon } from "./ViewIcon";

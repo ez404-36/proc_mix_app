@@ -11,6 +11,16 @@ import { AssistantPanel } from "./AssistantPanel";
 import { useAssistantStore } from "../../stores/assistantStore";
 
 vi.mock("../../services/assistantService", () => ({
+  getAssistantSettings: vi.fn(async () => ({
+    enabled: true,
+    timeoutMs: 60_000,
+    activeProviderId: null,
+    activeModelId: null,
+    allowRunSnapshots: true,
+    allowRemoteEndpoints: false,
+  })),
+  getAssistantRunAccess: vi.fn(async () => "inherit"),
+  setAssistantRunAccess: vi.fn(async () => undefined),
   generateAssistantResponse: vi.fn(async () => ({
     messageId: "assistant-1",
     text: "A response",
@@ -63,6 +73,11 @@ describe("AssistantPanel", () => {
 
     expect(
       screen.getByRole("region", { name: "Command Assistant" }),
+    ).toBeTruthy();
+    expect(
+      await screen.findByRole("button", {
+        name: "assistant.access.ariaLabel",
+      }),
     ).toBeTruthy();
     fireEvent.change(screen.getByLabelText("assistant.composerLabel"), {
       target: { value: "Add status" },

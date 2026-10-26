@@ -330,6 +330,8 @@ pub fn run() {
             commands::set_assistant_provider_model_hidden,
             commands::set_assistant_active_provider,
             commands::set_assistant_active_model,
+            commands::get_assistant_run_access,
+            commands::set_assistant_run_access,
             commands::assistant_generate,
             commands::assistant_cancel,
             commands::cancel_execution,

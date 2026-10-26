@@ -10,6 +10,7 @@
 
 pub mod assistant;
 pub mod assistant_providers;
+pub mod assistant_run_access;
 pub mod autostart;
 pub mod commands;
 pub mod db;

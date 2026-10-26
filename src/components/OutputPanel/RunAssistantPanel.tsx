@@ -12,17 +12,21 @@ import {
   SidebarToggleIcon,
   SpinnerIcon,
   TrashIcon,
+  UserIcon,
 } from "../icons";
+import { Dropdown } from "../Dropdown/Dropdown";
 import { MarkdownMessage } from "../Assistant/MarkdownMessage";
 import { ConfirmDialog } from "../ConfirmDialog";
 import {
   getAssistantSettings,
+  getAssistantRunAccess,
   cancelAssistantGeneration,
   generateAssistantResponse,
-  setAssistantSettings,
+  setAssistantRunAccess,
 } from "../../services/assistantService";
 import type {
   AssistantChatMessage,
+  AssistantRunAccess,
   AssistantSettings,
   AssistantSessionError,
 } from "../../types/assistant";
@@ -64,7 +68,8 @@ type AssistantBackendErrorCode =
   | "provider"
   | "invalidAssistantResponse"
   | "inputTooLarge"
-  | "runSnapshotsDisabled";
+  | "runSnapshotsDisabled"
+  | "runSnapshotObjectDenied";
 
 const ASSISTANT_ERROR_CODES: Record<string, AssistantBackendErrorCode> = {
   ASSISTANT_DISABLED: "disabled",
@@ -76,6 +81,7 @@ const ASSISTANT_ERROR_CODES: Record<string, AssistantBackendErrorCode> = {
   ASSISTANT_INVALID_RESPONSE: "invalidAssistantResponse",
   ASSISTANT_INPUT_TOO_LARGE: "inputTooLarge",
   ASSISTANT_RUN_SNAPSHOTS_DISABLED: "runSnapshotsDisabled",
+  ASSISTANT_RUN_SNAPSHOT_DENIED_FOR_OBJECT: "runSnapshotObjectDenied",
 };
 
 const MIN_RUN_ASSISTANT_WIDTH = 260;
@@ -153,6 +159,12 @@ function assistantWidthLimits(aside: HTMLElement | null): {
   };
 }
 
+function parseRunAccess(value: string): AssistantRunAccess | null {
+  return value === "inherit" || value === "allow" || value === "deny"
+    ? value
+    : null;
+}
+
 export function RunAssistantPanel({
   assistant,
   title,
@@ -168,6 +180,9 @@ export function RunAssistantPanel({
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<AssistantSessionError | null>(null);
   const [allowAllRuns, setAllowAllRuns] = useState<boolean | null>(null);
+  const [objectAccess, setObjectAccess] = useState<AssistantRunAccess | null>(
+    null,
+  );
   const [consent, setConsent] = useState<RunConsentDecision>("unknown");
   const [isSavingConsent, setIsSavingConsent] = useState(false);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
@@ -198,23 +213,34 @@ export function RunAssistantPanel({
     if (!isExpanded) return;
     let isSubscribed = true;
 
-    getAssistantSettings()
-      .then((settings: AssistantSettings) => {
+    Promise.all([
+      getAssistantSettings(),
+      assistant === null
+        ? Promise.resolve<AssistantRunAccess>("inherit")
+        : getAssistantRunAccess(assistant.target, assistant.objectId ?? ""),
+    ])
+      .then(([settings, access]: [AssistantSettings, AssistantRunAccess]) => {
         if (!isSubscribed) return;
         const allowAll = settings.allowRunSnapshots;
         setAllowAllRuns(allowAll);
+        setObjectAccess(access);
         if (assistant === null) return;
-        setConsent(
-          resolveRunSnapshotConsent({
-            allowAllRuns: allowAll,
-            subjectKey: assistant.subjectKey,
-            runId: assistant.runId,
-          }),
-        );
+        if (access === "inherit") {
+          setConsent(
+            resolveRunSnapshotConsent({
+              allowAllRuns: allowAll,
+              subjectKey: assistant.subjectKey,
+              runId: assistant.runId,
+            }),
+          );
+        } else {
+          setConsent(access === "allow" ? "allowed" : "denied");
+        }
       })
       .catch((settingsError: unknown) => {
         if (!isSubscribed) return;
         setAllowAllRuns(false);
+        setObjectAccess("inherit");
         setConsent("denied");
         setError(errorToSessionError(settingsError));
       });
@@ -248,12 +274,16 @@ export function RunAssistantPanel({
 
   const submit = (): void => {
     const userMessage = draft.trim();
-    const canReadSnapshot = allowAllRuns === true || consent === "allowed";
+    const canReadSnapshot =
+      objectAccess === "allow" ||
+      (objectAccess === "inherit" &&
+        (allowAllRuns === true || consent === "allowed"));
     if (
       userMessage === "" ||
       isGenerating ||
       assistant === null ||
       allowAllRuns === null ||
+      objectAccess === null ||
       consent === "unknown"
     ) {
       return;
@@ -322,19 +352,22 @@ export function RunAssistantPanel({
       });
   };
 
-  const handleConsent = (decision: "allowed" | "allowAll" | "denied"): void => {
+  const handleConsent = (
+    decision: "allowed" | "allowObject" | "denied",
+  ): void => {
     if (assistant === null || isSavingConsent) return;
     setIsSavingConsent(true);
     setError(null);
 
     const apply = async (): Promise<void> => {
-      if (decision === "allowAll") {
-        const settings = await getAssistantSettings();
-        await setAssistantSettings({
-          ...settings,
-          allowRunSnapshots: true,
-        });
-        setAllowAllRuns(true);
+      if (decision === "allowObject") {
+        if (assistant === null) return;
+        await setAssistantRunAccess(
+          assistant.target,
+          assistant.objectId ?? assistant.subjectKey,
+          "allow",
+        );
+        setObjectAccess("allow");
         setConsent("allowed");
         return;
       }
@@ -350,6 +383,50 @@ export function RunAssistantPanel({
     void apply()
       .catch((consentError: unknown) => {
         setError(errorToSessionError(consentError));
+      })
+      .finally(() => {
+        setIsSavingConsent(false);
+      });
+  };
+
+  const changeAccess = (value: string): void => {
+    const access = parseRunAccess(value);
+    if (
+      access === null ||
+      assistant === null ||
+      objectAccess === null ||
+      isSavingConsent
+    ) {
+      return;
+    }
+    setIsSavingConsent(true);
+    setError(null);
+
+    const apply = async (): Promise<void> => {
+      await setAssistantRunAccess(
+        assistant.target,
+        assistant.objectId ?? assistant.subjectKey,
+        access,
+      );
+      setObjectAccess(access);
+      if (access === "allow") {
+        setConsent("allowed");
+      } else if (access === "deny") {
+        setConsent("denied");
+      } else {
+        setConsent(
+          resolveRunSnapshotConsent({
+            allowAllRuns: allowAllRuns === true,
+            subjectKey: assistant.subjectKey,
+            runId: assistant.runId,
+          }),
+        );
+      }
+    };
+
+    void apply()
+      .catch((accessError: unknown) => {
+        setError(errorToSessionError(accessError));
       })
       .finally(() => {
         setIsSavingConsent(false);
@@ -408,8 +485,14 @@ export function RunAssistantPanel({
   };
 
   const isConsentPending =
+    objectAccess === null ||
     allowAllRuns === null ||
-    (allowAllRuns === false && consent === "unknown");
+    (objectAccess === "inherit" &&
+      allowAllRuns === false &&
+      consent === "unknown");
+  const isAccessAllowed =
+    objectAccess === "allow" ||
+    (objectAccess === "inherit" && allowAllRuns === true);
 
   if (!isExpanded) {
     return (
@@ -469,6 +552,38 @@ export function RunAssistantPanel({
           <h2 className="run-assistant__name">{title}</h2>
         </div>
         <div className="run-assistant__header-actions">
+          <Dropdown
+            value={objectAccess ?? "inherit"}
+            className={`run-assistant__access${
+              isAccessAllowed ? " is-allowed" : " is-denied"
+            }`}
+            popupClassName="run-assistant__access-popup"
+            popupAlign="end"
+            popupTitle={t("outputPanel.runAssistant.access.title")}
+            popupSubtitle={t("outputPanel.runAssistant.access.section")}
+            ariaLabel={t("outputPanel.runAssistant.access.ariaLabel")}
+            triggerTitle={t("outputPanel.runAssistant.access.tooltip")}
+            triggerIcon={<UserIcon />}
+            disabled={
+              assistant === null ||
+              assistant.objectId === null ||
+              objectAccess === null ||
+              isSavingConsent
+            }
+            onChange={changeAccess}
+            options={[
+              {
+                value: "inherit",
+                label: t(
+                  allowAllRuns === true
+                    ? "outputPanel.runAssistant.access.systemAllowed"
+                    : "outputPanel.runAssistant.access.systemDenied",
+                ),
+              },
+              { value: "allow", label: t("outputPanel.runAssistant.access.allow") },
+              { value: "deny", label: t("outputPanel.runAssistant.access.deny") },
+            ]}
+          />
           <button
             type="button"
             className="run-assistant__clear"
@@ -502,7 +617,9 @@ export function RunAssistantPanel({
             </span>
             {t("outputPanel.runAssistant.consent.loading")}
           </div>
-        ) : allowAllRuns === false && consent === "unknown" ? (
+        ) : objectAccess === "inherit" &&
+          allowAllRuns === false &&
+          consent === "unknown" ? (
           <section className="run-assistant__consent" aria-live="polite">
             <h3>{t("outputPanel.runAssistant.consent.title")}</h3>
             <p>{t("outputPanel.runAssistant.consent.description")}</p>
@@ -511,25 +628,13 @@ export function RunAssistantPanel({
                 type="button"
                 className="btn btn--primary"
                 disabled={isSavingConsent}
-                onClick={() => handleConsent("allowed")}
+                onClick={() => handleConsent("allowObject")}
               >
-                {t(
-                  assistant?.target === "workflow"
-                    ? "outputPanel.runAssistant.consent.allowWorkflow"
-                    : "outputPanel.runAssistant.consent.allowCommand",
-                )}
+                {t("outputPanel.runAssistant.access.allow")}
               </button>
               <button
                 type="button"
                 className="btn btn--ghost"
-                disabled={isSavingConsent}
-                onClick={() => handleConsent("allowAll")}
-              >
-                {t("outputPanel.runAssistant.consent.allowAll")}
-              </button>
-              <button
-                type="button"
-                className="btn btn--danger"
                 disabled={isSavingConsent}
                 onClick={() => handleConsent("denied")}
               >
@@ -538,7 +643,14 @@ export function RunAssistantPanel({
             </div>
           </section>
         ) : null}
-        {allowAllRuns === false && consent === "denied" ? (
+        {objectAccess === "deny" ? (
+          <section className="run-assistant__notice" role="note">
+            <p>
+              <strong>{t("outputPanel.runAssistant.objectDeniedTitle")}</strong>
+            </p>
+            <p>{t("outputPanel.runAssistant.objectDeniedHint")}</p>
+          </section>
+        ) : allowAllRuns === false && consent === "denied" ? (
           <p className="run-assistant__notice" role="note">
             {t("outputPanel.runAssistant.consent.deniedHint")}
           </p>

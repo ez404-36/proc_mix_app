@@ -16,9 +16,12 @@ import type {
   AssistantProviderTestResult,
   AssistantRunSnapshot,
   AssistantSettings,
+  AssistantRunAccess,
+  AssistantTarget,
 } from "../types/assistant";
 import {
   isAssistantGenerateResponse,
+  isAssistantRunAccess,
   isAssistantSettings,
 } from "../utils/assistantContracts";
 
@@ -82,6 +85,28 @@ export async function getAssistantSettings(): Promise<AssistantSettings> {
 
 export async function setAssistantSettings(settings: AssistantSettings): Promise<void> {
   await invoke("set_assistant_settings", { settings });
+}
+
+export async function getAssistantRunAccess(
+  target: AssistantTarget,
+  objectId: string,
+): Promise<AssistantRunAccess> {
+  const access: unknown = await invoke("get_assistant_run_access", {
+    target,
+    objectId,
+  });
+  if (!isAssistantRunAccess(access)) {
+    throw new Error("Invalid assistant run access returned by backend");
+  }
+  return access;
+}
+
+export async function setAssistantRunAccess(
+  target: AssistantTarget,
+  objectId: string,
+  access: AssistantRunAccess,
+): Promise<void> {
+  await invoke("set_assistant_run_access", { target, objectId, access });
 }
 
 export async function listAssistantProviderPresets(): Promise<

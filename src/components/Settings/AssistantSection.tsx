@@ -463,6 +463,23 @@ export function AssistantSection(): ReactElement {
               </span>
             </div>
             <p className="form-hint">{t("settings.assistant.description")}</p>
+
+            <div className="settings-group settings-group--tight settings-group--spaced-top">
+              <ToggleSwitch
+                checked={settings.allowRunSnapshots}
+                disabled={isBusy}
+                onChange={(allowed) =>
+                  updateSettings("allowRunSnapshots", allowed)
+                }
+                ariaLabel={t("settings.assistant.runSnapshots")}
+              />
+              <span className="settings-inline-label">
+                {t("settings.assistant.runSnapshots")}
+              </span>
+            </div>
+            <p className="form-hint">
+              {t("settings.assistant.runSnapshotsHint")}
+            </p>
           </div>
 
           <div className="assistant-settings__grid">

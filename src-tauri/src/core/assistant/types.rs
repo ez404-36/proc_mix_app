@@ -11,6 +11,28 @@ pub enum AssistantTarget {
     Schedule,
 }
 
+/// Per-object override for attaching run snapshots to assistant requests.
+/// `Inherit` defers to the global `allow_run_snapshots` setting; `Deny`
+/// always wins over global and per-request consent.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AssistantRunAccess {
+    #[default]
+    Inherit,
+    Allow,
+    Deny,
+}
+
+impl AssistantRunAccess {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inherit => "inherit",
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AssistantBackendError {
