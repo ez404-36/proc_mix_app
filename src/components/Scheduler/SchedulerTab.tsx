@@ -1,5 +1,5 @@
-// The "Scheduler" view: lists cron schedules with enable / edit / delete
-// controls and a "New schedule" button. Creating or editing a schedule
+// The "Schedules" Library tab: lists cron schedules with enable / edit /
+// delete controls and a "New schedule" button. Creating or editing a schedule
 // navigates to the full-screen `scheduler-editor` view (see ScheduleEditor +
 // ScheduleForm) rather than opening a modal.
 
@@ -50,7 +50,11 @@ function ScheduleTable({
 }: ScheduleTableProps): ReactElement {
   const { t } = useTranslation();
   return (
-    <div className="table" role="table" aria-label={t("nav.scheduler")}>
+      <div
+        className="table"
+        role="table"
+        aria-label={t("workflow.tabs.schedules")}
+      >
       <div
         className="table__row table__head"
         role="row"
@@ -422,13 +426,6 @@ export function SchedulerTab(): ReactElement {
 
   return (
     <>
-      <header className="view-header">
-        <div>
-          <h1 className="view-title">{t("scheduler.title")}</h1>
-          <p className="view-subtitle">{t("scheduler.subtitle")}</p>
-        </div>
-      </header>
-
       <div className="scheduler-hint-row">
         <p className="form-hint scheduler-runs-hint">
           {t("scheduler.runsWhileOpen")}

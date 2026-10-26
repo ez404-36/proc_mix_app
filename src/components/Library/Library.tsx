@@ -77,6 +77,7 @@ import { ALL_CATEGORIES, LibraryFilterBar } from "./LibraryFilterBar";
 import { CategoryGroupSection } from "./CategoryGroupSection";
 import type { SortOption } from "../ListControls/ListControls";
 import { Pagination } from "../Pagination/Pagination";
+import { SchedulerTab } from "../Scheduler";
 import {
   CopyIcon,
   EditIcon,
@@ -2029,6 +2030,7 @@ export function Library(): ReactElement {
   const tabs: ReadonlyArray<{ key: LibraryTab; labelKey: string }> = [
     { key: "commands", labelKey: "workflow.tabs.commands" },
     { key: "workflows", labelKey: "workflow.tabs.workflows" },
+    { key: "schedules", labelKey: "workflow.tabs.schedules" },
     { key: "miniapps", labelKey: "workflow.tabs.miniapps" },
   ];
 
@@ -2127,7 +2129,7 @@ export function Library(): ReactElement {
             <PlusIcon />
             {t("workflow.newLabel")}
           </button>
-        ) : (
+        ) : libraryTab === "schedules" ? null : (
           <>
             <button
               type="button"
@@ -2157,6 +2159,8 @@ export function Library(): ReactElement {
         <CommandsTab />
       ) : libraryTab === "workflows" ? (
         <WorkflowsTab />
+      ) : libraryTab === "schedules" ? (
+        <SchedulerTab />
       ) : (
         <MiniAppsTab />
       )}

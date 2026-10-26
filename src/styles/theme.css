@@ -1812,6 +1812,320 @@ body.is-editor-fullscreen .output-panel {
   border-bottom-color: var(--color-accent);
 }
 
+/* Completed-run assistant rail. It is laid out beside the console body, not
+   overlaid on the app, and is intentionally independent from editor sessions. */
+.output-panel__run-layout {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.output-panel__run-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.run-assistant {
+  display: flex;
+  flex: 0 0 min(720px, 84%);
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--console-border);
+  background: var(--color-surface);
+}
+
+.run-assistant--collapsed {
+  flex-basis: 44px;
+}
+
+.run-assistant__resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 1;
+  width: 8px;
+  touch-action: none;
+  cursor: ew-resize;
+}
+
+.run-assistant__resize:hover,
+.run-assistant__resize:focus-visible {
+  background: color-mix(in srgb, var(--color-primary) 32%, transparent);
+  outline: none;
+}
+
+.run-assistant__trigger {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 12px 0 0;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.run-assistant__trigger:hover,
+.run-assistant__trigger:focus-visible {
+  background: var(--color-surface-hover);
+}
+
+.run-assistant__trigger:focus-visible,
+.run-assistant__collapse:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.run-assistant__trigger-label {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.run-assistant__trigger-icon {
+  display: inline-flex;
+  color: var(--color-text-muted);
+  transform: scaleX(-1);
+}
+
+.run-assistant__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.run-assistant__eyebrow,
+.run-assistant__hint {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.run-assistant__name {
+  margin: 2px 0 0;
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-assistant__header-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  margin-top: -2px;
+}
+
+.run-assistant__collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.run-assistant__collapse:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.run-assistant__clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.run-assistant__clear:hover:not(:disabled) {
+  background: var(--color-bg);
+  color: var(--color-danger);
+}
+
+.run-assistant__clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.run-assistant__clear:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.run-assistant__messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.run-assistant__message {
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.run-assistant__message--user {
+  background: var(--color-accent-subtle);
+}
+
+.run-assistant__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+}
+
+.run-assistant__spinner {
+  display: inline-flex;
+  color: var(--color-primary);
+  animation: output-panel-spin 0.9s linear infinite;
+}
+
+.run-assistant__error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.run-assistant__error {
+  margin: 0;
+  color: var(--color-danger);
+}
+
+.run-assistant__consent {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+}
+
+.run-assistant__consent h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.run-assistant__consent p {
+  margin: 8px 0 12px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.run-assistant__consent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-assistant__consent-actions .btn {
+  width: auto;
+}
+
+.run-assistant__notice {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.run-assistant__composer {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.run-assistant__composer-field {
+  position: relative;
+}
+
+.run-assistant__composer-field textarea {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  max-height: 160px;
+  padding-right: 42px;
+  overflow-y: auto;
+  resize: none;
+}
+
+.run-assistant__composer-field.is-generating textarea {
+  padding-right: 74px;
+}
+
+.run-assistant__composer-field .run-assistant__cancel,
+.run-assistant__composer-field .run-assistant__send {
+  position: absolute;
+  bottom: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.run-assistant__composer-field .run-assistant__cancel {
+  right: 33px;
+  color: var(--color-text-muted);
+}
+
+.run-assistant__composer-field .run-assistant__send {
+  right: 5px;
+  color: var(--color-text-inverse, #fff);
+}
+
+.run-assistant__composer-field .run-assistant__cancel:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.run-assistant__composer-field .run-assistant__send:hover:not(:disabled) {
+  border: 1px solid var(--color-primary);
+  border-radius: 999px;
+  background: var(--color-primary);
+}
+
+.run-assistant__composer-field .run-assistant__send:focus-visible {
+  color: var(--color-text-inverse, #fff);
+}
+
+.run-assistant__composer-field .run-assistant__send:disabled {
+  color: var(--color-text-inverse, #fff);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Structured result view: pretty-printed return value + field map. */
 .output-panel__result-section {
   margin-bottom: 12px;
@@ -4516,57 +4830,6 @@ body.is-editor-fullscreen .output-panel {
   text-align: center;
 }
 
-/* Recorder toolbar: row of controls (scope selector, Start/Stop, status,
-   selection actions) with consistent spacing so they don't slip together. */
-.recorder__toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.recorder__toolbar-spacer {
-  flex: 1;
-}
-
-.recorder__status {
-  font-size: 13px;
-  color: var(--color-text-muted);
-}
-
-/* "(experimental)" tag next to the Recorder title — warning (amber) tone. */
-.recorder__experimental {
-  margin-left: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--app-color-edit);
-  white-space: nowrap;
-}
-
-/* Explainer under the Recorder subtitle: clarifies that the feature captures
-   launched processes (command lines), not UI clicks/keystrokes. */
-.recorder__explainer {
-  margin-top: 6px;
-  max-width: 70ch;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--color-text-muted);
-}
-
-/* Recorder scope selector: a comfortable min-width so the placeholder
-   ("All processes") and process names aren't cramped. */
-.recorder__scope-select.dropdown__trigger,
-.recorder__scope-select.dropdown__multi {
-  min-width: 200px;
-}
-
-/* Give the scope popup room so process names show in full before any
-   ellipsis kicks in (the picker can list long binary names). */
-.recorder__scope-popup {
-  max-width: min(420px, calc(100vw - 16px));
-}
-
 /* Multi-select trigger: a tag-input container of selected chips + an inline
    toggle button that opens the popup. Reuses the `.tag-input` chip styling. */
 .dropdown__multi {
@@ -5221,6 +5484,51 @@ body.is-editor-fullscreen .output-panel {
   padding: 0 16px 12px;
   border-top: 1px solid var(--color-border);
 }
+
+/* Completed-run viewer: captured console/result on the left, a contextual
+   AI rail on the right. The rail is mounted only after the row is opened. */
+.history-run__layout {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  margin: 0;
+  padding: 0 16px 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.history-run__output {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.history-run__layout .schedule-history__body {
+  margin: 0;
+  padding: 0;
+  border-top: 0;
+}
+
+.assistant-panel--embedded {
+  position: static;
+  z-index: auto;
+  flex: 0 0 min(320px, 42vw);
+  width: min(320px, 42vw);
+  height: auto;
+  min-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.assistant-panel--embedded.assistant-panel--collapsed {
+  flex-basis: 44px;
+  width: 44px;
+}
+
+.assistant-panel--embedded .assistant-panel__messages {
+  padding: 10px;
+}
+
+/* The one-line assistant composer already provides the compact height. */
 
 .history-pagination {
   display: flex;
@@ -6652,13 +6960,6 @@ body.is-editor-fullscreen .output-panel {
   line-height: 1.45;
 }
 
-/* "(Windows only)" badge shown inline after the Recorder title — needs
- * horizontal separation so it doesn't visually merge with the heading. */
-.recorder__badge {
-  margin-left: 10px;
-  vertical-align: middle;
-}
-
 /* ---------------------------------------------------------------------------
  * List view controls — sort + display-mode toggles shared by the Library and
  * Scheduler lists (ListControls component). Lives in the toolbar row.
@@ -7444,7 +7745,7 @@ body.is-editor-fullscreen .output-panel {
 }
 
 /* ---------------------------------------------------------------------------
-   env-manager__tabs — User / Root scope switcher in the Environment view
+   env-manager__tabs — User / Root scope switcher in the System view
    --------------------------------------------------------------------------- */
 
 .env-manager__tabs {
@@ -7717,8 +8018,8 @@ body.is-editor-fullscreen .output-panel {
 }
 
 /* ---------------------------------------------------------------------------
-   env-manager__section-tabs — top-level "System variables" / "Connections"
-   switcher in the Environment view. Distinct from the smaller user/root
+   env-manager__section-tabs — top-level "System variables" / "SSH connections"
+   switcher in the System view. Distinct from the smaller user/root
    sub-tabs (.env-manager__tab*) so the two tab levels never collide.
    --------------------------------------------------------------------------- */
 
@@ -11233,6 +11534,38 @@ body.is-editor-fullscreen .output-panel {
 }
 .assistant-panel__header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:14px; border-bottom:1px solid var(--color-border); }
 .assistant-panel__eyebrow, .assistant-panel__hint { color: var(--color-text-muted); font-size:12px; }
+.assistant-panel__header-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: -2px;
+}
+.assistant-panel__clear-chat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.assistant-panel__clear-chat:hover:not(:disabled) {
+  background: var(--color-bg);
+  color: var(--color-danger);
+}
+.assistant-panel__clear-chat:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.assistant-panel__clear-chat:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
 .assistant-panel__title { margin:2px 0 0; font-size:16px; }
 .assistant-panel__messages { min-height:0; flex:1; overflow:auto; padding:12px; }
 .assistant-panel__status { color:var(--color-text-muted); }
@@ -11345,9 +11678,41 @@ body.is-editor-fullscreen .output-panel {
 .assistant-panel__action { margin-top:8px; padding-top:8px; border-top:1px solid var(--color-border); }
 .assistant-panel__action ul { margin:6px 0 0; padding-left:18px; }
 .assistant-panel__error { color:var(--color-danger); }
-.assistant-panel__composer { display:flex; flex-direction:column; gap:8px; padding:12px; border-top:1px solid var(--color-border); }
-.assistant-panel__composer textarea { flex:0 0 auto; min-height:72px; resize:vertical; }
-.assistant-panel__composer-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.assistant-panel__error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.assistant-panel__error-row .assistant-panel__error { margin: 0; }
+.assistant-panel__composer { display:flex; flex-direction:column; padding:12px; border-top:1px solid var(--color-border); }
+.assistant-panel__composer-field { position:relative; }
+.assistant-panel__composer-field textarea { display:block; width:100%; min-height:36px; max-height:160px; padding-right:44px; overflow-y:auto; resize:none; }
+.assistant-panel__composer-field.is-generating textarea { padding-right:74px; }
+.assistant-panel__composer-field .assistant-panel__cancel,
+.assistant-panel__composer-field .assistant-panel__send {
+  position:absolute;
+  bottom:5px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:24px;
+  height:24px;
+  padding:0;
+  border:none;
+  background:transparent;
+  cursor:pointer;
+}
+.assistant-panel__composer-field .assistant-panel__cancel { right:33px; color:var(--color-text-muted); }
+.assistant-panel__composer-field .assistant-panel__send { right:5px; color:var(--color-text-inverse, #fff); }
+.assistant-panel__composer-field .assistant-panel__cancel:hover:not(:disabled) { color:var(--color-text); }
+.assistant-panel__composer-field .assistant-panel__send:hover:not(:disabled) {
+  border: 1px solid var(--color-primary);
+  border-radius: 999px;
+  background: var(--color-primary);
+}
+.assistant-panel__composer-field .assistant-panel__send:focus-visible { color:var(--color-text-inverse, #fff); }
+.assistant-panel__composer-field .assistant-panel__send:disabled { color:var(--color-text-inverse, #fff); opacity:0.5; cursor:not-allowed; }
 .assistant-panel__patch-list { margin:8px 0 0; padding:0; list-style:none; display:grid; gap:8px; }
 .assistant-panel__patch-path { display:block; font-weight:600; }
 .assistant-panel__patch-before, .assistant-panel__patch-after { display:block; overflow-wrap:anywhere; color:var(--color-text-muted); }

@@ -12,6 +12,7 @@ import type { Command, VariableSpec } from "../types/command";
 import type { MiniApp } from "../types/miniapp";
 import type { OutputSchema } from "../types/outputSchema";
 import type { FormState } from "../types/commandForm";
+import type { ScheduleTargetKind } from "../types/schedule";
 import { REDACTION, redactSecrets } from "./redactSecrets";
 
 export interface AssistantVariableContext {
@@ -281,6 +282,45 @@ export function buildMiniAppAssistantContext(
       widgets: miniApp.widgets.map(sanitizeMiniAppWidget),
       tags: miniApp.tags,
       panelSize: miniApp.panelSize,
+    },
+  };
+}
+
+export function buildScheduleAssistantContext(
+  schedule: {
+    name: string;
+    enabled: boolean;
+    targetKind: ScheduleTargetKind;
+    targetId: string;
+    cron: string;
+    variableValues: unknown;
+    skipIfRunning: boolean;
+    captureOutput: boolean;
+    catchUpPolicy: "none" | "once" | "all";
+    timeoutSeconds?: number;
+    maxRetries: number;
+  },
+  draftVersion = 0,
+): AssistantObjectContext<Record<string, unknown>> {
+  return {
+    target: "schedule",
+    schemaVersion: 1,
+    draftVersion,
+    draft: {
+      target: "schedule",
+      name: schedule.name,
+      enabled: schedule.enabled,
+      targetKind: schedule.targetKind,
+      targetId: schedule.targetId,
+      cron: schedule.cron,
+      variableValues: redactDeep(schedule.variableValues),
+      skipIfRunning: schedule.skipIfRunning,
+      captureOutput: schedule.captureOutput,
+      catchUpPolicy: schedule.catchUpPolicy,
+      ...(schedule.timeoutSeconds !== undefined
+        ? { timeoutSeconds: schedule.timeoutSeconds }
+        : {}),
+      maxRetries: schedule.maxRetries,
     },
   };
 }

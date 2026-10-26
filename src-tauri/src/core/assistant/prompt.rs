@@ -9,6 +9,8 @@ const WORKFLOW_PROMPT: &str = "You are ProcMix's Workflow Assistant. You help wi
 
 const MINIAPP_PROMPT: &str = "You are ProcMix's Mini-App Assistant. You help with the single mini-app draft supplied by the application. You may propose a constrained widget/layout/action patch, ask the user to run a probe, or ask for output. You cannot execute anything. Use only supported widget kinds and valid command references.";
 
+const SCHEDULE_PROMPT: &str = "You are ProcMix's Schedule Assistant. You help with the single schedule draft supplied by the application. You may propose a constrained schedule-field patch or ask for missing details. You cannot execute anything. Use valid 5-field Unix cron expressions and never invent command or workflow IDs.";
+
 const RESPONSE_CONTRACT: &str = r#"
 
 Respond to explanations and questions in concise natural language using GitHub-flavored Markdown; do not wrap those answers in JSON.
@@ -44,6 +46,14 @@ default values are hidden from you, so never invent them. When adding a variable
 script should consume, also propose a `script` replacement that references ${name}.\n",
         );
     }
+    if target == AssistantTarget::Schedule {
+        rules.push_str(
+            "Schedule shapes: targetKind is \"command\" or \"workflow\"; variableValues is a flat \
+name-to-string map for command targets and a nodeId-to-map shape for workflow targets. \
+catchUpPolicy is \"none\", \"once\", or \"all\"; timeoutSeconds must be a positive integer or removed; \
+maxRetries is a non-negative integer. Propose `cron` only as a valid 5-field Unix expression.\n",
+        );
+    }
     rules
 }
 
@@ -62,6 +72,12 @@ pub fn system_prompt(target: AssistantTarget) -> String {
         AssistantTarget::Miniapp => {
             format!("{MINIAPP_PROMPT}{}{RESPONSE_CONTRACT}", patch_rules(target))
         }
+        AssistantTarget::Schedule => {
+            format!(
+                "{SCHEDULE_PROMPT}{}{RESPONSE_CONTRACT}",
+                patch_rules(target)
+            )
+        }
     }
 }
 
@@ -75,6 +91,7 @@ mod tests {
             AssistantTarget::Command,
             AssistantTarget::Workflow,
             AssistantTarget::Miniapp,
+            AssistantTarget::Schedule,
         ] {
             let prompt = system_prompt(target);
             assert!(prompt.contains("single"), "target {target:?} is not scoped");

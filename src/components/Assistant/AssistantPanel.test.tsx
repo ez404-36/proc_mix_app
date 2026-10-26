@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AssistantObjectContext } from "../../types/assistant";
+import type {
+  AssistantObjectContext,
+  AssistantRunSnapshot,
+} from "../../types/assistant";
 import { ASSISTANT_PATCH_RETRY_MARKER } from "../../utils/assistantPatchFeedback";
 import { ContextMenuProvider } from "../ContextMenu";
 import { AssistantPanel } from "./AssistantPanel";
@@ -40,7 +43,7 @@ describe("AssistantPanel", () => {
       configurable: true,
       value: { writeText: writeTextMock },
     });
-    useAssistantStore.setState({ session: null });
+    useAssistantStore.setState({ session: null, archivedMessages: {} });
   });
 
   it("starts an object-scoped session and sends a user message", async () => {
@@ -71,6 +74,109 @@ describe("AssistantPanel", () => {
     expect(useAssistantStore.getState().session?.objectId).toBe("command-1");
   });
 
+  it("restores an object chat until it is explicitly cleared", async () => {
+    const first = render(
+      <ContextMenuProvider>
+        <AssistantPanel
+          target="command"
+          objectId="restore-1"
+          draftVersion={1}
+          context={context}
+          title="Restore Assistant"
+          sessionKey="test:restore-1"
+          defaultExpanded
+        />
+      </ContextMenuProvider>,
+    );
+
+    fireEvent.change(screen.getByLabelText("assistant.composerLabel"), {
+      target: { value: "Remember this" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "assistant.send" }));
+    expect(await screen.findByText("A response")).toBeTruthy();
+    first.unmount();
+
+    render(
+      <ContextMenuProvider>
+        <AssistantPanel
+          target="command"
+          objectId="restore-1"
+          draftVersion={2}
+          context={context}
+          title="Restore Assistant"
+          sessionKey="test:restore-1"
+          defaultExpanded
+        />
+      </ContextMenuProvider>,
+    );
+
+    expect(screen.getByText("Remember this")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "assistant.clearChat" }),
+    );
+    fireEvent.click(
+      document.querySelector(
+        ".command-form__actions .btn--danger",
+      ) as HTMLButtonElement,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Remember this")).toBeNull();
+    });
+    expect(screen.queryByText("A response")).toBeNull();
+  });
+
+  it("retries the last failed prompt from the error row", async () => {
+    generateAssistantResponse.mockResolvedValueOnce({
+      messageId: "assistant-1",
+      text: "Recovered",
+      warnings: [],
+    });
+    useAssistantStore.setState({
+      session: {
+        sessionKey: "command:command-1",
+        target: "command",
+        objectId: "command-1",
+        draftVersion: 1,
+        isGenerating: false,
+        streamingText: null,
+        error: "timeout",
+        runSnapshot: null,
+        attachedRunSnapshotId: undefined,
+        messages: [
+          {
+            id: "user-1",
+            role: "user",
+            text: "Add status",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    render(
+      <ContextMenuProvider>
+        <AssistantPanel
+          target="command"
+          objectId="command-1"
+          draftVersion={1}
+          context={context}
+          title="Command Assistant"
+          defaultExpanded
+          onClose={() => {}}
+        />
+      </ContextMenuProvider>,
+    );
+
+    generateAssistantResponse.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+
+    expect(await screen.findByText("Recovered")).toBeTruthy();
+    expect(generateAssistantResponse).toHaveBeenCalledTimes(1);
+    expect(useAssistantStore.getState().session?.messages).toHaveLength(2);
+    expect(useAssistantStore.getState().session?.error).toBeNull();
+  });
+
   it("starts collapsed, expands on click, and collapses on close", () => {
     render(
       <ContextMenuProvider>
@@ -80,6 +186,7 @@ describe("AssistantPanel", () => {
           draftVersion={1}
           context={context}
           title="Command Assistant"
+          sessionKey="test:collapsed"
         />
       </ContextMenuProvider>,
     );
@@ -100,6 +207,7 @@ describe("AssistantPanel", () => {
   it("copies selected and full chat text from the context menu", () => {
     useAssistantStore.setState({
       session: {
+        sessionKey: "command:command-1",
         target: "command",
         objectId: "command-1",
         draftVersion: 1,
@@ -167,6 +275,7 @@ describe("AssistantPanel", () => {
   it("renders patch paths without applying anything", async () => {
     useAssistantStore.setState({
       session: {
+        sessionKey: "command:command-1",
         target: "command",
         objectId: "command-1",
         draftVersion: 1,
@@ -215,6 +324,7 @@ describe("AssistantPanel", () => {
   it("collapses patch retry messages behind a chevroned error row", () => {
     useAssistantStore.setState({
       session: {
+        sessionKey: "command:command-1",
         target: "command",
         objectId: "command-1",
         draftVersion: 1,
@@ -268,6 +378,7 @@ describe("AssistantPanel", () => {
   it("carries the specific apply error into the retry request", async () => {
     useAssistantStore.setState({
       session: {
+        sessionKey: "command:command-1",
         target: "command",
         objectId: "command-1",
         draftVersion: 1,
@@ -330,6 +441,7 @@ describe("AssistantPanel", () => {
     });
     useAssistantStore.setState({
       session: {
+        sessionKey: "command:command-1",
         target: "command",
         objectId: "command-1",
         draftVersion: 1,
@@ -389,5 +501,65 @@ describe("AssistantPanel", () => {
     expect(request?.userMessage).toContain("APPLY_ERROR: unsupportedPath");
     expect(request?.userMessage).toContain("outputSchema.pipeline");
     expect(retryContext).toBe(context);
+  });
+
+  it("sends a prepared run prompt and attaches its snapshot immediately", async () => {
+    const runSnapshot: AssistantRunSnapshot = {
+      id: "run-1",
+      target: "command",
+      draftVersion: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      exitCode: 0,
+      timedOut: false,
+      stdoutTail: "ready",
+      stderrTail: "",
+    };
+    useAssistantStore.setState({
+      session: {
+        sessionKey: "command:command-1",
+        target: "command",
+        objectId: "command-1",
+        draftVersion: 1,
+        messages: [],
+        runSnapshot,
+        attachedRunSnapshotId: undefined,
+        isGenerating: false,
+        streamingText: null,
+        error: null,
+      },
+    });
+
+    render(
+      <ContextMenuProvider>
+        <AssistantPanel
+          target="command"
+          objectId="command-1"
+          draftVersion={1}
+          context={context}
+          title="Command Assistant"
+          runSnapshot={runSnapshot}
+          defaultExpanded
+        />
+      </ContextMenuProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "assistant.run.send" }));
+
+    expect(await screen.findByText("A response")).toBeTruthy();
+    const runCall =
+      generateAssistantResponse.mock.calls[
+        generateAssistantResponse.mock.calls.length - 1
+      ];
+    const [request, , sentSnapshot] = runCall;
+    expect(request?.attachedRunSnapshotId).toBe("run-1");
+    expect(request?.userMessage).toContain("assistant.run.prompt");
+    expect(request?.userMessage).toContain("ready");
+    expect(sentSnapshot).toBe(runSnapshot);
+    expect(useAssistantStore.getState().session?.messages[0]).toMatchObject({
+      role: "user",
+    });
+    expect(useAssistantStore.getState().session?.messages[0]?.text).toContain(
+      "ready",
+    );
   });
 });

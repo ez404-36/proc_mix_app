@@ -28,11 +28,9 @@
   "nav": {
     "home": "Home",
     "library": "Library",
-    "scheduler": "Scheduler",
     "history": "History",
-    "recorder": "Recorder",
     "miniapps": "Mini-Apps",
-    "env": "Environment",
+    "env": "System",
     "plugins": "Plugins",
     "settings": "Settings",
     "cycleThemeTitle": "Cycle theme",
@@ -70,7 +68,7 @@
   },
   "library": {
     "title": "Library",
-    "subtitle": "Manage your commands and workflows.",
+    "subtitle": "Manage commands, workflows, schedules, and mini-apps.",
     "newCommand": "New command",
     "searchPlaceholder": "Search by name, description, or tag…",
     "noResults": "No commands match your search.",
@@ -412,6 +410,7 @@
     "tabs": {
       "commands": "Commands",
       "workflows": "Workflows",
+    "schedules": "Scheduler",
       "miniapps": "Mini-Apps"
     },
     "new": "New workflow",
@@ -756,8 +755,6 @@
     "windowOpenFailed": "Could not open the mini-app window: {{message}}"
   },
   "scheduler": {
-    "title": "Scheduler",
-    "subtitle": "Run commands and workflows automatically on a schedule.",
     "searchPlaceholder": "Search schedules by name…",
     "new": "New schedule",
     "noSchedules": "No schedules yet. Create one to run a command or workflow automatically.",
@@ -1384,7 +1381,7 @@
       "checking": "Checking…",
       "reachable": "Host is reachable",
       "unreachable": "Host is unreachable: {{message}}",
-      "noHosts": "No SSH connections found. Add one in Environment → Connections.",
+      "noHosts": "No SSH connections found. Add one in System → SSH connections.",
       "remoteLimitations": "Remote runs ignore the working directory and environment variables, can't run as administrator, and use a POSIX shell (sh) on the host.",
       "promptSshPassword": "Ask for a password at run time",
       "promptSshPasswordHint": "You'll be asked for the SSH password before each run. It is used once and never saved — prefer SSH keys for repeated runs. (Unix only.)",
@@ -1499,7 +1496,7 @@
   "remoteHostPrompt": {
     "title": "Choose a remote host",
     "label": "SSH host",
-    "noHosts": "No SSH connections found. Add one in Environment → Connections.",
+    "noHosts": "No SSH connections found. Add one in System → SSH connections.",
     "submit": "Run",
     "cancel": "Cancel"
   },
@@ -1550,6 +1547,27 @@
     "workflowStepExit": "  exit {{code}}",
     "workflowRunFallbackTitle": "Workflow run",
     "timedOut": "Timed out",
+    "runAssistant": {
+      "title": "Run assistant",
+      "open": "Open run assistant",
+      "close": "Collapse run assistant",
+      "clearChat": "Clear chat history",
+      "clearChatTitle": "Clear chat history?",
+      "clearChatMessage": "All messages in this run’s assistant chat will be removed. This cannot be undone.",
+      "consent": {
+        "loading": "Checking run access…",
+        "title": "Allow reading this run?",
+        "description": "The assistant can use the bounded, redacted output and execution result. Choose what to allow.",
+        "allowCommand": "Allow this command",
+        "allowWorkflow": "Allow this workflow",
+        "allowAll": "Allow all runs",
+        "deny": "Deny",
+        "deniedHint": "Without permission, the assistant can see only metadata for this run; its output and result are unavailable."
+      },
+      "placeholder": "Ask about this run…",
+      "resize": "Resize run assistant",
+      "composerLabel": "Run assistant request"
+    },
     "tabs": {
       "output": "Output",
       "result": "Result"
@@ -1621,53 +1639,9 @@
       "loadFailed": "Failed to load layouts"
     }
   },
-  "processCapture": {
-    "title": "Recorder",
-    "experimental": "(experimental)",
-    "subtitle": "Capture the commands that other apps launch under the hood, and turn them into ProcMix commands.",
-    "explainer": "The Recorder watches the programs (processes) your computer starts — not your mouse clicks or what you type. While it's running, do something in another app that kicks off work (open a file, build, sync, export…); the command lines of any processes that app launches show up below, ready to save.",
-    "start": "Start recording",
-    "stop": "Stop recording",
-    "recording": "Recording…",
-    "clear": "Clear",
-    "selectAll": "Select all",
-    "selectNone": "Select none",
-    "selectedCount": "{{count}} selected",
-    "saveAsCommand": "Save as command",
-    "saveAsCommand_plural": "Save as commands",
-    "saveAsWorkflow": "Save as workflow",
-    "savedCommands_one": "Saved {{count}} command",
-    "savedCommands_other": "Saved {{count}} commands",
-    "savedWorkflow": "Saved workflow \"{{name}}\"",
-    "defaultWorkflowName": "Recorded workflow",
-    "empty": "No processes captured yet. Press Start, then trigger some work in another app — the command lines of the processes it launches will appear here.",
-    "emptyRecording": "Recording process launches… Trigger some work in another app (build, sync, export…) to capture the command lines it runs.",
-    "unsupported": "Process recording is not yet implemented on this operating system. It is currently available on Windows and Linux — macOS support is planned.",
-    "unsupportedBadge": "Windows only",
-    "startFailed": "Couldn't start recording. On Windows it uses an ETW trace session that needs administrator rights — run ProcMix as administrator and try again.",
-    "requiresPrivilege": "Couldn't start recording. On Linux the kernel process connector needs the CAP_NET_ADMIN capability. Grant it once with: sudo setcap cap_net_admin+ep <path-to-procmix>, then restart ProcMix.",
-    "scope": {
-      "label": "What to record",
-      "all": "All processes",
-      "search": "Search processes…",
-      "loading": "Loading processes…",
-      "active": "Recording {{name}} and its child processes",
-      "activeCount_one": "{{count}} app",
-      "activeCount_other": "{{count}} apps"
-    },
-    "column": {
-      "image": "Program",
-      "commandLine": "Command line"
-    },
-    "consent": {
-      "title": "Enable Process Capture?",
-      "message": "ProcMix will observe processes started on this computer while recording is on, and show their command lines so you can turn them into commands. Command lines may contain passwords or tokens — these are masked before display and are never saved unless you choose to save a command. The raw capture log is kept in memory only and is never written to disk.",
-      "accept": "Enable recording",
-      "decline": "Not now"
-    }
-  },
   "history": {
     "title": "History",
+    "assistantTitle": "Run assistant — {{name}}",
     "subtitle": "Recent actions performed on your commands.",
     "loading": "Loading history…",
     "noEvents": "No history yet.",
@@ -1794,8 +1768,8 @@
     }
   },
   "envManager": {
-    "title": "Environment",
-    "subtitle": "Read-only view of system environment variables and saved SSH connections. The System variables tab shows the process environment with best-effort source detection; the Connections tab lists SSH hosts from ~/.ssh/config.",
+    "title": "System",
+    "subtitle": "Read-only view of system environment variables and saved SSH connections. The System variables tab shows the process environment with best-effort source detection; the SSH connections tab lists SSH hosts from ~/.ssh/config.",
     "showValue": "Show value",
     "hideValue": "Hide value",
     "searchPlaceholder": "Filter by name or value…",
@@ -1815,7 +1789,7 @@
     "tabRoot": "Root",
     "sectionTabs": {
       "systemVars": "System variables",
-      "connections": "Connections"
+      "connections": "SSH connections"
     },
     "ssh": {
       "refresh": "Refresh",
@@ -2105,6 +2079,9 @@
     "thinking": "Thinking…",
     "streaming": "Generating…",
     "copyAll": "Copy chat",
+    "clearChat": "Clear chat history",
+    "clearChatTitle": "Clear chat history?",
+    "clearChatMessage": "All messages in this object’s assistant chat will be removed. This cannot be undone.",
     "placeholder": "Describe the change…",
     "composerLabel": "Assistant request",
     "sendHint": "Enter sends, Shift+Enter adds a line",
@@ -2127,13 +2104,22 @@
     "run": {
       "title": "Latest run result",
       "exit": "exit code: {{code}}",
+      "status": "status: {{status}}",
+      "duration": "duration: {{duration}} ms",
       "stdout": "stdout: {{size}} chars",
       "stderr": "stderr: {{size}} chars",
       "schema": "output schema: {{yes}}",
       "preview": "Preview",
       "send": "Send to assistant",
       "dismiss": "Do not send",
-      "now": "Run draft manually"
+      "now": "Run draft manually",
+      "promptStatus": "Status",
+      "promptDuration": "Duration",
+      "prompt": "Analyze the complete attached run result and the command/workflow definition. Suggest draft changes if they are needed.",
+      "promptExit": "Exit code: {{code}}",
+      "stdoutLabel": "stdout",
+      "stderrLabel": "stderr",
+      "promptTruncated": "The beginning of this stream is omitted."
     },
     "errors": {
       "disabled": "Assistant is disabled in Settings.",
@@ -2146,6 +2132,7 @@
       "rateLimited": "The provider limit is exhausted. Try again later.",
       "invalidAssistantResponse": "The assistant returned an invalid response.",
       "inputTooLarge": "The draft is too large to send.",
+      "runSnapshotsDisabled": "The run result was not sent because “Allow run snapshots” is disabled in AI Assistant settings. Enable it and try again.",
       "invalidResponse": "The assistant response could not be used."
     },
     "backendCode": "Assistant error: {{code}}.",

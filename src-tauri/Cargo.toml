@@ -289,15 +289,6 @@ rodio = { version = "0.19", default-features = false, features = ["symphonia-wav
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service", "vendored"] }
 
-# Raw netlink socket for the proc connector (cn_proc) — the Linux backend
-# for Process Capture. We parse the fixed-layout connector messages by hand
-# against libc structs (`nlmsghdr` -> `cn_msg` -> `proc_event`), so we only
-# need a thin socket layer plus the C constants, not a full netlink
-# abstraction. `libc` is already present transitively; declaring it here
-# makes the dependency explicit and Linux-scoped. See
-# `src-tauri/src/platform/cn_proc.rs` and `docs/process-capture.md`.
-libc = "0.2"
-
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
 
@@ -310,24 +301,6 @@ keyring = { version = "3", features = ["windows-native"] }
 # Already present transitively (via reqwest); declared explicitly and scoped to
 # Windows so the dependency is intentional and auditable.
 winreg = "0.55"
-
-# Event Tracing for Windows (ETW) subscription for Process Capture — the
-# background "command recorder" that observes process births and surfaces
-# their command lines. Windows-only: the crate (and the entire feature) is
-# gated to Windows; other platforms use their own backend (netlink cn_proc
-# on Linux) or return the `CAPTURE_UNSUPPORTED` sentinel. See
-# `docs/process-capture.md`.
-ferrisetw = "1.2"
-
-# Win32 bindings for the Process Capture target picker: `list_capture_targets`
-# enumerates running processes via the Toolhelp snapshot
-# (`CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS)`), the Windows analogue of the
-# Linux `/proc` walk. Pinned to 0.57 so it shares the version ferrisetw already
-# locks (no new `windows` major in the tree). See the scoping plan §4.1.
-windows = { version = "0.57", features = [
-    "Win32_Foundation",
-    "Win32_System_Diagnostics_ToolHelp",
-] }
 
 # Enable Tauri's `test` feature for our test target only — exposes
 # `tauri::test::mock_app()` and the MockRuntime needed for integration

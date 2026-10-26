@@ -14,15 +14,22 @@ import type { ExtractedResult, Execution } from "../types/execution";
 import type { OutputSchema } from "../types/outputSchema";
 import { REDACTION, redactSecrets } from "./redactSecrets";
 
-export const ASSISTANT_RUN_SNAPSHOT_TAIL_CHARS = 16_384;
+/**
+ * One stream may carry the full 64 KiB history/executor capture cap. The
+ * backend validates each stream with the same limit, while the combined
+ * history record remains capped at 64 KiB.
+ */
+export const ASSISTANT_RUN_SNAPSHOT_TAIL_CHARS = 64 * 1024;
 
 export interface AssistantRunSnapshotInput {
   id: string;
   target: AssistantTarget;
   draftVersion: number;
   result: RunResult;
+  status?: string;
   outputSchema?: OutputSchema;
   extracted?: ExtractedResult;
+  durationMs?: number;
 }
 
 function isTerminalStatus(status: RunResult["status"]): boolean {
@@ -101,6 +108,8 @@ export function buildAssistantRunSnapshot(
     createdAt: new Date().toISOString(),
     exitCode: input.result.exitCode,
     timedOut: input.result.timedOut,
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
     stdoutTail: streamTail(input.result, "stdout"),
     stderrTail: streamTail(input.result, "stderr"),
     ...(input.outputSchema !== undefined

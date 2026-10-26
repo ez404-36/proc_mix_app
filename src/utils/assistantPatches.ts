@@ -12,6 +12,7 @@ import type {
   WorkflowEdgeBranch,
   WorkflowNodeKind,
 } from "../types/workflow";
+import type { ScheduleTargetKind } from "../types/schedule";
 import type { WorkflowFlowEdge } from "./workflowGraph";
 import { makeRowId } from "./commandFormState";
 import type { FormState } from "../types/commandForm";
@@ -385,6 +386,112 @@ export function applyAssistantPatchToMiniApp(
       next = { ...next, panelSize: value };
     } else {
       return { ok: false, error: "unsupportedPath" };
+    }
+  }
+  return { ok: true, value: next };
+}
+
+export interface ScheduleAssistantDraft {
+  name: string;
+  enabled: boolean;
+  targetKind: ScheduleTargetKind;
+  targetId: string;
+  cron: string;
+  variableValues: Record<string, unknown>;
+  skipIfRunning: boolean;
+  captureOutput: boolean;
+  catchUpPolicy: "none" | "once" | "all";
+  timeoutSeconds?: number;
+  maxRetries: number;
+}
+
+function isScheduleTargetKind(value: unknown): value is ScheduleTargetKind {
+  return value === "command" || value === "workflow";
+}
+
+function isScheduleVariableValues(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(
+    (item) =>
+      typeof item === "string" ||
+      (isRecord(item) &&
+        Object.values(item).every((nested) => typeof nested === "string")),
+  );
+}
+
+export function applyAssistantPatchToSchedule(
+  patch: AssistantPatch,
+  draft: ScheduleAssistantDraft,
+): AssistantPatchApplication<ScheduleAssistantDraft> {
+  let next: ScheduleAssistantDraft = structuredClone(draft);
+  for (const operation of patch.operations) {
+    if (operation.path.includes(".")) {
+      return { ok: false, error: "unsupportedPath" };
+    }
+    const value = operation.value;
+    switch (operation.path) {
+      case "name":
+      case "targetId":
+      case "cron":
+        if (typeof value !== "string" || value.trim() === "") {
+          return { ok: false, error: "invalidValue" };
+        }
+        next = { ...next, [operation.path]: value };
+        break;
+      case "enabled":
+      case "skipIfRunning":
+      case "captureOutput":
+        if (typeof value !== "boolean") {
+          return { ok: false, error: "invalidValue" };
+        }
+        next = { ...next, [operation.path]: value };
+        break;
+      case "targetKind":
+        if (!isScheduleTargetKind(value)) {
+          return { ok: false, error: "invalidValue" };
+        }
+        next = { ...next, targetKind: value };
+        break;
+      case "catchUpPolicy":
+        if (value !== "none" && value !== "once" && value !== "all") {
+          return { ok: false, error: "invalidValue" };
+        }
+        next = { ...next, catchUpPolicy: value };
+        break;
+      case "variableValues":
+        if (!isScheduleVariableValues(value)) {
+          return { ok: false, error: "invalidValue" };
+        }
+        next = {
+          ...next,
+          variableValues: structuredClone(value) as Record<string, unknown>,
+        };
+        break;
+      case "timeoutSeconds":
+        if (value === null) {
+          next = { ...next, timeoutSeconds: undefined };
+        } else if (
+          typeof value === "number" &&
+          Number.isInteger(value) &&
+          value > 0
+        ) {
+          next = { ...next, timeoutSeconds: value };
+        } else {
+          return { ok: false, error: "invalidValue" };
+        }
+        break;
+      case "maxRetries":
+        if (
+          typeof value !== "number" ||
+          !Number.isInteger(value) ||
+          value < 0
+        ) {
+          return { ok: false, error: "invalidValue" };
+        }
+        next = { ...next, maxRetries: value };
+        break;
+      default:
+        return { ok: false, error: "unsupportedPath" };
     }
   }
   return { ok: true, value: next };

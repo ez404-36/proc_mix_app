@@ -12,12 +12,16 @@
 //                       because the command is back.
 // All other kinds have no action buttons.
 
-import { type ReactElement } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useCommandStore } from "../../stores/commandStore";
 import { useHistoryStore } from "../../stores/historyStore";
 import { useMiniAppStore } from "../../stores/miniappStore";
+import { useWorkflowStore } from "../../stores/workflowStore";
 import type { HistoryEvent } from "../../types";
+import type { ExtractedResult, HistoryLogLine } from "../../types";
+import type { Command } from "../../types/command";
+import type { Workflow } from "../../types/workflow";
 import {
   historyEventSubjectId,
   historyEventSubjectName,
@@ -30,6 +34,11 @@ import {
   TrashIcon,
 } from "../icons";
 import { TargetBadge } from "../TargetBadge";
+import { RunAssistantPanel } from "../OutputPanel/RunAssistantPanel";
+import {
+  buildHistoryRunAssistant,
+  historyRunSubjectId,
+} from "../../utils/historyRunAssistant";
 import { ScheduledRunOutput } from "./ScheduledRunOutput";
 import { SshHostChangeDetail } from "./SshHostChangeDetail";
 
@@ -121,6 +130,15 @@ interface HistoryRowProps {
   onToggleSelect: (eventId: string) => void;
 }
 
+interface RunDisclosureProps {
+  event: HistoryEvent;
+  output?: HistoryLogLine[];
+  result?: ExtractedResult;
+  command?: Command;
+  workflow?: Workflow;
+  summary: ReactElement;
+}
+
 /**
  * Format an ISO timestamp using the browser's locale-aware
  * `toLocaleString`. Returns the original string on a parse failure
@@ -131,6 +149,53 @@ function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString();
+}
+
+function RunDisclosure({
+  event,
+  output,
+  result,
+  command,
+  workflow,
+  summary,
+}: RunDisclosureProps): ReactElement {
+  const { t } = useTranslation();
+  const [isOpen, setIsOpen] = useState(false);
+  const assistant = useMemo(
+    () =>
+      isOpen ? buildHistoryRunAssistant(event, { command, workflow }) : null,
+    [command, event, isOpen, workflow],
+  );
+
+  return (
+    <details
+      className="history-row__disclosure"
+      open={isOpen}
+      onToggle={(detailsEvent) => setIsOpen(detailsEvent.currentTarget.open)}
+    >
+      <summary
+        className="history-row__summary"
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        {summary}
+      </summary>
+      <div className="history-run__layout">
+        <div className="history-run__output">
+          <ScheduledRunOutput output={output} result={result} />
+        </div>
+        {isOpen && assistant !== null ? (
+          <RunAssistantPanel
+            key={event.id}
+            assistant={assistant}
+            title={t("history.assistantTitle", {
+              name: historyEventSubjectName(event),
+            })}
+            sessionKey={`history:${event.id}`}
+          />
+        ) : null}
+      </div>
+    </details>
+  );
 }
 
 /** Kinds that carry an SSH snapshot we can inspect for `isPattern`. */
@@ -206,6 +271,17 @@ export function HistoryRow({
   // change. The Zustand store re-runs the selector on every update;
   // identity-stable primitives short-circuit React reconciliation.
   const subjectId = historyEventSubjectId(event);
+  const assistantSubjectId = historyRunSubjectId(event);
+  const assistantCommand = useCommandStore((s) =>
+    assistantSubjectId === null
+      ? undefined
+      : s.commands.find((c) => c.id === assistantSubjectId),
+  );
+  const assistantWorkflow = useWorkflowStore((s) =>
+    assistantSubjectId === null
+      ? undefined
+      : s.workflows.find((w) => w.id === assistantSubjectId),
+  );
   const commandExists = useCommandStore((s) =>
     s.commands.some((c) => c.id === subjectId),
   );
@@ -389,20 +465,23 @@ export function HistoryRow({
     return (
       <li className="history-row history-row--scheduled history-row--selectable">
         {selectBox}
-        <details className="history-row__disclosure">
-          <summary className="history-row__summary">
-            <div className="history-row__main">
-              {icon}
-              {title}
-              {runStatusBadge}
-            </div>
-            {meta}
-          </summary>
-          <ScheduledRunOutput
-            output={runDetail.output}
-            result={runDetail.result}
-          />
-        </details>
+        <RunDisclosure
+          event={event}
+          output={runDetail.output}
+          result={runDetail.result}
+          command={assistantCommand}
+          workflow={assistantWorkflow}
+          summary={
+            <>
+              <div className="history-row__main">
+                {icon}
+                {title}
+                {runStatusBadge}
+              </div>
+              {meta}
+            </>
+          }
+        />
       </li>
     );
   }

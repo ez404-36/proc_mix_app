@@ -26,8 +26,10 @@ use crate::storage::assistant_providers::{AssistantProvider, AssistantProviderIn
 use crate::storage::DbPool;
 
 const MAX_USER_MESSAGE_CHARS: usize = 8_000;
-const MAX_PROMPT_CHARS: usize = 24_000;
-const MAX_RUN_SNAPSHOT_CHARS: usize = 16_384;
+/// Large enough for a complete 64-KiB persisted run capture after JSON
+/// escaping, plus an allow-listed command/workflow draft and user request.
+const MAX_PROMPT_CHARS: usize = 192_000;
+const MAX_RUN_SNAPSHOT_CHARS: usize = 64 * 1024;
 const MODEL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_PROVIDER_NAME_CHARS: usize = 200;
 const ERR_CANCELLED: &str = "ASSISTANT_CANCELLED";
@@ -461,7 +463,7 @@ pub async fn assistant_generate(
 
     let run_snapshot_json = match run_snapshot {
         Some(snapshot) => {
-            if !settings.allow_run_snapshots {
+            if !settings.allow_run_snapshots && !request.run_snapshot_consent {
                 return Err(ERR_RUN_SNAPSHOTS_DISABLED.to_string());
             }
             if snapshot.id != request.attached_run_snapshot_id.unwrap_or_default()

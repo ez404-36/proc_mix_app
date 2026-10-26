@@ -1,4 +1,4 @@
-// Smoke tests for the Connections tab. IPC is mocked via the service layer.
+// Smoke tests for the SSH connections tab. IPC is mocked via the service layer.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';

@@ -8,6 +8,7 @@ pub enum AssistantTarget {
     Command,
     Workflow,
     Miniapp,
+    Schedule,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -78,6 +79,9 @@ pub struct AssistantGenerateRequest {
     pub user_message: String,
     #[serde(default)]
     pub attached_run_snapshot_id: Option<String>,
+    /// Explicit per-request consent when the global default is off.
+    #[serde(default)]
+    pub run_snapshot_consent: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -101,8 +105,12 @@ pub struct AssistantRunSnapshot {
     pub target: AssistantTarget,
     pub draft_version: u32,
     pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     pub exit_code: Option<i64>,
     pub timed_out: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
     pub stdout_tail: String,
     pub stderr_tail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

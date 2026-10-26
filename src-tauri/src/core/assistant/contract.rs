@@ -52,6 +52,19 @@ pub(crate) fn allowed_patch_roots(target: AssistantTarget) -> &'static [&'static
         ],
         AssistantTarget::Workflow => &["name", "description", "nodes", "edges", "tags"],
         AssistantTarget::Miniapp => &["name", "description", "widgets", "tags", "panelSize"],
+        AssistantTarget::Schedule => &[
+            "name",
+            "enabled",
+            "targetKind",
+            "targetId",
+            "cron",
+            "variableValues",
+            "skipIfRunning",
+            "captureOutput",
+            "catchUpPolicy",
+            "timeoutSeconds",
+            "maxRetries",
+        ],
     }
 }
 

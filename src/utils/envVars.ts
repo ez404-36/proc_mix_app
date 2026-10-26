@@ -1,4 +1,4 @@
-// Shared helpers for environment-variable UIs (the Environment view and the
+// Shared helpers for environment-variable UIs (the System view and the
 // per-command Env tab). Centralised here so the EnvManager and CommandForm
 // agree on exactly what "sensitive", "overrides a system variable", and
 // "valid variable name" mean (DRY).
@@ -28,7 +28,7 @@ export function isSensitiveKey(key: string): boolean {
 /**
  * True when `key` (after trimming) shadows a variable already present in the
  * inherited system environment. Used for the conflict / override badge in both
- * the Environment view and the per-command Env tab.
+ * the System view and the per-command Env tab.
  */
 export function isOverridingSystem(
   key: string,
@@ -72,7 +72,7 @@ export interface OverrideInfo {
 /**
  * Compute what a file entry with the given `key` shadows, applying the same
  * precedence as the executor (later file wins; per-command env not considered
- * here because this util is for the Environment view, not for commands).
+ * here because this util is for the System view, not for commands).
  *
  * `currentFilePath` identifies the file the entry belongs to: only files
  * registered BEFORE it count as shadowed sources. Returns `null` when nothing

@@ -31,7 +31,7 @@ describe("assistantStore", () => {
   beforeEach(() => {
     generateAssistantResponse.mockReset();
     cancelAssistantGeneration.mockReset();
-    useAssistantStore.setState({ session: null });
+    useAssistantStore.setState({ session: null, archivedMessages: {} });
   });
 
   it("keeps messages when only the draft version changes", () => {
@@ -58,8 +58,47 @@ describe("assistantStore", () => {
     expect(useAssistantStore.getState().session?.draftVersion).toBe(2);
   });
 
-  it("resets the session when the object changes", () => {
+  it("archives messages when switching objects and restores them on return", () => {
+    const store = useAssistantStore.getState();
+    store.startSession("command", "command-1", 1);
+    useAssistantStore.setState((state) => ({
+      session: state.session
+        ? {
+            ...state.session,
+            messages: [
+              {
+                id: "message-1",
+                role: "user",
+                text: "Hello",
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          }
+        : null,
+    }));
+
+    useAssistantStore.getState().startSession("workflow", "workflow-1", 1);
+    expect(useAssistantStore.getState().session?.messages).toEqual([]);
+
     useAssistantStore.getState().startSession("command", "command-1", 1);
+    expect(useAssistantStore.getState().session?.messages).toHaveLength(1);
+  });
+
+  it("clears only the active object chat", async () => {
+    const store = useAssistantStore.getState();
+    store.startSession("command", "command-1", 1);
+    generateAssistantResponse.mockResolvedValueOnce({
+      messageId: "assistant-1",
+      text: "Answer",
+      warnings: [],
+    });
+    await useAssistantStore.getState().sendMessage(context, "Help");
+    useAssistantStore.getState().startSession("workflow", "workflow-1", 1);
+
+    useAssistantStore.getState().startSession("command", "command-1", 1);
+    useAssistantStore.getState().clearSession();
+
+    expect(useAssistantStore.getState().session?.messages).toEqual([]);
     useAssistantStore.getState().startSession("workflow", "workflow-1", 1);
     expect(useAssistantStore.getState().session?.messages).toEqual([]);
   });
@@ -83,6 +122,30 @@ describe("assistantStore", () => {
       kind: "providerHttp",
       status: 400,
     });
+  });
+
+  it("retries the failed prompt without duplicating its message", async () => {
+    useAssistantStore.getState().startSession("command", "command-1", 1);
+    generateAssistantResponse.mockRejectedValueOnce("ASSISTANT_TIMEOUT");
+    generateAssistantResponse.mockResolvedValueOnce({
+      messageId: "assistant-1",
+      text: "Recovered",
+      warnings: [],
+    });
+
+    await useAssistantStore.getState().sendMessage(context, "Help");
+    expect(useAssistantStore.getState().session?.error).toBe("timeout");
+
+    await useAssistantStore.getState().retryLastMessage(context);
+
+    expect(generateAssistantResponse).toHaveBeenCalledTimes(2);
+    const messages = useAssistantStore.getState().session?.messages ?? [];
+    expect(messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(messages[0]?.text).toBe("Help");
+    expect(useAssistantStore.getState().session?.error).toBeNull();
   });
 
   it("preserves the contract issue for a structurally valid but invalid response", async () => {
@@ -150,6 +213,7 @@ describe("assistantStore", () => {
   it("cancels the active backend request and clears generating state", async () => {
     useAssistantStore.setState({
       session: {
+        sessionKey: "command:command-1",
         target: "command",
         objectId: "command-1",
         draftVersion: 1,

@@ -143,17 +143,6 @@ interface UIState {
   theme: Theme;
   toggleShortcut: string;
   language: Language;
-  /**
-   * Whether the user has opted into Process Capture (the background
-   * "command recorder"). Defaults to `false` and is only flipped to
-   * `true` after the user accepts the one-time consent dialog — see
-   * `docs/process-capture.md`. Persisted so the consent survives
-   * restarts and the dialog is shown only once.
-   *
-   * No capture command (`start_process_capture`) may run while this is
-   * `false`: it gates the entire feature.
-   */
-  processCaptureEnabled: boolean;
   /** Which edge of the window the output console is docked to (persisted). */
   consolePosition: ConsoleDockPosition;
   /**
@@ -208,7 +197,6 @@ interface UIState {
   setTheme: (t: Theme) => void;
   setToggleShortcut: (accel: string) => void;
   setLanguage: (lang: Language) => void;
-  setProcessCaptureEnabled: (enabled: boolean) => void;
   setConsolePosition: (position: ConsoleDockPosition) => void;
   setConsoleFullscreen: (fullscreen: boolean) => void;
   /** Merge a partial patch into the Commands list view preference. */
@@ -260,7 +248,6 @@ interface PersistedUIState {
   theme: Theme;
   toggleShortcut: string;
   language: Language;
-  processCaptureEnabled: boolean;
   sidebarCollapsed: boolean;
   consolePosition: ConsoleDockPosition;
   consoleFullscreen: boolean;
@@ -289,7 +276,6 @@ export const useUIStore = create<UIState>()(
       theme: "system",
       toggleShortcut: DEFAULT_TOGGLE_SHORTCUT,
       language: detectInitialLanguage(),
-      processCaptureEnabled: false,
       consolePosition: "bottom",
       consoleFullscreen: false,
       commandsView: DEFAULT_COMMANDS_VIEW,
@@ -349,8 +335,6 @@ export const useUIStore = create<UIState>()(
       setTheme: (t) => set({ theme: t }),
       setToggleShortcut: (accel) => set({ toggleShortcut: accel }),
       setLanguage: (lang) => set({ language: lang }),
-      setProcessCaptureEnabled: (enabled) =>
-        set({ processCaptureEnabled: enabled }),
       setConsolePosition: (position) => set({ consolePosition: position }),
       setConsoleFullscreen: (fullscreen) => set({ consoleFullscreen: fullscreen }),
       updateCommandsView: (patch) =>
@@ -368,7 +352,6 @@ export const useUIStore = create<UIState>()(
         theme: state.theme,
         toggleShortcut: state.toggleShortcut,
         language: state.language,
-        processCaptureEnabled: state.processCaptureEnabled,
         sidebarCollapsed: state.sidebarCollapsed,
         consolePosition: state.consolePosition,
         consoleFullscreen: state.consoleFullscreen,

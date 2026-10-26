@@ -20,7 +20,6 @@ use crate::core::http_server::{self, HttpServerState};
 use crate::core::scheduler::{self, SchedulerState};
 use crate::core::terminal::TerminalState;
 use crate::core::workflow::WorkflowExecutorState;
-use crate::platform::process_watch::WatcherState;
 
 /// Install the process-wide `tracing` subscriber exactly once, on startup.
 ///
@@ -116,7 +115,6 @@ pub fn run() {
         // the console). Deliberately separate from `ExecutorState` — see
         // `core::terminal` module docs and `docs/interactive-terminal.md`.
         .manage(Arc::new(TerminalState::new()))
-        .manage(Arc::new(WatcherState::new()))
         // Cron Scheduler state (v0.2.0). The loop itself is spawned in the
         // setup hook once the DB pool exists; this holds the reload signal
         // the schedule commands pulse on every mutation.
@@ -397,10 +395,6 @@ pub fn run() {
             commands::clear_history,
             commands::export_data,
             commands::import_data,
-            commands::start_process_capture,
-            commands::stop_process_capture,
-            commands::process_capture_status,
-            commands::list_capture_targets,
             commands::get_process_env,
             commands::list_env_files,
             commands::add_env_file,

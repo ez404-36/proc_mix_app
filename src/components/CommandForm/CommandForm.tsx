@@ -795,6 +795,8 @@ export function CommandForm(props: CommandFormProps): ReactElement | null {
       target: "command",
       draftVersion: assistantContext.draftVersion,
       result: activeRunResult,
+      status: activeRunResult.status,
+      durationMs: activeRunResult.durationMs ?? undefined,
       outputSchema: form.outputSchema,
       extracted:
         runTarget === "global" ? globalExecution?.result : extractedResult,

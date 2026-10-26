@@ -20,6 +20,7 @@ import { validateAssistantResponse } from "../utils/assistantContracts";
 import { ASSISTANT_PATCH_RETRY_MARKER } from "../utils/assistantPatchFeedback";
 
 interface AssistantSession {
+  sessionKey: string;
   target: AssistantTarget;
   objectId: string | null;
   draftVersion: number;
@@ -33,17 +34,27 @@ interface AssistantSession {
 
 interface AssistantStoreState {
   session: AssistantSession | null;
+  archivedMessages: Record<string, AssistantChatMessage[]>;
   startSession: (
     target: AssistantTarget,
     objectId: string | null,
     draftVersion: number,
+    sessionKey?: string,
   ) => void;
   sendMessage: (
     context: AssistantObjectContext<unknown>,
     userMessage: string,
+    options?: {
+      attachedRunSnapshot?: AssistantRunSnapshot;
+      replaceMessageId?: string;
+    },
+  ) => Promise<void>;
+  retryLastMessage: (
+    context: AssistantObjectContext<unknown>,
   ) => Promise<void>;
   cancelSession: () => Promise<void>;
   setRunSnapshot: (snapshot: AssistantRunSnapshot | null) => void;
+  clearSession: () => void;
 }
 
 function messageId(): string {
@@ -138,16 +149,13 @@ function errorFromThrowable(error: unknown): AssistantSessionError {
 
 export const useAssistantStore = create<AssistantStoreState>()((set, get) => ({
   session: null,
-  startSession: (target, objectId, draftVersion) => {
+  archivedMessages: {},
+  startSession: (target, objectId, draftVersion, requestedSessionKey) => {
+    const sessionKey =
+      requestedSessionKey ?? `${target}:${objectId ?? "draft"}`;
     const current = get().session;
-    if (
-      current?.target === target &&
-      current.objectId === objectId &&
-      current.draftVersion === draftVersion
-    ) {
-      return;
-    }
-    if (current?.target === target && current.objectId === objectId) {
+    if (current?.sessionKey === sessionKey) {
+      if (current.draftVersion === draftVersion) return;
       set({
         session: {
           ...current,
@@ -158,12 +166,21 @@ export const useAssistantStore = create<AssistantStoreState>()((set, get) => ({
       });
       return;
     }
+
+    const archivedMessages: Record<string, AssistantChatMessage[]> = {
+      ...get().archivedMessages,
+    };
+    if (current !== null) {
+      archivedMessages[current.sessionKey] = current.messages;
+    }
     set({
+      archivedMessages,
       session: {
+        sessionKey,
         target,
         objectId,
         draftVersion,
-        messages: [],
+        messages: archivedMessages[sessionKey] ?? [],
         runSnapshot: null,
         attachedRunSnapshotId: undefined,
         isGenerating: false,
@@ -172,14 +189,20 @@ export const useAssistantStore = create<AssistantStoreState>()((set, get) => ({
       },
     });
   },
-  sendMessage: async (context, userMessage) => {
+  /**
+   * `replaceMessageId` is store-internal retry support: it resends a prompt
+   * that already occupies the final chat slot without recreating its message.
+   */
+  sendMessage: async (context, userMessage, options) => {
     const current = get().session;
     if (!current || current.isGenerating || userMessage.trim() === "") return;
-    const attachedRunSnapshot =
+    const previouslyAttachedSnapshot =
       current.runSnapshot !== null &&
       current.attachedRunSnapshotId === current.runSnapshot.id
         ? current.runSnapshot
         : null;
+    const attachedRunSnapshot =
+      options?.attachedRunSnapshot ?? previouslyAttachedSnapshot;
     const user: AssistantChatMessage = {
       id: messageId(),
       role: "user",
@@ -189,10 +212,14 @@ export const useAssistantStore = create<AssistantStoreState>()((set, get) => ({
         ? { kind: "patchRetry" as const }
         : {}),
     };
+    const replaceMessageId = options?.replaceMessageId;
     set({
       session: {
         ...current,
-        messages: [...current.messages, user],
+        messages:
+          replaceMessageId === undefined
+            ? [...current.messages, user]
+            : current.messages,
         runSnapshot: null,
         attachedRunSnapshotId: undefined,
         isGenerating: true,
@@ -273,6 +300,17 @@ export const useAssistantStore = create<AssistantStoreState>()((set, get) => ({
       unlisten?.();
     }
   },
+  retryLastMessage: async (context) => {
+    const current = get().session;
+    if (!current || current.isGenerating || current.error === null) return;
+
+    const lastMessage = current.messages[current.messages.length - 1];
+    if (lastMessage?.role !== "user") return;
+
+    await get().sendMessage(context, lastMessage.text, {
+      replaceMessageId: lastMessage.id,
+    });
+  },
   cancelSession: async () => {
     const current = get().session;
     if (!current?.isGenerating) return;
@@ -298,6 +336,25 @@ export const useAssistantStore = create<AssistantStoreState>()((set, get) => ({
             attachedRunSnapshotId: snapshot?.id,
           }
         : state.session,
+    }));
+  },
+  clearSession: () => {
+    const current = get().session;
+    if (current === null) return;
+    set((state) => ({
+      archivedMessages: {
+        ...state.archivedMessages,
+        [current.sessionKey]: [],
+      },
+      session: {
+        ...current,
+        messages: [],
+        runSnapshot: null,
+        attachedRunSnapshotId: undefined,
+        isGenerating: current.isGenerating,
+        streamingText: current.streamingText,
+        error: null,
+      },
     }));
   },
 }));

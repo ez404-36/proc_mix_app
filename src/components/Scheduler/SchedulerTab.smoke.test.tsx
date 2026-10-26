@@ -1,5 +1,4 @@
-// Smoke test for the Scheduler view (a top-level sidebar view since the
-// scheduler was promoted out of the Library tab strip).
+// Smoke test for the Schedules tab in the Library.
 //
 // We mock the repository surfaces (IPC) so the test never crosses the Tauri
 // boundary, but the stores, services, and SchedulerTab component all run
@@ -63,7 +62,11 @@ function makeSchedule(overrides: Partial<Schedule> = {}): Schedule {
 
 function resetStores(): void {
   useScheduleStore.setState({ schedules: [], hydrated: true });
-  useUIStore.setState({ currentView: "scheduler", scheduleEditorTarget: null });
+  useUIStore.setState({
+    currentView: "library",
+    libraryTab: "schedules",
+    scheduleEditorTarget: null,
+  });
 }
 
 function renderScheduler(): void {
@@ -81,7 +84,7 @@ afterEach(() => {
   resetStores();
 });
 
-describe("Scheduler view", () => {
+describe("Schedules Library tab", () => {
   it("shows the Scheduler UI and the empty-state", () => {
     renderScheduler();
 
@@ -117,7 +120,7 @@ describe("Scheduler view", () => {
   });
 });
 
-describe("Scheduler view — navigation to the editor page", () => {
+describe("Schedules tab — navigation to the editor page", () => {
   it("New schedule navigates to the scheduler-editor view with a create target", () => {
     renderScheduler();
 

@@ -1,4 +1,4 @@
-// Store for the "Connections" tab of the Environment view.
+// Store for the "SSH connections" tab of the System view.
 //
 // Holds the read-only SSH host inventory (parsed from ~/.ssh/config and other
 // sources by the backend) plus per-host reachability-check state so the UI can

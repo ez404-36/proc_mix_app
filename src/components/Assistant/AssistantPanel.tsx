@@ -4,11 +4,14 @@ import { useTranslation } from "react-i18next";
 import {
   CancelIcon,
   ChevronIcon,
+  SendIcon,
   SidebarToggleIcon,
   SpinnerIcon,
+  TrashIcon,
 } from "../icons";
 import { useContextMenu } from "../ContextMenu";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { ConfirmDialog } from "../ConfirmDialog";
 
 import { useAssistantStore } from "../../stores/assistantStore";
 import type {
@@ -19,6 +22,7 @@ import type {
   AssistantTarget,
 } from "../../types/assistant";
 import { previewAssistantPatch } from "../../utils/assistantPatches";
+import { buildAssistantRunSnapshotPrompt } from "../../utils/assistantRunPrompt";
 import {
   copyText,
   getSelectionWithin,
@@ -28,6 +32,7 @@ import {
   buildAssistantPatchRetryPrompt,
   type AssistantPatchFeedbackError,
 } from "../../utils/assistantPatchFeedback";
+import { loadPanelPlacement, savePanelPlacement } from "../../utils/assistantPanelPlacement";
 
 interface AssistantPanelProps {
   target: AssistantTarget;
@@ -43,6 +48,10 @@ interface AssistantPanelProps {
   onRequestRun?: () => void;
   /** Editor tests pass this to inspect the expanded chat directly. */
   defaultExpanded?: boolean;
+  /** Stable identity for persisted chat/placement; defaults to target:id. */
+  sessionKey?: string;
+  /** `embedded` renders the panel in place instead of as a fixed app rail. */
+  variant?: "editor" | "embedded";
 }
 
 export interface AssistantPatchApplyOutcome {
@@ -61,25 +70,66 @@ export function AssistantPanel({
   runSnapshot,
   onRequestRun,
   defaultExpanded = false,
+  variant = "editor",
+  sessionKey: requestedSessionKey,
 }: AssistantPanelProps): ReactElement {
+  const resolvedSessionKey =
+    requestedSessionKey ?? `${target}:${objectId ?? "draft"}`;
+  const placement = loadPanelPlacement(resolvedSessionKey);
   const { t } = useTranslation();
   const [draft, setDraft] = useState("");
   const { show } = useContextMenu();
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   const session = useAssistantStore((state) => state.session);
   const startSession = useAssistantStore((state) => state.startSession);
   const sendMessage = useAssistantStore((state) => state.sendMessage);
+  const retryLastMessage = useAssistantStore(
+    (state) => state.retryLastMessage,
+  );
   const cancelSession = useAssistantStore((state) => state.cancelSession);
   const [appliedMessageId, setAppliedMessageId] = useState<string | null>(null);
   const [applyError, setApplyError] =
     useState<AssistantPatchFeedbackError | null>(null);
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [snapshotPreviewOpen, setSnapshotPreviewOpen] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(!defaultExpanded);
+  const [isCollapsed, setIsCollapsed] = useState(
+    !(defaultExpanded || placement.isExpanded),
+  );
   const setRunSnapshot = useAssistantStore((state) => state.setRunSnapshot);
 
   useEffect(() => {
-    startSession(target, objectId, draftVersion);
-  }, [draftVersion, objectId, startSession, target]);
+    startSession(target, objectId, draftVersion, resolvedSessionKey);
+  }, [
+    draftVersion,
+    objectId,
+    resolvedSessionKey,
+    startSession,
+    target,
+  ]);
+  const clearSession = useAssistantStore((state) => state.clearSession);
+
+  useEffect(() => {
+    savePanelPlacement(resolvedSessionKey, {
+      isExpanded: !isCollapsed,
+      width: null,
+    });
+  }, [isCollapsed, resolvedSessionKey]);
+
+  useEffect(() => {
+    const element = composerInputRef.current;
+    if (element === null) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
+  }, [draft, isCollapsed, session?.isGenerating]);
+
+  const clearChat = (): void => {
+    setDraft("");
+    setAppliedMessageId(null);
+    setApplyError(null);
+    clearSession();
+    setIsClearConfirmOpen(false);
+  };
 
   const submit = (): void => {
     if (draft.trim() === "" || session?.isGenerating) return;
@@ -92,6 +142,25 @@ export function AssistantPanel({
       event.preventDefault();
       submit();
     }
+  };
+
+  const sendRunSnapshot = (): void => {
+    if (runSnapshot == null || session?.isGenerating) return;
+    void sendMessage(
+      context,
+      buildAssistantRunSnapshotPrompt(runSnapshot, {
+        status: t("assistant.run.promptStatus"),
+        duration: t("assistant.run.promptDuration"),
+        request: t("assistant.run.prompt"),
+        exit: t("assistant.run.promptExit", {
+          code: runSnapshot.exitCode ?? "?",
+        }),
+        stdout: t("assistant.run.stdoutLabel"),
+        stderr: t("assistant.run.stderrLabel"),
+        truncated: t("assistant.run.promptTruncated"),
+      }),
+      { attachedRunSnapshot: runSnapshot },
+    );
   };
 
   const handleMessagesContextMenu = (
@@ -139,7 +208,13 @@ export function AssistantPanel({
 
   if (isCollapsed) {
     return (
-      <aside className="assistant-panel assistant-panel--collapsed" role="region" aria-label={title}>
+      <aside
+        className={`assistant-panel assistant-panel--collapsed${
+          variant === "embedded" ? " assistant-panel--embedded" : ""
+        }`}
+        role="region"
+        aria-label={title}
+      >
         <button
           type="button"
           className="assistant-panel__collapsed-trigger"
@@ -160,27 +235,45 @@ export function AssistantPanel({
   }
 
   return (
-    <aside className="assistant-panel" role="region" aria-label={title}>
+    <aside
+      className={`assistant-panel${
+        variant === "embedded" ? " assistant-panel--embedded" : ""
+      }`}
+      role="region"
+      aria-label={title}
+    >
       <header className="assistant-panel__header">
         <div>
           <p className="assistant-panel__eyebrow">{t("assistant.title")}</p>
           <h2 className="assistant-panel__title">{title}</h2>
         </div>
-        <button
-          type="button"
-          className="assistant-panel__collapse-toggle"
-          onClick={() => {
-            setIsCollapsed(true);
-            onClose?.();
-          }}
-          aria-expanded={true}
-          aria-label={t("nav.collapse")}
-          title={t("nav.collapse")}
-        >
-          <span className="assistant-panel__toggle-icon" aria-hidden="true">
-            <SidebarToggleIcon />
-          </span>
-        </button>
+        <div className="assistant-panel__header-actions">
+          <button
+            type="button"
+            className="assistant-panel__clear-chat"
+            onClick={() => setIsClearConfirmOpen(true)}
+            disabled={session?.isGenerating === true}
+            aria-label={t("assistant.clearChat")}
+            title={t("assistant.clearChat")}
+          >
+            <TrashIcon />
+          </button>
+          <button
+            type="button"
+            className="assistant-panel__collapse-toggle"
+            onClick={() => {
+              setIsCollapsed(true);
+              onClose?.();
+            }}
+            aria-expanded={true}
+            aria-label={t("nav.collapse")}
+            title={t("nav.collapse")}
+          >
+            <span className="assistant-panel__toggle-icon" aria-hidden="true">
+              <SidebarToggleIcon />
+            </span>
+          </button>
+        </div>
       </header>
 
       {runSnapshot ? (
@@ -190,6 +283,18 @@ export function AssistantPanel({
             <span>
               {t("assistant.run.exit", { code: runSnapshot.exitCode ?? "?" })}
             </span>
+            {runSnapshot.status !== undefined ? (
+              <span>
+                {t("assistant.run.status", { status: runSnapshot.status })}
+              </span>
+            ) : null}
+            {runSnapshot.durationMs !== undefined ? (
+              <span>
+                {t("assistant.run.duration", {
+                  duration: runSnapshot.durationMs,
+                })}
+              </span>
+            ) : null}
             <span>{t("assistant.run.stdout", { size: runSnapshot.stdoutTail.length })}</span>
             <span>{t("assistant.run.stderr", { size: runSnapshot.stderrTail.length })}</span>
             <span>
@@ -210,8 +315,8 @@ export function AssistantPanel({
             <button
               type="button"
               className="btn btn--primary"
-              onClick={() => setRunSnapshot(runSnapshot)}
-              disabled={session?.attachedRunSnapshotId === runSnapshot.id}
+              onClick={sendRunSnapshot}
+              disabled={session?.isGenerating === true}
             >
               {t("assistant.run.send")}
             </button>
@@ -313,64 +418,90 @@ export function AssistantPanel({
           </div>
         ) : null}
         {session?.error ? (
-          <p className="assistant-panel__error selectable" role="alert">
-            {typeof session.error === "string"
-              ? t(`assistant.errors.${session.error}`, {
-                  defaultValue: t("assistant.errors.invalidResponse"),
-                })
-              : session.error.kind === "providerHttp"
-                ? session.error.status === 429
-                  ? t("assistant.errors.rateLimited")
-                  : t("assistant.errors.providerHttp", {
-                      status: session.error.status,
-                    })
-                : session.error.kind === "contract"
-                  ? t("assistant.contractIssues", {
-                      issue: t(
-                        `assistant.contractIssues.${session.error.issue}`,
-                      ),
-                    })
-                  : t("assistant.backendCode", {
-                      code: session.error.code,
-                    })}
-          </p>
+          <div className="assistant-panel__error-row" role="alert">
+            <p className="assistant-panel__error selectable">
+              {typeof session.error === "string"
+                ? t(`assistant.errors.${session.error}`, {
+                    defaultValue: t("assistant.errors.invalidResponse"),
+                  })
+                : session.error.kind === "providerHttp"
+                  ? session.error.status === 429
+                    ? t("assistant.errors.rateLimited")
+                    : t("assistant.errors.providerHttp", {
+                        status: session.error.status,
+                      })
+                  : session.error.kind === "contract"
+                    ? t("assistant.contractIssues", {
+                        issue: t(
+                          `assistant.contractIssues.${session.error.issue}`,
+                        ),
+                      })
+                    : t("assistant.backendCode", {
+                        code: session.error.code,
+                      })}
+            </p>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              disabled={session.isGenerating}
+              onClick={() => void retryLastMessage(context)}
+            >
+              {t("common.retry")}
+            </button>
+          </div>
         ) : null}
       </div>
 
       <footer className="assistant-panel__composer">
-        <textarea
-          className="input"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={t("assistant.placeholder")}
-          aria-label={t("assistant.composerLabel")}
-          rows={3}
-        />
-        <div className="assistant-panel__composer-actions">
-          <span className="assistant-panel__hint">{t("assistant.sendHint")}</span>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={submit}
-            disabled={session?.isGenerating || draft.trim() === ""}
-          >
-            {t("assistant.send")}
-          </button>
+        <div
+          className={`assistant-panel__composer-field${
+            session?.isGenerating ? " is-generating" : ""
+          }`}
+        >
+          <textarea
+            ref={composerInputRef}
+            className="input"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={t("assistant.placeholder")}
+            aria-label={t("assistant.composerLabel")}
+            rows={1}
+          />
           {session?.isGenerating ? (
             <button
               type="button"
-              className="btn btn--ghost"
+              className="assistant-panel__cancel"
               onClick={() => void cancelSession()}
+              aria-label={t("common.cancel")}
+              title={t("common.cancel")}
             >
-              <span className="command-form__action-icon--cancel">
-                <CancelIcon />
-              </span>
-              {t("common.cancel")}
+              <CancelIcon />
+            </button>
+          ) : null}
+          {draft.trim() !== "" ? (
+            <button
+              type="button"
+              className="assistant-panel__send"
+              onClick={submit}
+              disabled={session?.isGenerating}
+              aria-label={t("assistant.send")}
+              title={`${t("assistant.send")} — ${t("assistant.sendHint")}`}
+            >
+              <SendIcon />
             </button>
           ) : null}
         </div>
       </footer>
+      <ConfirmDialog
+        open={isClearConfirmOpen}
+        title={t("assistant.clearChatTitle")}
+        message={t("assistant.clearChatMessage")}
+        confirmLabel={t("common.clear")}
+        danger
+        onConfirm={clearChat}
+        onCancel={() => setIsClearConfirmOpen(false)}
+      />
     </aside>
   );
 }

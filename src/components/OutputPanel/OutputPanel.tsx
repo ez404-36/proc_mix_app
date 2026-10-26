@@ -33,6 +33,9 @@ import { triggerCommandRun } from "../../services/commandRunner";
 import { triggerWorkflowRun } from "../../services/workflowRunner";
 import { cancelWorkflow } from "../../utils/workflowRunner";
 import { TerminalPanel, TerminalLayoutPicker } from "../Terminal";
+import { RunAssistantPanel } from "./RunAssistantPanel";
+import { buildExecutionRunAssistant } from "../../utils/executionRunAssistant";
+import { pruneRunAssistantSessions } from "../../utils/runAssistantSessions";
 import {
   CancelIcon,
   ClearIcon,
@@ -562,6 +565,27 @@ export function OutputPanel(): ReactElement | null {
     return cmd ? { kind: "command", command: cmd } : null;
   }, [active?.isWorkflow, active?.workflowId, active?.commandId, commands, workflows]);
 
+  const runAssistantSource = useMemo(
+    () =>
+      rerunSource?.kind === "command"
+        ? { command: rerunSource.command }
+        : rerunSource?.kind === "workflow"
+          ? { workflow: rerunSource.workflow }
+          : {},
+    [rerunSource],
+  );
+
+  const runAssistant = useMemo(() => {
+    if (
+      active === null ||
+      active.status === "pending" ||
+      active.status === "running"
+    ) {
+      return null;
+    }
+    return buildExecutionRunAssistant(active, runAssistantSource);
+  }, [active, runAssistantSource]);
+
   const recents = useMemo(
     () =>
       recentIds
@@ -570,6 +594,10 @@ export function OutputPanel(): ReactElement | null {
         .filter((e): e is Execution => e !== undefined),
     [recentIds, executions],
   );
+
+  useEffect(() => {
+    pruneRunAssistantSessions("execution", new Set(Object.keys(executions)));
+  }, [executions]);
 
   if (!panelOpen) return null;
 
@@ -842,107 +870,119 @@ export function OutputPanel(): ReactElement | null {
         </div>
       </div>
 
-      {panelMode === "runs" && active && active.script ? (
-        <div className="output-panel__script">
-          <div className="output-panel__script-meta">
-            <span className="output-panel__script-shell">
-              {t("outputPanel.scriptShell", {
-                shell: active.shell ?? t("outputPanel.defaultShell"),
-              })}
-            </span>
-            {active.workingDir ? (
-              <span className="output-panel__script-dir">
-                {active.workingDir}
-              </span>
-            ) : null}
-            {isRemoteTarget(active.target) ? (
-              <span className="target-badge output-panel__script-target">
-                {formatTargetBadge(active.target, t)}
-              </span>
-            ) : null}
-          </div>
-          <pre className="output-panel__script-body">{active.script}</pre>
-        </div>
-      ) : null}
-
       {panelMode === "terminal" ? <TerminalPanel /> : null}
-
-      {panelMode === "runs" && active && active.variables && active.variables.length > 0 ? (
-        <dl className="output-panel__variables">
-          <dt className="output-panel__variables-title">
-            {t("outputPanel.variablesTitle")}
-          </dt>
-          {active.variables.map((variable) => (
-            <div key={variable.name} className="output-panel__variable">
-              <span className="output-panel__variable-name">
-                {variable.name}
-              </span>
-              <span
-                className={`output-panel__variable-value${
-                  variable.sensitive
-                    ? " output-panel__variable-value--sensitive"
-                    : ""
-                }`}
-              >
-                {variable.value}
-              </span>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-
-      {panelMode === "runs" && active && active.env && Object.keys(active.env).length > 0 ? (
-        <dl className="output-panel__variables output-panel__env">
-          <dt className="output-panel__variables-title">
-            {t("outputPanel.envTitle", { defaultValue: "Environment" })}
-          </dt>
-          {Object.entries(active.env).map(([key, value]) => (
-            <div key={key} className="output-panel__variable">
-              <span className="output-panel__variable-name output-panel__env-key">
-                {key}
-              </span>
-              <span className="output-panel__variable-value">
-                {value}
-              </span>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-
-      {panelMode === "runs" && active && hasResult ? (
-        <div className="output-panel__tabs" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "output"}
-            className={`output-panel__tab${
-              activeTab === "output" ? " is-active" : ""
-            }`}
-            onClick={() => setActiveTab("output")}
-          >
-            {t("outputPanel.tabs.output", { defaultValue: "Output" })}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "result"}
-            className={`output-panel__tab${
-              activeTab === "result" ? " is-active" : ""
-            }`}
-            onClick={() => setActiveTab("result")}
-          >
-            {t("outputPanel.tabs.result", { defaultValue: "Result" })}
-          </button>
-        </div>
-      ) : null}
 
       {panelMode === "runs" ? (
         active ? (
-          hasResult && activeTab === "result" && active.result ? (
-            <ResultView result={active.result} t={t} />
-          ) : (
-            <OutputBody execution={active} />
-          )
+          <div className="output-panel__run-layout">
+            <div className="output-panel__run-main">
+              {active.script ? (
+                <div className="output-panel__script">
+                  <div className="output-panel__script-meta">
+                    <span className="output-panel__script-shell">
+                      {t("outputPanel.scriptShell", {
+                        shell: active.shell ?? t("outputPanel.defaultShell"),
+                      })}
+                    </span>
+                    {active.workingDir ? (
+                      <span className="output-panel__script-dir">
+                        {active.workingDir}
+                      </span>
+                    ) : null}
+                    {isRemoteTarget(active.target) ? (
+                      <span className="target-badge output-panel__script-target">
+                        {formatTargetBadge(active.target, t)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <pre className="output-panel__script-body">{active.script}</pre>
+                </div>
+              ) : null}
+
+              {active.variables && active.variables.length > 0 ? (
+                <dl className="output-panel__variables">
+                  <dt className="output-panel__variables-title">
+                    {t("outputPanel.variablesTitle")}
+                  </dt>
+                  {active.variables.map((variable) => (
+                    <div key={variable.name} className="output-panel__variable">
+                      <span className="output-panel__variable-name">
+                        {variable.name}
+                      </span>
+                      <span
+                        className={`output-panel__variable-value${
+                          variable.sensitive
+                            ? " output-panel__variable-value--sensitive"
+                            : ""
+                        }`}
+                      >
+                        {variable.value}
+                      </span>
+                    </div>
+                  ))}
+                </dl>
+              ) : null}
+
+              {active.env && Object.keys(active.env).length > 0 ? (
+                <dl className="output-panel__variables output-panel__env">
+                  <dt className="output-panel__variables-title">
+                    {t("outputPanel.envTitle", { defaultValue: "Environment" })}
+                  </dt>
+                  {Object.entries(active.env).map(([key, value]) => (
+                    <div key={key} className="output-panel__variable">
+                      <span className="output-panel__variable-name output-panel__env-key">
+                        {key}
+                      </span>
+                      <span className="output-panel__variable-value">
+                        {value}
+                      </span>
+                    </div>
+                  ))}
+                </dl>
+              ) : null}
+
+              {hasResult ? (
+                <div className="output-panel__tabs" role="tablist">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === "output"}
+                    className={`output-panel__tab${
+                      activeTab === "output" ? " is-active" : ""
+                    }`}
+                    onClick={() => setActiveTab("output")}
+                  >
+                    {t("outputPanel.tabs.output", { defaultValue: "Output" })}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === "result"}
+                    className={`output-panel__tab${
+                      activeTab === "result" ? " is-active" : ""
+                    }`}
+                    onClick={() => setActiveTab("result")}
+                  >
+                    {t("outputPanel.tabs.result", { defaultValue: "Result" })}
+                  </button>
+                </div>
+              ) : null}
+
+              {hasResult && activeTab === "result" && active.result ? (
+                <ResultView result={active.result} t={t} />
+              ) : (
+                <OutputBody execution={active} />
+              )}
+            </div>
+            {active.status !== "pending" && active.status !== "running" ? (
+              <RunAssistantPanel
+                key={active.id}
+                assistant={runAssistant}
+                title={active.customName ?? active.commandName}
+                sessionKey={`execution:${active.id}`}
+              />
+            ) : null}
+          </div>
         ) : (
           <div className="output-panel__body">
             <div className="output-panel__placeholder">

@@ -17,7 +17,7 @@ import { SshHostForm } from './SshHostForm';
 import { SshHostViewModal } from './SshHostViewModal';
 
 /**
- * "Connections" tab of the Environment view: a read-only inventory of SSH
+ * "SSH connections" tab of the System view: a read-only inventory of SSH
  * hosts parsed from `~/.ssh/config` (and, in future, other sources). Each row
  * shows the resolved `user@host:port`, a source badge, a "managed manually"
  * badge for non-editable blocks, and the last reachability-check result.

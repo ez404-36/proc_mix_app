@@ -844,7 +844,11 @@ pub async fn complete_streaming(
     on_delta: &mut (dyn FnMut(&str) + Send),
 ) -> Result<ProviderCompletion, ProviderError> {
     let client = reqwest::Client::builder()
-        .timeout(config.timeout)
+        // A long-running stream is healthy as long as it keeps making progress.
+        // Bound only connection/header latency and gaps between chunks; the
+        // user-configured timeout must not kill a complete long response.
+        .connect_timeout(config.timeout)
+        .read_timeout(config.timeout)
         .build()
         .map_err(|error| ProviderError::Network(error.to_string()))?;
 
@@ -907,15 +911,15 @@ pub async fn complete_streaming(
 
     let response = tokio::select! {
         () = cancellation_token.cancelled() => return Err(ProviderError::Cancelled),
-        result = request.send() => result,
-    }
-    .map_err(|error| {
-        if error.is_timeout() {
-            ProviderError::Timeout
-        } else {
-            ProviderError::Network(error.to_string())
+        result = tokio::time::timeout(config.timeout, request.send()) => {
+            match result {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) if error.is_timeout() => return Err(ProviderError::Timeout),
+                Ok(Err(error)) => return Err(ProviderError::Network(error.to_string())),
+                Err(_) => return Err(ProviderError::Timeout),
+            }
         }
-    })?;
+    };
 
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
@@ -938,6 +942,9 @@ pub async fn complete_streaming(
         };
         let bytes = match chunk {
             Some(Ok(bytes)) => bytes,
+            Some(Err(error)) if error.is_timeout() => {
+                return Err(ProviderError::Timeout);
+            }
             Some(Err(error)) => return Err(ProviderError::Network(error.to_string())),
             None => break,
         };

@@ -4,7 +4,7 @@
 // patch or ask the user to run something / provide output. These types mirror
 // `src-tauri/src/core/assistant/contract.rs` and use camelCase on the wire.
 
-export type AssistantTarget = "command" | "workflow" | "miniapp";
+export type AssistantTarget = "command" | "workflow" | "miniapp" | "schedule";
 
 /** Stable machine-readable errors returned from the assistant backend. */
 export type AssistantBackendError =
@@ -97,6 +97,8 @@ export interface AssistantGenerateRequest {
   draftVersion: number;
   userMessage: string;
   attachedRunSnapshotId?: string;
+  /** Explicit one-request consent when the global snapshot default is off. */
+  runSnapshotConsent?: boolean;
 }
 
 /**
@@ -109,8 +111,11 @@ export interface AssistantRunSnapshot {
   target: AssistantTarget;
   draftVersion: number;
   createdAt: string;
+  /** Historical/live outcome; optional for backward-compatible callers. */
+  status?: string;
   exitCode: number | null;
   timedOut: boolean;
+  durationMs?: number;
   stdoutTail: string;
   stderrTail: string;
   outputSchema?: unknown;

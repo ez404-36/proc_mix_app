@@ -66,7 +66,7 @@ export function EnvTab(props: EnvTabProps): ReactElement {
       {/*
        * Where-to-run selector (Local / Remote host / Ask at run time).
        * Sourced from the shared SSH host store so the offered hosts match
-       * Environment → Connections exactly. Remote runs disable elevation
+       * System → SSH connections exactly. Remote runs disable elevation
        * (handled on the admin checkbox below).
        */}
       <TargetSelector

@@ -16,7 +16,12 @@ import type {
   AssistantTarget,
 } from "../types/assistant";
 
-export const ASSISTANT_TARGETS = ["command", "workflow", "miniapp"] as const;
+export const ASSISTANT_TARGETS = [
+  "command",
+  "workflow",
+  "miniapp",
+  "schedule",
+] as const;
 
 export const ASSISTANT_LIMITS = {
   maxMessageLength: 8_000,
@@ -52,6 +57,19 @@ export const ASSISTANT_ALLOWED_PATCH_ROOTS: Record<
   ],
   workflow: ["name", "description", "nodes", "edges", "tags"],
   miniapp: ["name", "description", "widgets", "tags", "panelSize"],
+  schedule: [
+    "name",
+    "enabled",
+    "targetKind",
+    "targetId",
+    "cron",
+    "variableValues",
+    "skipIfRunning",
+    "captureOutput",
+    "catchUpPolicy",
+    "timeoutSeconds",
+    "maxRetries",
+  ],
 };
 
 export function isAssistantTarget(value: unknown): value is AssistantTarget {

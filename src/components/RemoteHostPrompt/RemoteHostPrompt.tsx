@@ -22,7 +22,7 @@ import { CancelIcon, RunIcon } from "../icons";
  *
  * Lifecycle (register/resolver) is owned by `usePromptResolver`; the
  * portal/backdrop by `<PromptModal>`. The host list is read from the SAME
- * `useSshHostStore` the Environment → Connections tab uses, so the offered
+ * `useSshHostStore` the System → SSH connections tab uses, so the offered
  * hosts always match that inventory.
  */
 export function RemoteHostPrompt(): React.ReactElement | null {
@@ -37,7 +37,7 @@ export function RemoteHostPrompt(): React.ReactElement | null {
     register: registerRemoteHostPromptHandler,
     onOpen: () => {
       // Refresh the inventory when empty so the picker isn't blank on first
-      // use (e.g. the Connections tab was never visited this session).
+      // use (e.g. the SSH connections tab was never visited this session).
       if (hosts.length === 0) {
         void load();
       }
@@ -99,7 +99,7 @@ export function RemoteHostPrompt(): React.ReactElement | null {
               <span className="command-form__hint" role="note">
                 {t("remoteHostPrompt.noHosts", {
                   defaultValue:
-                    "No SSH connections found. Add one in Environment → Connections.",
+                    "No SSH connections found. Add one in System → SSH connections.",
                 })}
               </span>
             ) : (
