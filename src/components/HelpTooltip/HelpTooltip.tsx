@@ -37,6 +37,12 @@ interface HelpTooltipProps {
   body: string;
   /** Unique id linking trigger and popover via `aria-describedby`. */
   id: string;
+  /**
+   * Horizontal placement relative to the trigger. `bottom-center` is useful
+   * for standalone icon buttons where a left-aligned popover reads as if it
+   * belongs to the control on their right.
+   */
+  placement?: "bottom-start" | "bottom-center";
 }
 
 /** Time (ms) the popover stays visible after the cursor leaves either half,
@@ -47,6 +53,7 @@ export function HelpTooltip({
   buttonLabel,
   body,
   id,
+  placement = "bottom-start",
 }: HelpTooltipProps): ReactElement {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -60,6 +67,11 @@ export function HelpTooltip({
   // the above/below flip uses the popover's real height — not a fixed
   // assumption. `null` until measured (first paint hides the popover).
   const [top, setTop] = useState<number | null>(null);
+  // Resolved `left` (px, viewport coords) for centered placement. Measured
+  // after the first paint because the popover's own width determines the
+  // offset and its viewport clamping. Start-aligned tooltips can keep using
+  // the anchor's left edge directly.
+  const [left, setLeft] = useState<number | null>(null);
 
   const cancelClose = useCallback((): void => {
     if (closeTimerRef.current !== null) {
@@ -81,8 +93,9 @@ export function HelpTooltip({
     const rect = buttonRef.current?.getBoundingClientRect() ?? null;
     setAnchor(rect);
     // Hide until the layout effect measures the rendered popover and resolves
-    // its real `top`, so it never flashes at a stale/assumed position.
+    // its real position, so it never flashes at a stale/assumed position.
     setTop(null);
+    setLeft(null);
     setOpen(true);
   }, [cancelClose]);
 
@@ -116,7 +129,7 @@ export function HelpTooltip({
     };
   }, []);
 
-  // After the popover renders, measure its REAL height and resolve `top`:
+  // After the popover renders, measure its REAL size and resolve position:
   // place it just below the icon by default, flipping to just above only when
   // it would overflow the viewport bottom. Using the measured height (not a
   // fixed assumption) keeps a short tooltip anchored right next to the icon
@@ -127,25 +140,36 @@ export function HelpTooltip({
     if (!popover) return;
     const GAP = 6;
     const viewportH = typeof window !== "undefined" ? window.innerHeight : 0;
-    const height = popover.getBoundingClientRect().height;
+    const { height, width } = popover.getBoundingClientRect();
     const fitsBelow = anchor.bottom + GAP + height <= viewportH;
     const resolved = fitsBelow
       ? anchor.bottom + GAP
       : Math.max(8, anchor.top - GAP - height);
     setTop((prev) => (prev === resolved ? prev : resolved));
-  }, [open, anchor, body]);
+    if (placement === "bottom-center") {
+      const viewportW =
+        typeof window !== "undefined" ? window.innerWidth : 0;
+      const centered = anchor.left + anchor.width / 2 - width / 2;
+      const maxLeft = Math.max(8, viewportW - width - 8);
+      const resolvedLeft = Math.min(Math.max(8, centered), maxLeft);
+      setLeft((prev) => (prev === resolvedLeft ? prev : resolvedLeft));
+    }
+  }, [open, anchor, body, placement]);
 
   const popoverStyle = ((): CSSProperties => {
     if (!anchor) return { visibility: "hidden" };
-    // Align left edge with the icon, clamped so it never crosses the
-    // viewport's left edge.
-    const left = Math.max(8, anchor.left);
+    // Center the popover over the trigger when requested; otherwise align its
+    // left edge with the icon. Both modes stay inside the viewport.
+    const resolvedLeft =
+      placement === "bottom-center"
+        ? left ?? anchor.left + anchor.width / 2
+        : Math.max(8, anchor.left);
     return {
       position: "fixed",
       // Until measured, render off-screen-but-laid-out (visibility hidden) so
       // the layout effect can read its height without a visible flash.
       top: top ?? anchor.bottom + 6,
-      left,
+      left: resolvedLeft,
       maxHeight: 320,
       visibility: top === null ? "hidden" : "visible",
     };

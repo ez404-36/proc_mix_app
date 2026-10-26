@@ -765,6 +765,7 @@
     "enable": "Enable",
     "disable": "Disable",
     "runsWhileOpen": "Schedules run only while ProcMix is running (including minimized to the tray).",
+    "runsWhileOpenHelp": "About schedule availability",
     "nextRun": "Next run: {{time}}",
     "nextRunNever": "Next run: —",
     "lastRun": "Last run: {{time}}",

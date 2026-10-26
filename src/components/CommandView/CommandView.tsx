@@ -81,7 +81,7 @@ export function CommandView({
         <div className="workflow-view__header">
           <div className="workflow-view__heading">
             <h2 className="command-form__title">{displayName}</h2>
-            <IdBadge id={command.id} />
+            <IdBadge id={command.id} iconOnly />
           </div>
           <div className="list-tile__meta">
             <TargetBadge target={command.target} />

@@ -39,4 +39,20 @@ describe("IdBadge", () => {
       expect(writeText).toHaveBeenCalledWith(ID);
     });
   });
+
+  it("hides the ID in icon-only mode but keeps a labelled copy action", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render(<IdBadge id={ID} iconOnly />);
+    expect(screen.queryByText(ID)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(ID);
+    });
+  });
 });

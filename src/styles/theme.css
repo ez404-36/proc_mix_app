@@ -730,7 +730,7 @@ select {
   gap: 6px;
 }
 
-/* The title block flexes so the head-action cluster hugs the right edge. */
+/* The title block flexes so an optional head control hugs the right edge. */
 .list-tile__heading {
   min-width: 0;
   flex: 1 1 auto;
@@ -747,14 +747,6 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Icon Run/View buttons + favorite toggle, grouped at the right of the head. */
-.list-tile__head-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
 }
 
 /* Mini-app icon rendered before the title in a list tile and the runner
@@ -957,6 +949,25 @@ select {
   gap: 4px;
   flex: 1;
   border-bottom: 1px solid var(--color-border);
+}
+
+/* Pair the schedules help affordance with its "New schedule" action. The
+   shared help trigger is compact for form labels, so enlarge it here and
+   center both controls on the same horizontal axis. */
+.library-tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-tabs-actions .help-tooltip__trigger {
+  width: 28px;
+  height: 28px;
+}
+
+.library-tabs-actions .help-tooltip__trigger svg {
+  width: 20px;
+  height: 20px;
 }
 
 .library-tab {
@@ -1255,13 +1266,18 @@ select {
 }
 
 .favorite-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--color-text-muted);
-  font-size: 16px;
-  line-height: 1;
   padding: 4px;
   border-radius: 4px;
+}
+
+.favorite-toggle svg {
+  display: block;
 }
 
 .favorite-toggle.is-on {
@@ -1270,6 +1286,20 @@ select {
 
 .favorite-toggle:hover {
   background: var(--color-bg);
+}
+
+/* Favorite marker in table rows: reserve the same icon footprint without
+   inheriting the row's text baseline. */
+.favorite-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  color: var(--color-danger);
+}
+
+.favorite-indicator svg {
+  display: block;
 }
 
 /* Output panel */
@@ -3286,22 +3316,6 @@ body.is-editor-fullscreen .output-panel {
   color: var(--color-success);
 }
 
-/* Row that places the "runs while open" hint and the "+ Schedule" button
-   side by side at the top of the scheduler list. */
-.scheduler-hint-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-/* "Schedules only run while the app is open" hint inside the row — no extra
-   bottom margin needed since the row itself provides spacing. */
-.scheduler-runs-hint {
-  margin-bottom: 0;
-}
-
 /* A variable's label row: its name (optionally starred) plus an inline
    help-tooltip icon describing the variable. */
 .schedule-form__variable-label {
@@ -3801,8 +3815,7 @@ body.is-editor-fullscreen .output-panel {
   justify-content: space-between;
   gap: 16px;
   padding: 4px 4px 16px;
-  border-bottom: 1px solid var(--color-border);
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
 .command-form__topbar-title {
@@ -4395,16 +4408,25 @@ body.is-editor-fullscreen .output-panel {
  * hint. The trigger is a small ghost icon-button; the popover is portalled to
  * document.body and positioned via JS. */
 .help-tooltip__trigger {
-  padding: 2px;
+  /* The trigger is icon-only: center the glyph on both axes. Zero padding
+     keeps the full box available to flex centering, including the enlarged
+     library-tab glyph whose size otherwise leaves no free space. */
+  justify-content: center;
+  padding: 0;
   width: 22px;
   height: 22px;
   min-height: 0;
   color: var(--color-text-muted);
   border-radius: 50%;
+  cursor: help;
 }
 
 .help-tooltip__trigger:hover {
   color: var(--color-primary);
+  /* Help affordances should not read as clickable buttons; keep hover
+     limited to the glyph color and use the platform question-mark cursor. */
+  background: transparent;
+  border-color: transparent;
 }
 
 /* Custom help popover (replaces native `title` so we control the
@@ -6891,7 +6913,7 @@ body.is-editor-fullscreen .output-panel {
 
 .workflow-view__header {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px 12px;
   padding: 20px 20px 0;
@@ -6899,21 +6921,38 @@ body.is-editor-fullscreen .output-panel {
 
 .workflow-view__header > .command-form__title {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Title + ID stacked vertically (ID under the title), sitting as one flex item
-   in the wrapping header row so the meta badges / close button stay to its
-   right. Used by CommandView and WorkflowView. */
+/* Title + copy-ID icon inline, sitting as one flex item in the single-line
+   header row so the meta badges / delete button stay to its right. Used by
+   CommandView and WorkflowView. */
 .workflow-view__heading {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .workflow-view__heading > .command-form__title {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Chips share the single header line; clipping is preferable to breaking the
+   compact header into two rows. */
+.workflow-view__header .list-tile__meta {
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 /* Delete icon button in the top-right corner of view modals (CommandView,

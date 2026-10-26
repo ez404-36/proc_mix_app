@@ -1,4 +1,6 @@
-// Small "ID: <id>" line with a copy-to-clipboard button.
+// A small "ID: <id>" line with a copy-to-clipboard button. `iconOnly` hides
+// the ID itself for compact object previews; the button remains the copy
+// affordance and exposes the action through its tooltip / accessible name.
 //
 // Shown under the title in command/workflow cards and editor headers so a user
 // can grab the stable UUID (e.g. to run the entity over the HTTP API by id when
@@ -17,9 +19,11 @@ import { CopyIcon } from "../icons";
 interface IdBadgeProps {
   /** The entity id (UUID) to display and copy. */
   id: string;
+  /** Render only the copy affordance (used by compact read-only previews). */
+  iconOnly?: boolean;
 }
 
-export function IdBadge({ id }: IdBadgeProps): ReactElement {
+export function IdBadge({ id, iconOnly = false }: IdBadgeProps): ReactElement {
   const { t } = useTranslation();
 
   const handleCopy = async (): Promise<void> => {
@@ -31,21 +35,27 @@ export function IdBadge({ id }: IdBadgeProps): ReactElement {
     }
   };
 
+  const copyButton = (
+    <button
+      type="button"
+      className="btn btn--ghost btn--icon id-badge__copy"
+      onClick={() => void handleCopy()}
+      aria-label={t("idBadge.copy")}
+      title={t("idBadge.copy")}
+    >
+      <CopyIcon />
+    </button>
+  );
+
+  if (iconOnly) return copyButton;
+
   return (
     <div className="id-badge">
       <span className="id-badge__label">
         {t("idBadge.label")}{" "}
         <code className="id-badge__value">{id}</code>
       </span>
-      <button
-        type="button"
-        className="btn btn--ghost btn--icon id-badge__copy"
-        onClick={() => void handleCopy()}
-        aria-label={t("idBadge.copy")}
-        title={t("idBadge.copy")}
-      >
-        <CopyIcon />
-      </button>
+      {copyButton}
     </div>
   );
 }

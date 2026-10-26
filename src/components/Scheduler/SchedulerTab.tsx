@@ -1,7 +1,8 @@
 // The "Schedules" Library tab: lists cron schedules with enable / edit /
-// delete controls and a "New schedule" button. Creating or editing a schedule
-// navigates to the full-screen `scheduler-editor` view (see ScheduleEditor +
-// ScheduleForm) rather than opening a modal.
+// delete controls. The tab-level "New schedule" action lives in the Library
+// header row. Editing a schedule navigates to the full-screen
+// `scheduler-editor` view (see ScheduleEditor + ScheduleForm) rather than
+// opening a modal.
 
 import { useMemo, useState } from "react";
 import type {
@@ -27,7 +28,7 @@ import type { ContextMenuEntry } from "../ContextMenu";
 import { ListControls } from "../ListControls/ListControls";
 import type { SortOption } from "../ListControls/ListControls";
 import { Pagination } from "../Pagination/Pagination";
-import { PlusIcon, RunIcon, ViewIcon } from "../icons";
+import { RunIcon, ViewIcon } from "../icons";
 import { ToggleSwitch } from "../ToggleSwitch";
 import { ScheduleView } from "./ScheduleView";
 
@@ -261,33 +262,9 @@ function ScheduleCard({
             </p>
           ) : null}
         </div>
-        {compact ? (
-          <div className="list-tile__head-actions">
-            <button
-              type="button"
-              className="btn btn--run btn--icon"
-              onClick={() => onRun(schedule)}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={t("scheduler.runNow")}
-              title={t("scheduler.runNow")}
-            >
-              <RunIcon />
-            </button>
-            <button
-              type="button"
-              className="btn btn--view btn--icon"
-              onClick={() => onView(schedule)}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={t("library.view")}
-              title={t("library.view")}
-            >
-              <ViewIcon />
-            </button>
-            {enableToggle}
-          </div>
-        ) : (
-          enableToggle
-        )}
+        {/* Run / View stay out of compact tiles; the enable toggle is state,
+            not a quick action, and remains available in both tile modes. */}
+        {enableToggle}
       </div>
 
       <div className="list-tile__meta">
@@ -400,11 +377,6 @@ export function SchedulerTab(): ReactElement {
     setPage(1);
   };
 
-  const handleNew = (): void => {
-    setScheduleEditorTarget({ mode: "create", scheduleId: null });
-    setView("scheduler-editor");
-  };
-
   const handleEdit = (schedule: Schedule): void => {
     setScheduleEditorTarget({ mode: "edit", scheduleId: schedule.id });
     setView("scheduler-editor");
@@ -426,22 +398,6 @@ export function SchedulerTab(): ReactElement {
 
   return (
     <>
-      <div className="scheduler-hint-row">
-        <p className="form-hint scheduler-runs-hint">
-          {t("scheduler.runsWhileOpen")}
-        </p>
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={handleNew}
-          aria-label={t("scheduler.new")}
-          title={t("scheduler.new")}
-        >
-          <PlusIcon />
-          {t("scheduler.newLabel")}
-        </button>
-      </div>
-
       <div className="library-toolbar">
         <input
           className="input"

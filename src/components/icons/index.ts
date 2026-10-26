@@ -16,6 +16,7 @@ export { FolderIcon } from "./FolderIcon";
 export { ExportIcon } from "./ExportIcon";
 export { EyeIcon } from "./EyeIcon";
 export { EyeOffIcon } from "./EyeOffIcon";
+export { FavoriteIcon } from "./FavoriteIcon";
 export { FitViewIcon } from "./FitViewIcon";
 export { FullscreenIcon } from "./FullscreenIcon";
 export { GroupIcon } from "./GroupIcon";
