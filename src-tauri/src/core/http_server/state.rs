@@ -2,7 +2,7 @@
 //
 // Holds the running task's handle + shutdown signal, the live config snapshot,
 // the request log ring buffer, and the anti-brute-force 401 rate limiter. By
-// the `SchedulerState` / `WatcherState` precedent this is wrapped in an `Arc`
+// the `SchedulerState` precedent this is wrapped in an `Arc`
 // and stored via `app.manage(...)`; the Tauri commands and the setup hook share
 // the single instance.
 

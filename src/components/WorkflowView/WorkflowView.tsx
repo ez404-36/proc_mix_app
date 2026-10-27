@@ -71,7 +71,7 @@ export function WorkflowView({
         <div className="workflow-view__header">
           <div className="workflow-view__heading">
             <h2 className="command-form__title">{workflow.name}</h2>
-            <IdBadge id={workflow.id} />
+            <IdBadge id={workflow.id} iconOnly />
           </div>
           <div className="list-tile__meta">
             <span className="shell-badge">

@@ -3,8 +3,7 @@ import type { ReactElement } from "react";
 /**
  * Clock face with a counter-clockwise "rewind" arrow for the History nav
  * item — drawn with `currentColor` so the surrounding sidebar button
- * controls the hue. The open arrow tail (vs. {@link SchedulerIcon}'s bell
- * legs) reads as "past runs" rather than "upcoming schedule". Replaces the
+ * controls the hue. The open arrow tail reads as "past runs". Replaces the
  * legacy `⏱` Unicode glyph (see docs/ui-conventions.md Navigation section).
  */
 export function HistoryIcon(): ReactElement {

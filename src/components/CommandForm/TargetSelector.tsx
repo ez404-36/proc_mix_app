@@ -47,7 +47,7 @@ export interface TargetSelectorProps {
  *
  * A mode dropdown (Local / Remote host / Ask at run time) plus, for the
  * "Remote host" mode, a host dropdown sourced from the SAME `useSshHostStore`
- * the Environment → Connections tab renders — so the offered hosts always
+ * the System → SSH connections tab renders — so the offered hosts always
  * match that inventory exactly. A "Check" button probes the selected host's
  * reachability (reusing the store's `check` action).
  *
@@ -62,7 +62,7 @@ export function TargetSelector({
 }: TargetSelectorProps): ReactElement {
   const { t } = useTranslation();
 
-  // Same store + array the Connections tab uses. `hosts` excludes wildcard
+  // Same store + array the SSH connections tab uses. `hosts` excludes wildcard
   // patterns (those live in `patterns`) and errored sources, so the list is
   // exactly the connectable inventory.
   const hosts = useSshHostStore((s) => s.hosts);
@@ -305,12 +305,12 @@ export function TargetSelector({
         </span>
       ) : null}
 
-      {/* Empty-inventory guidance pointing at the Connections tab. */}
+      {/* Empty-inventory guidance pointing at the SSH connections tab. */}
       {mode === "remote" && noHosts ? (
         <span className="command-form__hint" role="note">
           {t("commandForm.target.noHosts", {
             defaultValue:
-              "No SSH connections found. Add one in Environment → Connections.",
+              "No SSH connections found. Add one in System → SSH connections.",
           })}
         </span>
       ) : null}

@@ -13,7 +13,6 @@ beforeEach(() => {
     theme: "system",
     toggleShortcut: DEFAULT_TOGGLE_SHORTCUT,
     language: "en",
-    processCaptureEnabled: false,
     commandEditorDirty: false,
     commandEditorTarget: null,
     miniappEditorDirty: false,
@@ -42,9 +41,6 @@ describe("uiStore defaults", () => {
     expect(state.language).toBe("en");
   });
 
-  it("should start with process capture disabled (opt-in)", () => {
-    expect(useUIStore.getState().processCaptureEnabled).toBe(false);
-  });
 });
 
 describe("uiStore.setView", () => {
@@ -263,25 +259,6 @@ describe("uiStore.setToggleShortcut", () => {
     };
     expect(parsed.state).not.toHaveProperty("currentView");
     expect(parsed.state).not.toHaveProperty("paletteOpen");
-  });
-});
-
-describe("uiStore.setProcessCaptureEnabled", () => {
-  it("should update the process-capture opt-in flag", () => {
-    useUIStore.getState().setProcessCaptureEnabled(true);
-    expect(useUIStore.getState().processCaptureEnabled).toBe(true);
-    useUIStore.getState().setProcessCaptureEnabled(false);
-    expect(useUIStore.getState().processCaptureEnabled).toBe(false);
-  });
-
-  it("should persist processCaptureEnabled into localStorage under 'procmix-ui'", () => {
-    useUIStore.getState().setProcessCaptureEnabled(true);
-    const raw = localStorage.getItem("procmix-ui");
-    expect(raw).not.toBeNull();
-    const parsed = JSON.parse(raw as string) as {
-      state: { processCaptureEnabled: boolean };
-    };
-    expect(parsed.state.processCaptureEnabled).toBe(true);
   });
 });
 

@@ -262,6 +262,37 @@ describe("HistoryRow — run output disclosure (commandRun / workflowRun)", () =
     expect(screen.getByText("hello world")).toBeTruthy();
   });
 
+  it("shows an isolated run assistant inside an expanded run", async () => {
+    const { container } = render(
+      rowEl(commandRunEvent("e-cmd-assistant", { withOutput: true })),
+    );
+
+    fireEvent.click(
+      container.querySelector("summary.history-row__summary") as Element,
+    );
+
+    expect(
+      screen.getByRole("region", {
+        name: "Run assistant — Greet",
+      }),
+    ).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open run assistant" }),
+    );
+    await screen.findByRole("separator", { name: "Resize run assistant" });
+    fireEvent.keyDown(
+      screen.getByRole("separator", { name: "Resize run assistant" }),
+      { key: "ArrowLeft" },
+    );
+
+    const assistant = screen.getByRole("region", {
+      name: "Run assistant — Greet",
+    }) as HTMLElement;
+    expect(assistant.style.flexBasis).toBe("260px");
+    expect(assistant.style.width).toBe("260px");
+  });
+
   it("does NOT render a disclosure for a workflowRun WITHOUT persisted output (older row)", () => {
     const { container } = render(
       rowEl(workflowRunEvent("e-wf2", { withOutput: false })),

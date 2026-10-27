@@ -13,7 +13,7 @@
 //     has a value.
 //   - Persist via `scheduleActions`, surfacing quota / invalid-cron errors.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -57,6 +57,18 @@ import { HelpTooltip } from "../HelpTooltip";
 import { CancelIcon, SaveIcon } from "../icons";
 import { NumberStepper } from "../NumberStepper";
 import { ToggleSwitch } from "../ToggleSwitch";
+import { AssistantPanel } from "../Assistant";
+import { ContextMenuProvider } from "../ContextMenu";
+import type { AssistantPatch } from "../../types/assistant";
+import {
+  buildScheduleAssistantContext,
+  createAssistantDraftVersion,
+} from "../../utils/assistantContext";
+import {
+  applyAssistantPatchToSchedule,
+  type AssistantPatchApplyError,
+  type ScheduleAssistantDraft,
+} from "../../utils/assistantPatches";
 
 interface ScheduleFormProps {
   /** The schedule being edited, or `null` to create a new one. */
@@ -282,6 +294,94 @@ export function ScheduleForm({
   // keychain secret counts as filled even though it renders blank.
   const missingRequiredVars = requiredVars.filter(
     (name) => (effectiveVariableValues[name] ?? "").trim() === "",
+  );
+
+  const scheduleAssistantDraft = useMemo<ScheduleAssistantDraft>(
+    () => ({
+      name: name.trim(),
+      enabled,
+      targetKind,
+      targetId,
+      cron: activeCron,
+      variableValues:
+        targetKind === "command"
+          ? effectiveVariableValues
+          : ((schedule?.variableValues ?? {}) as Record<string, unknown>),
+      skipIfRunning,
+      captureOutput,
+      catchUpPolicy: catchUp ? catchUpMode : "none",
+      timeoutSeconds:
+        useTimeout && targetKind === "command" ? timeoutSeconds : undefined,
+      maxRetries: retryOnError ? maxRetries : 0,
+    }),
+    [
+      activeCron,
+      catchUp,
+      catchUpMode,
+      captureOutput,
+      effectiveVariableValues,
+      enabled,
+      maxRetries,
+      name,
+      retryOnError,
+      schedule?.variableValues,
+      skipIfRunning,
+      targetId,
+      targetKind,
+      timeoutSeconds,
+      useTimeout,
+    ],
+  );
+  const scheduleAssistantContext = useMemo(
+    () =>
+      buildScheduleAssistantContext(
+        scheduleAssistantDraft,
+        createAssistantDraftVersion(scheduleAssistantDraft),
+      ),
+    [scheduleAssistantDraft],
+  );
+  const [assistantApplyError, setAssistantApplyError] =
+    useState<AssistantPatchApplyError | null>(null);
+  const applyAssistantPatch = useCallback(
+    (
+      patch: AssistantPatch,
+    ): { ok: boolean; error?: AssistantPatchApplyError } => {
+      const result = applyAssistantPatchToSchedule(
+        patch,
+        scheduleAssistantDraft,
+      );
+      if (!result.ok) {
+        setAssistantApplyError(result.error);
+        return { ok: false, error: result.error };
+      }
+      const next = result.value;
+      setName(next.name);
+      setEnabled(next.enabled);
+      setTargetKind(next.targetKind);
+      setTargetId(next.targetId);
+      setRecurrence(parseCron(next.cron));
+      setSkipIfRunning(next.skipIfRunning);
+      setCaptureOutput(next.captureOutput);
+      setCatchUp(next.catchUpPolicy !== "none");
+      setCatchUpMode(next.catchUpPolicy === "all" ? "all" : "once");
+      setUseTimeout(next.timeoutSeconds !== undefined);
+      setTimeoutSeconds(next.timeoutSeconds ?? 30);
+      setMaxRetries(next.maxRetries);
+      setEnabled(next.enabled);
+      if (next.targetKind === "command") {
+        setRetryOnError(next.maxRetries > 0);
+        setVariableValues(
+          Object.fromEntries(
+            Object.entries(next.variableValues).flatMap(([key, value]) =>
+              typeof value === "string" ? [[key, value] as const] : [],
+            ),
+          ),
+        );
+      }
+      setAssistantApplyError(null);
+      return { ok: true };
+    },
+    [scheduleAssistantDraft],
   );
 
   // Weekly with no selected days has no meaningful cron; block save until at
@@ -923,6 +1023,21 @@ export function ScheduleForm({
         ) : null}
       </div>
 
+      <ContextMenuProvider>
+        <AssistantPanel
+          target="schedule"
+          objectId={schedule?.id ?? null}
+          draftVersion={scheduleAssistantContext.draftVersion}
+          context={scheduleAssistantContext}
+          title={t("assistant.title")}
+          onApplyPatch={applyAssistantPatch}
+        />
+      </ContextMenuProvider>
+      {assistantApplyError !== null ? (
+        <p className="assistant-panel__error" role="alert">
+          {t("assistant.applyFailed")}
+        </p>
+      ) : null}
     </div>
   );
 }

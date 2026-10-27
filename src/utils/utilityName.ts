@@ -29,6 +29,76 @@ const ESCALATION_TOOLS: readonly string[] = ["sudo", "doas", "pkexec"];
 const COMMAND_SEPARATORS: readonly string[] = ["&&", "||", ";", "|", "&"];
 
 /**
+ * Reserved words that are never themselves a runnable utility and
+ * cannot directly introduce the first command in their own segment.
+ */
+const SHELL_DELIMITER_WORDS: readonly string[] = [
+  "then",
+  "elif",
+  "else",
+  "fi",
+  "do",
+  "done",
+  "esac",
+  "in",
+];
+
+/**
+ * Reserved words that introduce a compound construct. For condition
+ * loops, the next safe token is the first real command; looping
+ * headers (`for`/`select`) and function definitions have no such
+ * command before `do` or the function body, so they stay unhinted.
+ */
+const SHELL_INTRODUCER_WORDS: readonly string[] = [
+  "if",
+  "while",
+  "until",
+  "time",
+  "for",
+  "case",
+  "function",
+  "select",
+];
+
+/**
+ * Delimiter words that cannot precede the first command of their
+ * construct in the same command segment. This intentionally covers the
+ * common Bourne-shell keywords without pretending to be a full parser.
+ */
+const SHELL_COMPOUND_HEADER_WORDS: readonly string[] = [
+  "for",
+  "select",
+  "case",
+  "function",
+];
+
+const ALL_SHELL_RESERVED_WORDS: readonly string[] = [
+  ...SHELL_DELIMITER_WORDS,
+  ...SHELL_INTRODUCER_WORDS,
+];
+
+/**
+ * Advance past a shell compound introducer when the construct exposes
+ * its first command in the same segment. Returns `null` when the
+ * introducer owns a header (or has no following command), so no
+ * misleading utility lookup is produced.
+ */
+function skipShellCompound(
+  tokens: ReadonlyArray<OffsetToken>,
+  introducer: string,
+  start: number,
+): number | null {
+  if (SHELL_COMPOUND_HEADER_WORDS.includes(introducer)) return null;
+
+  let index = skipEnvAssignments(tokens, start + 1);
+  const maybePrefix = tokens[index];
+  if (maybePrefix !== undefined && ESCALATION_TOOLS.includes(maybePrefix.text)) {
+    index = skipEnvAssignments(tokens, index + 1);
+  }
+  return index;
+}
+
+/**
  * The leading utility of a script together with its exact location in
  * the ORIGINAL source string, so callers can highlight the token in
  * place (the script-field overlay) and not just know its name.
@@ -239,11 +309,23 @@ function utilityRangeOfSegment(
 
   const candidate = tokens[index];
   if (candidate === undefined) return null;
+  if (SHELL_DELIMITER_WORDS.includes(candidate.text)) return null;
+
+  if (SHELL_INTRODUCER_WORDS.includes(candidate.text)) {
+    const nextIndex = skipShellCompound(tokens, candidate.text, index);
+    if (nextIndex === null) return null;
+    index = nextIndex;
+  }
+
+  const command = tokens[index];
+  if (command === undefined) return null;
+  if (ALL_SHELL_RESERVED_WORDS.includes(command.text)) return null;
   if (!isSafeUtilityToken(candidate.text)) return null;
+
   return {
-    name: candidate.text,
-    start: candidate.start,
-    end: candidate.start + candidate.text.length,
+    name: command.text,
+    start: command.start,
+    end: command.start + command.text.length,
   };
 }
 

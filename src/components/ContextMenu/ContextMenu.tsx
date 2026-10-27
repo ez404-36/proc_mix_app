@@ -29,7 +29,7 @@ const MENU_MARGIN = 8;
 /**
  * True when `el` (or any ancestor up to the document root) carries the
  * `.selectable` helper class or is a known read-only selectable cell/path
- * in the Environment view. Used by the context-menu handler to show a
+ * in the System view. Used by the context-menu handler to show a
  * Copy-only menu on read-only text that the user has selected.
  */
 function isSelectableReadOnly(el: HTMLElement | null): boolean {
@@ -547,7 +547,7 @@ export function ContextMenuProvider({
   // takes precedence for editable targets.
   //
   // Also handles right-click on read-only selectable text (table cells,
-  // source paths in the Environment view, any `.selectable` element) —
+  // source paths in the System view, any `.selectable` element) —
   // shows a Copy-only menu when the user has selected text there.
   useEffect(() => {
     const handler = (event: MouseEvent): void => {

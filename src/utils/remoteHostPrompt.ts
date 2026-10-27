@@ -4,7 +4,7 @@
 // lives outside the React tree, so the picker is opened via a handler the
 // `<RemoteHostPrompt>` component registers at mount. The component reads the
 // host inventory from the shared `useSshHostStore` (the same source as the
-// Environment → Connections tab), so the offered list always matches.
+// System → SSH connections tab), so the offered list always matches.
 //
 // Thin specialization of the shared `createPromptRegistry` factory.
 

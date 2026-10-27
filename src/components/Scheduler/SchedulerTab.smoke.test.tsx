@@ -1,5 +1,4 @@
-// Smoke test for the Scheduler view (a top-level sidebar view since the
-// scheduler was promoted out of the Library tab strip).
+// Smoke test for the Schedules tab in the Library.
 //
 // We mock the repository surfaces (IPC) so the test never crosses the Tauri
 // boundary, but the stores, services, and SchedulerTab component all run
@@ -63,7 +62,11 @@ function makeSchedule(overrides: Partial<Schedule> = {}): Schedule {
 
 function resetStores(): void {
   useScheduleStore.setState({ schedules: [], hydrated: true });
-  useUIStore.setState({ currentView: "scheduler", scheduleEditorTarget: null });
+  useUIStore.setState({
+    currentView: "library",
+    libraryTab: "schedules",
+    scheduleEditorTarget: null,
+  });
 }
 
 function renderScheduler(): void {
@@ -81,21 +84,16 @@ afterEach(() => {
   resetStores();
 });
 
-describe("Scheduler view", () => {
+describe("Schedules Library tab", () => {
   it("shows the Scheduler UI and the empty-state", () => {
     renderScheduler();
 
     expect(
       screen.getByText(
-        "Schedules run only while ProcMix is running (including minimized to the tray).",
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
         "No schedules yet. Create one to run a command or workflow automatically.",
       ),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "New schedule" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New schedule" })).toBeNull();
   });
 
   it("with a schedule shows its card and cron", () => {
@@ -107,29 +105,6 @@ describe("Scheduler view", () => {
 
     expect(screen.getByText("Nightly backup")).toBeTruthy();
     expect(screen.getByText("0 2 * * *")).toBeTruthy();
-  });
-
-  it("New schedule button is always enabled", () => {
-    renderScheduler();
-
-    const newButton = screen.getByRole("button", { name: "New schedule" });
-    expect((newButton as HTMLButtonElement).disabled).toBe(false);
-  });
-});
-
-describe("Scheduler view — navigation to the editor page", () => {
-  it("New schedule navigates to the scheduler-editor view with a create target", () => {
-    renderScheduler();
-
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "New schedule" }));
-    });
-
-    expect(useUIStore.getState().currentView).toBe("scheduler-editor");
-    expect(useUIStore.getState().scheduleEditorTarget).toEqual({
-      mode: "create",
-      scheduleId: null,
-    });
   });
 
   it("View → Edit navigates with an edit target carrying the id", () => {

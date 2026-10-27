@@ -7,9 +7,9 @@ import { SshConnectionsTab } from './SshConnectionsTab';
 type Section = 'systemVars' | 'connections';
 
 /**
- * The "Environment" view shell. Hosts two top-level tabs:
+ * The "System" view shell. Hosts two top-level tabs:
  *   - "System variables" — the read-only env snapshot (user/root sub-tabs).
- *   - "Connections" — the read-only SSH host inventory.
+ *   - "SSH connections" — the read-only SSH host inventory.
  *
  * The top-level tabs use a dedicated `env-manager__section-tab*` class family
  * so they don't collide with the user/root sub-tabs inside SystemVarsTab
@@ -49,7 +49,7 @@ export function EnvManager(): ReactElement {
           }`}
           onClick={() => setSection('connections')}
         >
-          {t('envManager.sectionTabs.connections', { defaultValue: 'Connections' })}
+          {t('envManager.sectionTabs.connections', { defaultValue: 'SSH connections' })}
         </button>
       </div>
 

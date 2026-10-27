@@ -10,7 +10,7 @@ import { EnvSnapshotTable } from './EnvSnapshotTable';
 type Scope = 'user' | 'root';
 
 /**
- * "System variables" tab of the Environment view: the read-only env snapshot
+ * "System variables" tab of the System view: the read-only env snapshot
  * with a user/root sub-switch. This is the original EnvManager body, extracted
  * unchanged so the new top-level tab shell (`EnvManager`) can sit "Connections"
  * alongside it. The user/root sub-tabs keep their existing `env-manager__tab*`

@@ -69,6 +69,7 @@ import { ContextMenuProvider } from "../ContextMenu";
 import { useCommandStore } from "../../stores/commandStore";
 import { useMiniAppStore } from "../../stores/miniappStore";
 import { useMiniAppWindowStore } from "../../stores/miniappWindowStore";
+import { useScheduleStore } from "../../stores/scheduleStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import type { Command, MiniApp, MiniAppWidget, Workflow } from "../../types";
@@ -146,6 +147,7 @@ function resetStores(): void {
     hydrated: true,
   });
   useMiniAppWindowStore.setState({ runningIds: new Set() });
+  useScheduleStore.setState({ schedules: [], hydrated: true });
   useUIStore.setState({
     libraryTab: "commands",
     editorWorkflowId: null,
@@ -153,6 +155,7 @@ function resetStores(): void {
     commandEditorTarget: null,
     miniappEditorId: null,
     miniappRunnerId: null,
+    scheduleEditorTarget: null,
   });
 }
 
@@ -640,6 +643,26 @@ describe("Library — filters persist across a tab switch", () => {
     ).toBeTruthy();
     expect(screen.getByText("Deploy pipeline")).toBeTruthy();
     expect(screen.queryByText("Backup routine")).toBeNull();
+  });
+});
+
+describe("Library Schedules tab — editor navigation", () => {
+  it("New schedule navigates to the schedule editor with a create target", () => {
+    useUIStore.setState({ libraryTab: "schedules" });
+    renderLibrary();
+
+    expect(
+      screen.getByRole("button", { name: "About schedule availability" }),
+    ).toBeTruthy();
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "New schedule" }));
+    });
+
+    expect(useUIStore.getState().currentView).toBe("scheduler-editor");
+    expect(useUIStore.getState().scheduleEditorTarget).toEqual({
+      mode: "create",
+      scheduleId: null,
+    });
   });
 });
 

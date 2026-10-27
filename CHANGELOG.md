@@ -5,6 +5,38 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-10-27
+
+### Added
+
+- **Run-scoped AI assistant.** Console and history runs can open a dedicated
+  assistant chat, persist its messages per run, ask questions about a completed
+  run, and attach a bounded redacted run snapshot only after explicit user
+  consent.
+- **Per-object assistant run permissions.** Access to run output and results is
+  controlled per command/workflow/mini-app (or system-wide); without permission
+  the assistant sees only run metadata.
+- **PR CI workflow.** Release pull requests now run frontend lint/typecheck/
+  tests/build, Rust clippy/tests/build (including the `ssh-askpass` sidecar),
+  and the embedded web UI build before they can reach `main`.
+
+### Changed
+
+- **Library compact tiles.** Compact tiles now prioritize entity names by
+  removing quick action and favorite icons, shell/widget count badges, and
+  redundant tooltips; commands use the tile tooltip for their description when
+  one exists.
+- **Object preview headers.** Read-only command/workflow previews keep the
+  title, copy-ID control, and badges on one line, show the description below
+  the header only when it exists, and replace the visible UUID with a
+  copy-ID action.
+
+### Removed
+
+- **Process capture and Recorder.** The legacy process-capture backend,
+  Recorder UI, and related stores/services were removed in favor of the
+  assistant's explicit run-snapshot flow.
+
 ## [0.15.5] - 2026-10-10
 
 ### Added

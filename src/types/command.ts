@@ -44,7 +44,7 @@ export type CommandScope = "local" | "global";
  *     is byte-identical to commands that predate this feature.
  *   - `{ kind: "remote"; alias }`: the script runs on a remote host over SSH.
  *     `alias` is a `Host` name from `~/.ssh/config` (the same inventory shown
- *     in Environment → Connections). The Rust executor spawns the system
+ *     in System → SSH connections). The Rust executor spawns the system
  *     `ssh` binary with a fixed argv (`ssh <alias> -- <shell> -c <script>`);
  *     `alias` is allow-list validated before it reaches the process.
  *   - `{ kind: "remotePrompt" }`: the host is chosen at run time. This value
@@ -354,12 +354,10 @@ export interface UtilityHelp {
 export type View =
   | "home"
   | "library"
-  | "scheduler"
   | "scheduler-editor"
   | "editor"
   | "command-editor"
   | "history"
-  | "recorder"
   | "settings"
   | "plugins"
   | "env"
@@ -405,8 +403,12 @@ export interface CommandEditorTarget {
   returnTo?: View;
 }
 
-/** Active tab within the Library view: commands, workflows, or mini-apps. */
-export type LibraryTab = "commands" | "workflows" | "miniapps";
+/** Active tab within the Library view. */
+export type LibraryTab =
+  | "commands"
+  | "workflows"
+  | "schedules"
+  | "miniapps";
 
 export type Theme = "light" | "dark" | "system";
 

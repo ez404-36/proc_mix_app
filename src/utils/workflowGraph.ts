@@ -144,7 +144,9 @@ function edgeToFlowEdge(edge: WorkflowEdge): WorkflowFlowEdge {
 }
 
 /** Convert a persisted workflow into reactflow nodes + edges for the canvas. */
-export function workflowToFlow(workflow: Workflow): {
+export function workflowToFlow(
+  workflow: Pick<Workflow, "nodes" | "edges">,
+): {
   nodes: WorkflowFlowNode[];
   edges: WorkflowFlowEdge[];
 } {

@@ -97,6 +97,7 @@ import {
 } from "../../stores/editorDraftStore";
 import { INSERT_SHIFT_X, insertNodeOnEdge } from "../../utils/workflowGraph";
 import type { Command, Workflow } from "../../types";
+import { ContextMenuProvider } from "../ContextMenu";
 import { Editor } from "./Editor";
 
 function makeCommand(overrides: Partial<Command> = {}): Command {
@@ -137,6 +138,15 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
   };
 }
 
+/** AssistantPanel is mounted with the editor, so provide the menu context. */
+function renderEditor(): ReturnType<typeof render> {
+  return render(
+    <ContextMenuProvider>
+      <Editor />
+    </ContextMenuProvider>,
+  );
+}
+
 function resetStores(): void {
   useCommandStore.setState({
     commands: [makeCommand()],
@@ -174,7 +184,7 @@ afterEach(() => {
 describe("Editor shell", () => {
   it("renders the palette node buttons and the canvas", () => {
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     expect(screen.getByTestId("reactflow")).toBeTruthy();
     // Node-type buttons, including the new empty "Command" node, are present.
@@ -189,7 +199,7 @@ describe("Editor shell", () => {
 
   it("labels the destructive toolbar action 'Clear' for a new workflow", () => {
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     // New (unsaved) draft → the action clears the canvas.
     expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
@@ -203,7 +213,7 @@ describe("Editor shell", () => {
     });
     useUIStore.setState({ editorWorkflowId: "wf-1" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     // Editing an existing workflow → the action discards edits ("Cancel").
     expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
@@ -212,7 +222,7 @@ describe("Editor shell", () => {
 
   it("opens the details modal when saving a brand-new (unnamed) workflow", () => {
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -228,7 +238,7 @@ describe("Editor shell", () => {
     });
     useUIStore.setState({ editorWorkflowId: "wf-1" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     expect(screen.getByText("Deploy")).toBeTruthy();
   });
@@ -240,7 +250,7 @@ describe("Editor shell", () => {
     });
     useUIStore.setState({ editorWorkflowId: "wf-1" });
 
-    const first = render(<Editor />);
+    const first = renderEditor();
     // The canvas hydrated the saved 2-node graph from the workflow store.
     expect(useEditorDraftStore.getState().nodes).toHaveLength(2);
 
@@ -266,7 +276,7 @@ describe("Editor shell", () => {
     // Navigate back to the SAME target: remount. The draft must be preserved
     // verbatim — NOT re-hydrated from the (unchanged) 2-node saved workflow.
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     const nodeIds = useEditorDraftStore.getState().nodes.map((n) => n.id);
     expect(nodeIds).toHaveLength(3);
@@ -281,7 +291,7 @@ describe("Editor shell", () => {
     useUIStore.setState({ editorWorkflowId: "wf-1" });
 
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     // Add an unsaved node so we can observe the reset.
     act(() => {
@@ -320,7 +330,7 @@ describe("Editor shell", () => {
   it("re-disables Run after clearing an unsaved workflow", () => {
     // New (unsaved) workflow → hydrates to a single start node, Run disabled.
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     expect(
       screen.getByRole("button", { name: "Run" }),
@@ -356,7 +366,7 @@ describe("Editor shell", () => {
   it("appends a connected (unbound) command node when the + Command button is clicked", () => {
     // New workflow → the draft hydrates to a single start node.
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     expect(useEditorDraftStore.getState().nodes).toHaveLength(1);
     expect(useEditorDraftStore.getState().edges).toHaveLength(0);
@@ -381,7 +391,7 @@ describe("Editor shell", () => {
 
   it("disables Run until there is a step beyond start, enables it after", () => {
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     const runBtn = screen.getByRole("button", { name: "Run" });
     // Only the start node exists → Run is disabled.
@@ -398,7 +408,7 @@ describe("Editor shell", () => {
 
   it("appends a connected end node when the + End button is clicked", () => {
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "+ End" }));
@@ -421,7 +431,7 @@ describe("Editor shell", () => {
     });
     useUIStore.setState({ editorWorkflowId: "wf-1" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
 
     const before = useEditorDraftStore.getState();
@@ -463,7 +473,7 @@ describe("Editor shell", () => {
     useUIStore.setState({ editorWorkflowId: "wf-1" });
 
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     act(() => {
       useEditorDraftStore.getState().setNodes((nds) => [
@@ -501,7 +511,7 @@ describe("Editor shell", () => {
     useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
     useUIStore.setState({ editorWorkflowId: "wf-1" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save & Exit" })).toBeTruthy();
@@ -511,7 +521,7 @@ describe("Editor shell", () => {
     useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
     useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     act(() => {
       useEditorDraftStore.getState().setNodes((nds) => [
@@ -541,7 +551,7 @@ describe("Editor shell", () => {
     useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
     useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Save & Exit" }));
@@ -553,7 +563,7 @@ describe("Editor shell", () => {
     useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
     useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     // Clean draft → Close navigates without a confirmation dialog.
     act(() => {
@@ -567,7 +577,7 @@ describe("Editor shell", () => {
     useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
     useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     act(() => {
       useEditorDraftStore.getState().setNodes((nds) => [
@@ -598,7 +608,7 @@ describe("Editor shell", () => {
 
   it("exposes Undo and Redo toolbar actions", () => {
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Redo" })).toBeTruthy();
@@ -606,7 +616,7 @@ describe("Editor shell", () => {
 
   it("undoes a palette node addition", () => {
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     expect(useEditorDraftStore.getState().nodes).toHaveLength(1);
 
@@ -634,7 +644,7 @@ describe("Editor shell", () => {
     // A new (null) workflow has never been saved → em-dash placeholder.
     useUIStore.setState({ editorWorkflowId: null, currentView: "editor" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     expect(screen.getByText("Last saved: —")).toBeTruthy();
   });
@@ -647,7 +657,7 @@ describe("Editor shell", () => {
     });
     useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
     // Entering edit mode seeds the indicator from the persisted updatedAt —
     // it must NOT show the em-dash placeholder.
@@ -661,7 +671,7 @@ describe("Editor shell", () => {
     useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
     useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
 
     const iso = "2026-06-15T10:20:30.000Z";
@@ -695,7 +705,7 @@ describe("Editor shell", () => {
     useWorkflowStore.setState({ workflows: [makeWorkflow()], hydrated: true });
     useUIStore.setState({ editorWorkflowId: "wf-1", currentView: "editor" });
     act(() => {
-      render(<Editor />);
+      renderEditor();
     });
   }
 

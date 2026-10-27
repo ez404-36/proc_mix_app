@@ -20,7 +20,6 @@ use crate::core::http_server::{self, HttpServerState};
 use crate::core::scheduler::{self, SchedulerState};
 use crate::core::terminal::TerminalState;
 use crate::core::workflow::WorkflowExecutorState;
-use crate::platform::process_watch::WatcherState;
 
 /// Install the process-wide `tracing` subscriber exactly once, on startup.
 ///
@@ -116,7 +115,6 @@ pub fn run() {
         // the console). Deliberately separate from `ExecutorState` — see
         // `core::terminal` module docs and `docs/interactive-terminal.md`.
         .manage(Arc::new(TerminalState::new()))
-        .manage(Arc::new(WatcherState::new()))
         // Cron Scheduler state (v0.2.0). The loop itself is spawned in the
         // setup hook once the DB pool exists; this holds the reload signal
         // the schedule commands pulse on every mutation.
@@ -126,6 +124,9 @@ pub fn run() {
         // holds the running handle + shutdown signal + request log the Tauri
         // commands operate on.
         .manage(Arc::new(HttpServerState::new()))
+        .manage(Arc::new(
+            crate::core::assistant::state::AssistantState::new(),
+        ))
         // Shared SSH inventory baseline: the watcher diffs against it and the
         // save/delete commands advance it to echo-suppress ProcMix's own
         // writes (so they aren't logged as external changes).
@@ -314,6 +315,25 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::execute_command,
+            commands::get_assistant_settings,
+            commands::set_assistant_settings,
+            commands::list_assistant_provider_presets,
+            commands::list_assistant_providers,
+            commands::save_assistant_provider,
+            commands::set_assistant_provider_enabled,
+            commands::delete_assistant_provider,
+            commands::assistant_provider_api_key_status,
+            commands::set_assistant_provider_api_key,
+            commands::clear_assistant_provider_api_key,
+            commands::test_assistant_provider,
+            commands::list_assistant_provider_models,
+            commands::set_assistant_provider_model_hidden,
+            commands::set_assistant_active_provider,
+            commands::set_assistant_active_model,
+            commands::get_assistant_run_access,
+            commands::set_assistant_run_access,
+            commands::assistant_generate,
+            commands::assistant_cancel,
             commands::cancel_execution,
             commands::list_running_executions,
             commands::update_tray_menu,
@@ -377,10 +397,6 @@ pub fn run() {
             commands::clear_history,
             commands::export_data,
             commands::import_data,
-            commands::start_process_capture,
-            commands::stop_process_capture,
-            commands::process_capture_status,
-            commands::list_capture_targets,
             commands::get_process_env,
             commands::list_env_files,
             commands::add_env_file,

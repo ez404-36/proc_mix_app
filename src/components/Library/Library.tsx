@@ -77,9 +77,12 @@ import { ALL_CATEGORIES, LibraryFilterBar } from "./LibraryFilterBar";
 import { CategoryGroupSection } from "./CategoryGroupSection";
 import type { SortOption } from "../ListControls/ListControls";
 import { Pagination } from "../Pagination/Pagination";
+import { HelpTooltip } from "../HelpTooltip";
+import { SchedulerTab } from "../Scheduler";
 import {
   CopyIcon,
   EditIcon,
+  FavoriteIcon,
   PlusIcon,
   RunIcon,
   SpinnerIcon,
@@ -236,47 +239,21 @@ function CommandCard({
     >
       <div className="list-tile__head">
         <div className="list-tile__heading">
-          <h3 className="list-tile__title" title={displayName}>
+          {/* Full tiles already show the description. In compact mode, use
+              the native title as extra room for description, falling back to
+              the name only when no description exists. */}
+          <h3
+            className="list-tile__title"
+            title={compact ? displayDesc || displayName : undefined}
+          >
             {displayName}
           </h3>
           {!compact && displayDesc ? (
             <p className="list-tile__desc">{displayDesc}</p>
           ) : null}
         </div>
-        {compact ? (
-          <div className="list-tile__head-actions">
-            <button
-              type="button"
-              className="btn btn--run btn--icon"
-              onClick={handleRunClick}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={t("common.run")}
-              title={t("common.run")}
-            >
-              <RunIcon />
-            </button>
-            <button
-              type="button"
-              className="btn btn--view btn--icon"
-              onClick={handleViewClick}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={t("library.view")}
-              title={t("library.view")}
-            >
-              <ViewIcon />
-            </button>
-            <button
-              type="button"
-              className={`favorite-toggle${isFavorite ? " is-on" : ""}`}
-              onClick={handleFavoriteClick}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={favoriteLabel}
-              title={favoriteLabel}
-            >
-              {isFavorite ? "♥" : "♡"}
-            </button>
-          </div>
-        ) : (
+        {/* Compact tiles omit head controls so the name gets the full width. */}
+        {!compact ? (
           <button
             type="button"
             className={`favorite-toggle${isFavorite ? " is-on" : ""}`}
@@ -285,13 +262,15 @@ function CommandCard({
             aria-label={favoriteLabel}
             title={favoriteLabel}
           >
-            {isFavorite ? "♥" : "♡"}
+            <FavoriteIcon filled={isFavorite} />
           </button>
-        )}
+        ) : null}
       </div>
       <div className="list-tile__meta">
         <TargetBadge target={cmd.target} />
-        {cmd.shell ? <span className="shell-badge">{cmd.shell}</span> : null}
+        {!compact && cmd.shell ? (
+          <span className="shell-badge">{cmd.shell}</span>
+        ) : null}
         {!hideCategory &&
         cmd.categoryId !== undefined &&
         cmd.categoryId.trim() !== "" ? (
@@ -459,40 +438,8 @@ function WorkflowCard({
             <p className="list-tile__desc">{workflow.description}</p>
           ) : null}
         </div>
-        {compact ? (
-          <div className="list-tile__head-actions">
-            <button
-              type="button"
-              className="btn btn--run btn--icon"
-              onClick={handleRunClick}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={t("workflow.run")}
-              title={t("workflow.run")}
-            >
-              <RunIcon />
-            </button>
-            <button
-              type="button"
-              className="btn btn--view btn--icon"
-              onClick={handleViewClick}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={t("workflow.view")}
-              title={t("workflow.view")}
-            >
-              <ViewIcon />
-            </button>
-            <button
-              type="button"
-              className={`favorite-toggle${workflow.favorite ? " is-on" : ""}`}
-              onClick={handleFavoriteClick}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={favoriteLabel}
-              title={favoriteLabel}
-            >
-              {workflow.favorite ? "♥" : "♡"}
-            </button>
-          </div>
-        ) : (
+        {/* Compact tiles omit head controls so the name gets the full width. */}
+        {!compact ? (
           <button
             type="button"
             className={`favorite-toggle${workflow.favorite ? " is-on" : ""}`}
@@ -501,9 +448,9 @@ function WorkflowCard({
             aria-label={favoriteLabel}
             title={favoriteLabel}
           >
-            {workflow.favorite ? "♥" : "♡"}
+            <FavoriteIcon filled={workflow.favorite} />
           </button>
-        )}
+        ) : null}
       </div>
       <div className="list-tile__meta">
         {!hideCategory &&
@@ -612,7 +559,11 @@ function CommandTable({
               </button>
             </span>
             <span className="table__cell" role="cell">
-              {isFavorite ? "♥ " : ""}
+              {isFavorite ? (
+                <span className="favorite-indicator">
+                  <FavoriteIcon filled />
+                </span>
+              ) : null}
               {getCommandName(cmd, t)}
             </span>
             <span className="table__cell table__cell--muted" role="cell">
@@ -1039,7 +990,11 @@ function WorkflowTable({
             </button>
           </span>
           <span className="table__cell" role="cell">
-            {workflow.favorite ? "♥ " : ""}
+            {workflow.favorite ? (
+              <span className="favorite-indicator">
+                <FavoriteIcon filled />
+              </span>
+            ) : null}
             {workflow.name}
           </span>
           <span className="table__cell table__cell--muted" role="cell">
@@ -1501,41 +1456,8 @@ function MiniAppCard({
             <p className="list-tile__desc">{displayDescription}</p>
           ) : null}
         </div>
-        {compact ? (
-          <div className="list-tile__head-actions">
-            <button
-              type="button"
-              className={`btn btn--run btn--icon${isRunning ? " is-running" : ""}`}
-              onClick={handleRunClick}
-              onDoubleClick={(e) => e.stopPropagation()}
-              disabled={isRunning}
-              aria-label={isRunning ? t("miniapps.running") : t("miniapps.run")}
-              title={isRunning ? t("miniapps.running") : t("miniapps.run")}
-            >
-              {isRunning ? <SpinnerIcon /> : <RunIcon />}
-            </button>
-            <button
-              type="button"
-              className="btn btn--edit btn--icon"
-              onClick={handleEditClick}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={t("miniapps.edit")}
-              title={t("miniapps.edit")}
-            >
-              <EditIcon />
-            </button>
-            <button
-              type="button"
-              className={`favorite-toggle${miniapp.favorite ? " is-on" : ""}`}
-              onClick={handleFavoriteClick}
-              onDoubleClick={(e) => e.stopPropagation()}
-              aria-label={favoriteLabel}
-              title={favoriteLabel}
-            >
-              {miniapp.favorite ? "♥" : "♡"}
-            </button>
-          </div>
-        ) : (
+        {/* Compact tiles omit head controls so the name gets the full width. */}
+        {!compact ? (
           <button
             type="button"
             className={`favorite-toggle${miniapp.favorite ? " is-on" : ""}`}
@@ -1544,12 +1466,12 @@ function MiniAppCard({
             aria-label={favoriteLabel}
             title={favoriteLabel}
           >
-            {miniapp.favorite ? "♥" : "♡"}
+              <FavoriteIcon filled={miniapp.favorite} />
           </button>
-        )}
+        ) : null}
       </div>
       <div className="list-tile__meta">
-        <span className="shell-badge">{widgetLabel}</span>
+        {!compact ? <span className="shell-badge">{widgetLabel}</span> : null}
         {!hideCategory &&
         miniapp.categoryId !== undefined &&
         miniapp.categoryId.trim() !== "" ? (
@@ -1653,7 +1575,11 @@ function MiniAppTable({
               </button>
             </span>
             <span className="table__cell" role="cell">
-              {miniapp.favorite ? "♥ " : ""}
+              {miniapp.favorite ? (
+                <span className="favorite-indicator">
+                  <FavoriteIcon filled />
+                </span>
+              ) : null}
               {getMiniAppName(miniapp, t)}
             </span>
             <span className="table__cell table__cell--muted" role="cell">
@@ -2017,6 +1943,7 @@ export function Library(): ReactElement {
   const setCommandEditorDirty = useUIStore((s) => s.setCommandEditorDirty);
   const setEditorWorkflowId = useUIStore((s) => s.setEditorWorkflowId);
   const setMiniappEditorId = useUIStore((s) => s.setMiniappEditorId);
+  const setScheduleEditorTarget = useUIStore((s) => s.setScheduleEditorTarget);
 
   // Templates offered by the "From template" dialog, resolved for the host
   // platform on demand (see `handleOpenTemplateDialog`) rather than at app
@@ -2029,6 +1956,7 @@ export function Library(): ReactElement {
   const tabs: ReadonlyArray<{ key: LibraryTab; labelKey: string }> = [
     { key: "commands", labelKey: "workflow.tabs.commands" },
     { key: "workflows", labelKey: "workflow.tabs.workflows" },
+    { key: "schedules", labelKey: "workflow.tabs.schedules" },
     { key: "miniapps", labelKey: "workflow.tabs.miniapps" },
   ];
 
@@ -2041,6 +1969,11 @@ export function Library(): ReactElement {
   const handleNewWorkflow = (): void => {
     setEditorWorkflowId(null);
     setView("editor");
+  };
+
+  const handleNewSchedule = (): void => {
+    setScheduleEditorTarget({ mode: "create", scheduleId: null });
+    setView("scheduler-editor");
   };
 
   const handleNewMiniApp = (): void => {
@@ -2127,6 +2060,25 @@ export function Library(): ReactElement {
             <PlusIcon />
             {t("workflow.newLabel")}
           </button>
+        ) : libraryTab === "schedules" ? (
+          <div className="library-tabs-actions">
+            <HelpTooltip
+              id="library-schedules-availability-help"
+              buttonLabel={t("scheduler.runsWhileOpenHelp")}
+              body={t("scheduler.runsWhileOpen")}
+              placement="bottom-center"
+            />
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={handleNewSchedule}
+              aria-label={t("scheduler.new")}
+              title={t("scheduler.new")}
+            >
+              <PlusIcon />
+              {t("scheduler.newLabel")}
+            </button>
+          </div>
         ) : (
           <>
             <button
@@ -2157,6 +2109,8 @@ export function Library(): ReactElement {
         <CommandsTab />
       ) : libraryTab === "workflows" ? (
         <WorkflowsTab />
+      ) : libraryTab === "schedules" ? (
+        <SchedulerTab />
       ) : (
         <MiniAppsTab />
       )}

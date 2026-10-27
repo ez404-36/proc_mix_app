@@ -19,7 +19,7 @@ import { SshPasswordPrompt } from "./components/SshPasswordPrompt/SshPasswordPro
 import { Home } from "./components/Home";
 import { Library } from "./components/Library";
 import { MiniAppEditor, MiniAppRunner } from "./components/MiniApps";
-import { SchedulerTab, ScheduleEditor } from "./components/Scheduler";
+import { ScheduleEditor } from "./components/Scheduler";
 // Lazy-load the workflow Editor so @xyflow/react (~178 kB) is split into its
 // own async chunk rather than the startup bundle. The editor is only reached
 // via the "editor" view (opened on demand), so its reactflow dependency never
@@ -29,7 +29,6 @@ const Editor = lazy(() =>
 );
 import { CommandEditor } from "./components/CommandEditor";
 import { History } from "./components/History";
-import { Recorder } from "./components/Recorder";
 import { Settings } from "./components/Settings";
 import { Plugins } from "./components/Plugins";
 import { CommandPalette } from "./components/CommandPalette";
@@ -42,8 +41,6 @@ import {
   HomeIcon,
   LibraryIcon,
   PluginsIcon,
-  RecordIcon,
-  SchedulerIcon,
   SettingsIcon,
   SidebarToggleIcon,
   TerminalIcon,
@@ -67,9 +64,7 @@ interface NavItem {
   labelKey:
     | "nav.home"
     | "nav.library"
-    | "nav.scheduler"
     | "nav.history"
-    | "nav.recorder"
     | "nav.settings"
     | "nav.plugins"
     | "nav.env";
@@ -81,17 +76,10 @@ interface NavItem {
 // top-level menu item. It remains a valid `View` reachable through those
 // flows (see `renderView`), it just has no sidebar button.
 //
-// The "recorder" (Process Capture) item is shown on every platform as a
-// STUB: real capture is Windows-only (ETW), so on macOS/Linux the view
-// renders a "not yet available on this OS" notice instead of the controls
-// (see `Recorder.tsx` + `docs/process-capture.md`). We surface it rather
-// than hide it so the feature is discoverable.
 const NAV_ITEMS: NavItem[] = [
   { view: "home", labelKey: "nav.home", Icon: HomeIcon },
   { view: "library", labelKey: "nav.library", Icon: LibraryIcon },
-  { view: "scheduler", labelKey: "nav.scheduler", Icon: SchedulerIcon },
   { view: "history", labelKey: "nav.history", Icon: HistoryIcon },
-  { view: "recorder", labelKey: "nav.recorder", Icon: RecordIcon },
   { view: "env", labelKey: "nav.env", Icon: EnvIcon },
   { view: "plugins", labelKey: "nav.plugins", Icon: PluginsIcon },
   { view: "settings", labelKey: "nav.settings", Icon: SettingsIcon },
@@ -114,8 +102,6 @@ function renderView(view: View): ReactElement {
       return <Home />;
     case "library":
       return <Library />;
-    case "scheduler":
-      return <SchedulerTab />;
     case "scheduler-editor":
       return <ScheduleEditor />;
     case "editor":
@@ -124,8 +110,6 @@ function renderView(view: View): ReactElement {
       return <CommandEditor />;
     case "history":
       return <History />;
-    case "recorder":
-      return <Recorder />;
     case "env":
       return <EnvManager />;
     case "settings":

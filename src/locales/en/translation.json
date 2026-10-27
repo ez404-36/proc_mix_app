@@ -28,11 +28,9 @@
   "nav": {
     "home": "Home",
     "library": "Library",
-    "scheduler": "Scheduler",
     "history": "History",
-    "recorder": "Recorder",
     "miniapps": "Mini-Apps",
-    "env": "Environment",
+    "env": "System",
     "plugins": "Plugins",
     "settings": "Settings",
     "cycleThemeTitle": "Cycle theme",
@@ -70,7 +68,7 @@
   },
   "library": {
     "title": "Library",
-    "subtitle": "Manage your commands and workflows.",
+    "subtitle": "Manage commands, workflows, schedules, and mini-apps.",
     "newCommand": "New command",
     "searchPlaceholder": "Search by name, description, or tag…",
     "noResults": "No commands match your search.",
@@ -412,6 +410,7 @@
     "tabs": {
       "commands": "Commands",
       "workflows": "Workflows",
+    "schedules": "Scheduler",
       "miniapps": "Mini-Apps"
     },
     "new": "New workflow",
@@ -756,8 +755,6 @@
     "windowOpenFailed": "Could not open the mini-app window: {{message}}"
   },
   "scheduler": {
-    "title": "Scheduler",
-    "subtitle": "Run commands and workflows automatically on a schedule.",
     "searchPlaceholder": "Search schedules by name…",
     "new": "New schedule",
     "noSchedules": "No schedules yet. Create one to run a command or workflow automatically.",
@@ -768,6 +765,7 @@
     "enable": "Enable",
     "disable": "Disable",
     "runsWhileOpen": "Schedules run only while ProcMix is running (including minimized to the tray).",
+    "runsWhileOpenHelp": "About schedule availability",
     "nextRun": "Next run: {{time}}",
     "nextRunNever": "Next run: —",
     "lastRun": "Last run: {{time}}",
@@ -985,7 +983,10 @@
       "appearance": "Appearance",
       "sound": "Sound",
       "system": "System",
+      "systemAllowed": "System (Allow)",
+      "systemDenied": "System (Deny)",
       "security": "Security & data",
+      "assistant": "AI Assistant",
       "about": "About"
     },
     "appearance": {
@@ -1037,6 +1038,60 @@
       "clearError": "Failed to clear password",
       "subhint": "Stored securely in your OS keychain. Never written to disk by ProcMix.",
       "windowsHint": "Not used on Windows — UAC handles elevation when a command is marked Run as administrator."
+    },
+    "assistant": {
+      "title": "AI Assistant",
+      "description": "Object-scoped assistant for command, workflow and mini-app drafts. Disabled by default.",
+      "enabled": "Enable assistant",
+      "baseUrl": "OpenAI-compatible base URL",
+      "model": "Model",
+      "timeout": "Request timeout (seconds)",
+      "apiKey": "API key (optional)",
+      "keyStored": "The API key is stored in the OS keychain.",
+      "keyEmpty": "No API key is stored. Local endpoints often do not need one.",
+      "keyClear": "Clear API key",
+      "keyClearError": "Failed to clear the API key",
+      "remoteWarning": "This endpoint is remote. Draft context and explicitly approved run snapshots will be sent to that server.",
+      "remoteConsent": "I understand and want to allow this remote endpoint",
+      "runSnapshots": "Allow run snapshots",
+      "runSnapshotsHint": "Bounded, redacted results can be attached only after a manual run and explicit confirmation.",
+      "loading": "Loading assistant settings…",
+      "saved": "Assistant settings saved",
+      "saveError": "Failed to save assistant settings",
+      "loadError": "Failed to load assistant settings",
+      "activeModel": "Active model",
+      "noModel": "No model selected",
+      "providerModels": "Provider models",
+      "providerModelsHint": "Turn a model off to hide it from selectors.",
+      "modelVisibility": "Show model {{model}}",
+      "modelVisibilityError": "Failed to change model visibility",
+      "addProvider": "Add provider",
+      "editProvider": "Edit provider",
+      "noProviders": "No providers configured yet.",
+      "providerKind": "Provider type",
+      "providerName": "Display name",
+      "providerNamePlaceholder": "Leave empty for the default name",
+      "providerEnabled": "Provider enabled",
+      "providerSaved": "Provider saved",
+      "providerSaveError": "Failed to save provider",
+      "providerDeleteError": "Failed to delete provider",
+      "test": "Test and fetch models",
+      "testing": "Fetching models…",
+      "testSuccess": "Model catalog loaded: {{count}}.",
+      "testFailed": "Provider test failed",
+      "saveKey": "Save API key",
+      "keySaved": "API key saved",
+      "keySaveError": "Failed to save API key",
+      "providersTitle": "Providers",
+      "provider": "Provider",
+      "noProvider": "No provider selected",
+      "providerSelectError": "Failed to select provider",
+      "apiKeyRequired": "API key (required)",
+      "apiKeyOptional": "API key (optional)",
+      "keyRequiredHint": "Required for this provider.",
+      "keyRequired": "Enter the API key required by this provider.",
+      "codexConfigHint": "Uses the local Codex configuration and sign-in (~/.codex).",
+      "remoteConsentRequired": "Allow sending draft context to this remote endpoint first."
     },
     "data": {
       "title": "Import / Export",
@@ -1329,7 +1384,7 @@
       "checking": "Checking…",
       "reachable": "Host is reachable",
       "unreachable": "Host is unreachable: {{message}}",
-      "noHosts": "No SSH connections found. Add one in Environment → Connections.",
+      "noHosts": "No SSH connections found. Add one in System → SSH connections.",
       "remoteLimitations": "Remote runs ignore the working directory and environment variables, can't run as administrator, and use a POSIX shell (sh) on the host.",
       "promptSshPassword": "Ask for a password at run time",
       "promptSshPasswordHint": "You'll be asked for the SSH password before each run. It is used once and never saved — prefer SSH keys for repeated runs. (Unix only.)",
@@ -1444,7 +1499,7 @@
   "remoteHostPrompt": {
     "title": "Choose a remote host",
     "label": "SSH host",
-    "noHosts": "No SSH connections found. Add one in Environment → Connections.",
+    "noHosts": "No SSH connections found. Add one in System → SSH connections.",
     "submit": "Run",
     "cancel": "Cancel"
   },
@@ -1495,6 +1550,36 @@
     "workflowStepExit": "  exit {{code}}",
     "workflowRunFallbackTitle": "Workflow run",
     "timedOut": "Timed out",
+    "runAssistant": {
+      "title": "Run assistant",
+      "open": "Open run assistant",
+      "close": "Collapse run assistant",
+      "clearChat": "Clear chat history",
+      "clearChatTitle": "Clear chat history?",
+      "clearChatMessage": "All messages in this run’s assistant chat will be removed. This cannot be undone.",
+      "access": {
+        "ariaLabel": "Assistant access to run results",
+        "tooltip": "Assistant permissions",
+        "title": "Assistant permissions",
+        "section": "Operation result reading",
+        "systemAllowed": "System (Allow)",
+        "systemDenied": "System (Deny)",
+        "allow": "Allow",
+        "deny": "Deny"
+      },
+      "consent": {
+        "loading": "Checking run access…",
+        "title": "Allow reading this run?",
+        "description": "The assistant can use the bounded, redacted output and execution result. Choose what to allow.",
+        "deny": "Deny",
+        "deniedHint": "The assistant will see only metadata for this run. Its output and result are unavailable; you can paste the relevant output into the chat manually."
+      },
+      "objectDeniedTitle": "Access is denied for this object",
+      "objectDeniedHint": "The assistant can see only run metadata. Paste the output into the chat if you want help with it.",
+      "placeholder": "Ask about this run…",
+      "resize": "Resize run assistant",
+      "composerLabel": "Run assistant request"
+    },
     "tabs": {
       "output": "Output",
       "result": "Result"
@@ -1566,53 +1651,9 @@
       "loadFailed": "Failed to load layouts"
     }
   },
-  "processCapture": {
-    "title": "Recorder",
-    "experimental": "(experimental)",
-    "subtitle": "Capture the commands that other apps launch under the hood, and turn them into ProcMix commands.",
-    "explainer": "The Recorder watches the programs (processes) your computer starts — not your mouse clicks or what you type. While it's running, do something in another app that kicks off work (open a file, build, sync, export…); the command lines of any processes that app launches show up below, ready to save.",
-    "start": "Start recording",
-    "stop": "Stop recording",
-    "recording": "Recording…",
-    "clear": "Clear",
-    "selectAll": "Select all",
-    "selectNone": "Select none",
-    "selectedCount": "{{count}} selected",
-    "saveAsCommand": "Save as command",
-    "saveAsCommand_plural": "Save as commands",
-    "saveAsWorkflow": "Save as workflow",
-    "savedCommands_one": "Saved {{count}} command",
-    "savedCommands_other": "Saved {{count}} commands",
-    "savedWorkflow": "Saved workflow \"{{name}}\"",
-    "defaultWorkflowName": "Recorded workflow",
-    "empty": "No processes captured yet. Press Start, then trigger some work in another app — the command lines of the processes it launches will appear here.",
-    "emptyRecording": "Recording process launches… Trigger some work in another app (build, sync, export…) to capture the command lines it runs.",
-    "unsupported": "Process recording is not yet implemented on this operating system. It is currently available on Windows and Linux — macOS support is planned.",
-    "unsupportedBadge": "Windows only",
-    "startFailed": "Couldn't start recording. On Windows it uses an ETW trace session that needs administrator rights — run ProcMix as administrator and try again.",
-    "requiresPrivilege": "Couldn't start recording. On Linux the kernel process connector needs the CAP_NET_ADMIN capability. Grant it once with: sudo setcap cap_net_admin+ep <path-to-procmix>, then restart ProcMix.",
-    "scope": {
-      "label": "What to record",
-      "all": "All processes",
-      "search": "Search processes…",
-      "loading": "Loading processes…",
-      "active": "Recording {{name}} and its child processes",
-      "activeCount_one": "{{count}} app",
-      "activeCount_other": "{{count}} apps"
-    },
-    "column": {
-      "image": "Program",
-      "commandLine": "Command line"
-    },
-    "consent": {
-      "title": "Enable Process Capture?",
-      "message": "ProcMix will observe processes started on this computer while recording is on, and show their command lines so you can turn them into commands. Command lines may contain passwords or tokens — these are masked before display and are never saved unless you choose to save a command. The raw capture log is kept in memory only and is never written to disk.",
-      "accept": "Enable recording",
-      "decline": "Not now"
-    }
-  },
   "history": {
     "title": "History",
+    "assistantTitle": "Run assistant — {{name}}",
     "subtitle": "Recent actions performed on your commands.",
     "loading": "Loading history…",
     "noEvents": "No history yet.",
@@ -1739,8 +1780,8 @@
     }
   },
   "envManager": {
-    "title": "Environment",
-    "subtitle": "Read-only view of system environment variables and saved SSH connections. The System variables tab shows the process environment with best-effort source detection; the Connections tab lists SSH hosts from ~/.ssh/config.",
+    "title": "System",
+    "subtitle": "Read-only view of system environment variables and saved SSH connections. The System variables tab shows the process environment with best-effort source detection; the SSH connections tab lists SSH hosts from ~/.ssh/config.",
     "showValue": "Show value",
     "hideValue": "Hide value",
     "searchPlaceholder": "Filter by name or value…",
@@ -1760,7 +1801,7 @@
     "tabRoot": "Root",
     "sectionTabs": {
       "systemVars": "System variables",
-      "connections": "Connections"
+      "connections": "SSH connections"
     },
     "ssh": {
       "refresh": "Refresh",
@@ -2044,5 +2085,89 @@
       "deleteTitle": "Delete sound",
       "deleteMessage": "Delete “{{name}}”? Any command or workflow using it will fall back to the global default."
     }
+  },
+  "assistant": {
+    "title": "Assistant",
+    "thinking": "Thinking…",
+    "streaming": "Generating…",
+    "copyAll": "Copy chat",
+    "clearChat": "Clear chat history",
+    "clearChatTitle": "Clear chat history?",
+    "clearChatMessage": "All messages in this object’s assistant chat will be removed. This cannot be undone.",
+    "access": {
+      "ariaLabel": "Assistant access to run results",
+      "tooltip": "Assistant permissions",
+      "title": "Assistant permissions",
+      "section": "Operation result reading",
+      "systemAllowed": "System (Allow)",
+      "systemDenied": "System (Deny)",
+      "allow": "Allow",
+      "deny": "Deny",
+      "saveError": "Failed to change assistant permissions"
+    },
+    "placeholder": "Describe the change…",
+    "composerLabel": "Assistant request",
+    "sendHint": "Enter sends, Shift+Enter adds a line",
+    "send": "Send",
+    "actions": {
+      "proposePatch": "Proposed changes",
+      "requestRun": "Manual run requested",
+      "requestOutput": "Output requested"
+    },
+    "apply": "Apply changes",
+    "applied": "Applied",
+    "applyFailed": "The proposed change cannot be applied to the current draft.",
+    "applyErrors": {
+      "invalidDraft": "The current draft is invalid, so the proposed change cannot be applied.",
+      "invalidOperation": "The proposed patch contains an invalid operation.",
+      "invalidValue": "The proposed value is not valid for this field.",
+      "unsupportedPath": "The proposed field path is not supported.",
+      "applyFailed": "The proposed change cannot be applied to the current draft."
+    },
+    "run": {
+      "title": "Latest run result",
+      "exit": "exit code: {{code}}",
+      "status": "status: {{status}}",
+      "duration": "duration: {{duration}} ms",
+      "stdout": "stdout: {{size}} chars",
+      "stderr": "stderr: {{size}} chars",
+      "schema": "output schema: {{yes}}",
+      "preview": "Preview",
+      "send": "Send to assistant",
+      "dismiss": "Do not send",
+      "now": "Run draft manually",
+      "promptStatus": "Status",
+      "promptDuration": "Duration",
+      "prompt": "Analyze the complete attached run result and the command/workflow definition. Suggest draft changes if they are needed.",
+      "promptExit": "Exit code: {{code}}",
+      "stdoutLabel": "stdout",
+      "stderrLabel": "stderr",
+      "promptTruncated": "The beginning of this stream is omitted."
+    },
+    "errors": {
+      "disabled": "Assistant is disabled in Settings.",
+      "notConfigured": "Configure the endpoint and model.",
+      "authFailed": "The provider rejected the API key.",
+      "network": "The assistant endpoint is unavailable.",
+      "timeout": "The assistant request timed out.",
+      "provider": "The provider rejected the request.",
+      "providerHttp": "The provider rejected the request (HTTP {{status}}).",
+      "rateLimited": "The provider limit is exhausted. Try again later.",
+      "invalidAssistantResponse": "The assistant returned an invalid response.",
+      "inputTooLarge": "The draft is too large to send.",
+      "runSnapshotsDisabled": "The run result was not sent because “Allow run snapshots” is disabled in AI Assistant settings. Enable it and try again.",
+      "runSnapshotObjectDenied": "The run result was not sent because access is denied for this object.",
+      "invalidResponse": "The assistant response could not be used."
+    },
+    "backendCode": "Assistant error: {{code}}.",
+    "contractIssues": "The assistant returned an invalid response: {{issue}}.",
+    "contractIssues.action": "invalid action",
+    "contractIssues.messageLength": "message is too long",
+    "contractIssues.operation": "invalid patch operation",
+    "contractIssues.operationCount": "invalid number of patch operations",
+    "contractIssues.path": "patch path is not allowed",
+    "contractIssues.responseLength": "response is too long",
+    "contractIssues.summary": "invalid patch summary",
+    "contractIssues.warnings": "invalid warnings"
   }
 }

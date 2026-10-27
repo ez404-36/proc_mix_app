@@ -8,8 +8,8 @@
 //! is left as a plain `pub mod`.
 
 pub mod app;
+pub mod assistant;
 pub mod autostart;
-pub mod capture;
 pub mod command;
 pub mod history;
 pub mod http_server;
@@ -49,8 +49,8 @@ pub(crate) fn to_ipc_err<E: std::fmt::Display>(e: E) -> String {
 // flattened here.
 
 pub use app::*;
+pub use assistant::*;
 pub use autostart::*;
-pub use capture::*;
 pub use command::*;
 pub use history::*;
 pub use http_server::*;

@@ -9,14 +9,22 @@ import { AdminPasswordSection } from "./AdminPasswordSection";
 import { DataSection } from "./DataSection";
 import { UpdatesSection } from "./UpdatesSection";
 import { AboutSection } from "./AboutSection";
+import { AssistantSection } from "./AssistantSection";
 
-type SettingsTab = "appearance" | "sound" | "system" | "security" | "about";
+type SettingsTab =
+  | "appearance"
+  | "sound"
+  | "system"
+  | "security"
+  | "assistant"
+  | "about";
 
 const TABS: { key: SettingsTab; labelKey: string }[] = [
   { key: "appearance", labelKey: "settings.tabs.appearance" },
   { key: "sound", labelKey: "settings.tabs.sound" },
   { key: "system", labelKey: "settings.tabs.system" },
   { key: "security", labelKey: "settings.tabs.security" },
+  { key: "assistant", labelKey: "settings.tabs.assistant" },
   { key: "about", labelKey: "settings.tabs.about" },
 ];
 
@@ -65,6 +73,7 @@ export function Settings(): ReactElement {
           <DataSection />
         </>
       )}
+      {activeTab === "assistant" && <AssistantSection />}
       {activeTab === "about" && (
         <>
           <UpdatesSection />

@@ -4,6 +4,7 @@ import type { TFunction } from "i18next";
 import { Message } from "@arco-design/web-react";
 
 import type { Command, Execution, ExecutionEvent } from "../types";
+import type { ExtractedResult } from "../types/execution";
 import {
   isAdminPasswordRequiredError,
   setAdminPassword,
@@ -45,6 +46,8 @@ export interface UseCommandLiveRunOptions {
 export interface UseCommandLiveRunResult {
   /** Embedded live-run accumulated result. */
   runResult: RunResult;
+  /** Structured extraction from the latest embedded run, if schema existed. */
+  extractedResult: ExtractedResult | undefined;
   /** Sticky collapse state for the embedded output panel. */
   outputCollapsed: boolean;
   setOutputCollapsed: Dispatch<SetStateAction<boolean>>;
@@ -108,6 +111,7 @@ export function useCommandLiveRun(
   // process; `outputCollapsed` is sticky once expanded so subsequent
   // runs don't keep collapsing/expanding the panel.
   const [runResult, setRunResult] = useState<RunResult>(INITIAL_RUN_RESULT);
+  const [extractedResult, setExtractedResult] = useState<ExtractedResult>();
   const [outputCollapsed, setOutputCollapsed] = useState<boolean>(true);
 
   /** Currently in-flight execution id, captured in a ref so it is
@@ -247,6 +251,9 @@ export function useCommandLiveRun(
     // (Should never happen in practice because the Run button becomes
     // Cancel while running, but be defensive.)
     teardownRun();
+    // A previous run's structured result must never leak into a new run that
+    // emits no `result` event.
+    setExtractedResult(undefined);
 
     // Generate the id synchronously so every piece of state can be wired
     // up before any async boundary. The Rust executor will use this id
@@ -292,6 +299,14 @@ export function useCommandLiveRun(
             ...prev,
             lines: [...prev.lines, { stream: "stderr", text: event.line }],
           }));
+          return;
+        }
+        case "result": {
+          setExtractedResult({
+            fields: event.fields,
+            returnValue: event.returnValue,
+            ...(event.error !== undefined ? { error: event.error } : {}),
+          });
           return;
         }
         case "finished": {
@@ -602,6 +617,7 @@ export function useCommandLiveRun(
   /** Reset embedded run state to idle (open-target change). */
   const resetRun = useCallback((): void => {
     setRunResult(INITIAL_RUN_RESULT);
+    setExtractedResult(undefined);
     setOutputCollapsed(true);
   }, []);
 
@@ -665,6 +681,7 @@ export function useCommandLiveRun(
 
   return {
     runResult,
+    extractedResult,
     outputCollapsed,
     setOutputCollapsed,
     globalExecution,

@@ -8,6 +8,9 @@
 // undo/restore flows; `schedules` backs the cron Scheduler (v0.2.0) that
 // fires commands / workflows automatically while the app is running.
 
+pub mod assistant;
+pub mod assistant_providers;
+pub mod assistant_run_access;
 pub mod autostart;
 pub mod commands;
 pub mod db;

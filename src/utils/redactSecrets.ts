@@ -1,10 +1,10 @@
-// Secret redaction for captured command lines.
+// Secret redaction for command lines.
 //
-// Process Capture surfaces raw OS command lines, which can carry passwords
-// and tokens (`mysql --password=hunter2`, `curl -H "Authorization: Bearer
-// abc"`, `https://user:pw@host/...`). This module masks those values BEFORE
-// they are shown in the UI and again BEFORE anything derived from them is
-// saved (defence in depth). See `docs/process-capture.md`.
+// Raw OS command lines can carry passwords and tokens
+// (`mysql --password=hunter2`, `curl -H "Authorization: Bearer abc"`,
+// `https://user:pw@host/...`). This module masks those values BEFORE they
+// are shown in the UI and again BEFORE anything derived from them is
+// saved (defence in depth).
 //
 // PURE module: no IPC, no DOM — just string -> string. Fully unit-tested.
 //

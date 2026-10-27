@@ -80,6 +80,16 @@ import { IconPicker } from "./IconPicker";
 import { ArtifactRefInput } from "./ArtifactRefInput";
 import { MiniAppMetaModal } from "./MiniAppMetaModal";
 import { MiniAppWidget as MiniAppWidgetView } from "./MiniAppWidget";
+import { AssistantPanel } from "../Assistant";
+import type { AssistantPatch } from "../../types/assistant";
+import {
+  buildMiniAppAssistantContext,
+  createAssistantDraftVersion,
+} from "../../utils/assistantContext";
+import {
+  applyAssistantPatchToMiniApp,
+  type AssistantPatchApplyError,
+} from "../../utils/assistantPatches";
 
 /** Every shell variant recognised by the executor, in display order. */
 const SHELLS: readonly Shell[] = [
@@ -703,6 +713,13 @@ export function MiniAppEditor(): ReactElement | null {
   // open. Deletion of the whole mini-app is no longer offered from the
   // editor — it stays available from the Library list card's context menu.
   const [metaModalOpen, setMetaModalOpen] = useState<boolean>(false);
+  const miniAppAssistantContext = useMemo(
+    () => buildMiniAppAssistantContext(draft, createAssistantDraftVersion(draft)),
+    [draft],
+  );
+  const [assistantApplyError, setAssistantApplyError] = useState<
+    AssistantPatchApplyError | null
+  >(null);
 
   // The bordered main panel — widgets render inside it, and its dimensions
   // drive both the drag clamp bounds and the runner's render size.
@@ -808,10 +825,13 @@ export function MiniAppEditor(): ReactElement | null {
 
   // Metadata edits coalesce per patched key, so typing a description is one
   // undo step. `historyKey` lets a caller override the coalescing bucket.
-  const updateDraft = (patch: Partial<MiniApp>, historyKey?: string): void => {
-    pushHistory(historyKey ?? `draft:${Object.keys(patch).join(",")}`);
-    setDraft((d) => ({ ...d, ...patch }));
-  };
+  const updateDraft = useCallback(
+    (patch: Partial<MiniApp>, historyKey?: string): void => {
+      pushHistory(historyKey ?? `draft:${Object.keys(patch).join(",")}`);
+      setDraft((d) => ({ ...d, ...patch }));
+    },
+    [pushHistory],
+  );
 
   const updateWidget = (
     id: string,
@@ -824,6 +844,26 @@ export function MiniAppEditor(): ReactElement | null {
       widgets: d.widgets.map((w) => (w.id === id ? updater(w) : w)),
     }));
   };
+
+  const applyAssistantPatch = useCallback(
+    (
+      patch: AssistantPatch,
+    ): { ok: boolean; error?: AssistantPatchApplyError } => {
+      const result = applyAssistantPatchToMiniApp(patch, draft);
+      if (!result.ok) {
+        setAssistantApplyError(result.error);
+        return { ok: false };
+      }
+      if (validateMiniApp(result.value).length > 0) {
+        setAssistantApplyError("invalidValue");
+        return { ok: false };
+      }
+      updateDraft(result.value);
+      setAssistantApplyError(null);
+      return { ok: true };
+    },
+    [draft, updateDraft],
+  );
 
   // Layout mutations from the numeric fields and the arrow-nudge shortcut.
   // The pointer drags push their own single snapshot at pointer-DOWN and pass
@@ -1565,6 +1605,20 @@ export function MiniAppEditor(): ReactElement | null {
         onConfirm={confirmRemoveWidget}
         onCancel={() => setPendingDeleteId(null)}
       />
+
+      <AssistantPanel
+          target="miniapp"
+          objectId={editorId}
+          draftVersion={miniAppAssistantContext.draftVersion}
+          context={miniAppAssistantContext}
+          title={t("assistant.title")}
+          onApplyPatch={applyAssistantPatch}
+      />
+      {assistantApplyError !== null ? (
+        <p className="assistant-panel__error" role="alert">
+          {t("assistant.applyFailed")}
+        </p>
+      ) : null}
     </div>
   );
 }
