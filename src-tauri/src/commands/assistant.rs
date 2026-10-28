@@ -36,6 +36,9 @@ const MAX_PROVIDER_NAME_CHARS: usize = 200;
 const ERR_CANCELLED: &str = "ASSISTANT_CANCELLED";
 const ERR_DISABLED: &str = "ASSISTANT_DISABLED";
 const ERR_NOT_CONFIGURED: &str = "ASSISTANT_NOT_CONFIGURED";
+const ERR_NO_ACTIVE_PROVIDER: &str = "ASSISTANT_NO_ACTIVE_PROVIDER";
+const ERR_NO_ACTIVE_MODEL: &str = "ASSISTANT_NO_ACTIVE_MODEL";
+const ERR_API_KEY_MISSING: &str = "ASSISTANT_API_KEY_MISSING";
 const ERR_INPUT_TOO_LARGE: &str = "ASSISTANT_INPUT_TOO_LARGE";
 const ERR_RUN_SNAPSHOTS_DISABLED: &str = "ASSISTANT_RUN_SNAPSHOTS_DISABLED";
 const ERR_RUN_SNAPSHOT_OBJECT_DENIED: &str = "ASSISTANT_RUN_SNAPSHOT_DENIED_FOR_OBJECT";
@@ -135,6 +138,11 @@ fn backend_error(error: AssistantBackendError) -> String {
     let code = match error {
         AssistantBackendError::Disabled => "DISABLED",
         AssistantBackendError::NotConfigured => "NOT_CONFIGURED",
+        AssistantBackendError::NoActiveProvider => "NO_ACTIVE_PROVIDER",
+        AssistantBackendError::NoActiveModel => "NO_ACTIVE_MODEL",
+        AssistantBackendError::CodexNotConfigured => "CODEX_NOT_CONFIGURED",
+        AssistantBackendError::ApiKeyMissing => "API_KEY_MISSING",
+        AssistantBackendError::RemoteNotAllowed => "REMOTE_NOT_ALLOWED",
         AssistantBackendError::AuthFailed => "AUTH_FAILED",
         AssistantBackendError::Network => "NETWORK",
         AssistantBackendError::Timeout => "TIMEOUT",
@@ -185,7 +193,7 @@ async fn provider_config(
     let api_key = crate::security::assistant_api_key::get_for_provider(&provider.id)
         .map_err(super::to_ipc_err)?;
     if requires_api_key(provider.kind) && api_key.is_none() {
-        return Err(ERR_NOT_CONFIGURED.to_string());
+        return Err(ERR_API_KEY_MISSING.to_string());
     }
 
     Ok(ProviderConfig {
@@ -465,15 +473,15 @@ pub async fn assistant_generate(
     let active_provider_id = settings
         .active_provider_id
         .clone()
-        .ok_or_else(|| ERR_NOT_CONFIGURED.to_string())?;
+        .ok_or_else(|| ERR_NO_ACTIVE_PROVIDER.to_string())?;
     let active_model_id = settings
         .active_model_id
         .clone()
-        .ok_or_else(|| ERR_NOT_CONFIGURED.to_string())?;
+        .ok_or_else(|| ERR_NO_ACTIVE_MODEL.to_string())?;
     let provider = storage_providers::find(pool.inner(), &active_provider_id)
         .await?
         .filter(|provider| provider.enabled)
-        .ok_or_else(|| ERR_NOT_CONFIGURED.to_string())?;
+        .ok_or_else(|| ERR_NO_ACTIVE_PROVIDER.to_string())?;
     // Codex has an empty stored URL because its endpoint is discovered from
     // ~/.codex/config.toml inside provider_config, which performs the same
     // remote-endpoint consent check against the discovered URL.

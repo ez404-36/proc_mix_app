@@ -128,6 +128,11 @@ export function isAssistantBackendError(
   return (
     value === "disabled" ||
     value === "notConfigured" ||
+    value === "noActiveProvider" ||
+    value === "noActiveModel" ||
+    value === "codexNotConfigured" ||
+    value === "apiKeyMissing" ||
+    value === "remoteNotAllowed" ||
     value === "authFailed" ||
     value === "network" ||
     value === "timeout" ||

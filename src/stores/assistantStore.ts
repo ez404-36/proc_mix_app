@@ -93,6 +93,11 @@ function errorFromThrowable(error: unknown): AssistantSessionError {
     const map: Record<string, AssistantBackendError> = {
       ASSISTANT_DISABLED: "disabled",
       ASSISTANT_NOT_CONFIGURED: "notConfigured",
+      ASSISTANT_NO_ACTIVE_PROVIDER: "noActiveProvider",
+      ASSISTANT_NO_ACTIVE_MODEL: "noActiveModel",
+      ASSISTANT_CODEX_NOT_CONFIGURED: "codexNotConfigured",
+      ASSISTANT_API_KEY_MISSING: "apiKeyMissing",
+      ASSISTANT_REMOTE_NOT_ALLOWED: "remoteNotAllowed",
       ASSISTANT_AUTH_FAILED: "authFailed",
       ASSISTANT_NETWORK: "network",
       ASSISTANT_TIMEOUT: "timeout",

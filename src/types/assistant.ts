@@ -13,6 +13,11 @@ export type AssistantRunAccess = "inherit" | "allow" | "deny";
 export type AssistantBackendError =
   | "disabled"
   | "notConfigured"
+  | "noActiveProvider"
+  | "noActiveModel"
+  | "codexNotConfigured"
+  | "apiKeyMissing"
+  | "remoteNotAllowed"
   | "authFailed"
   | "network"
   | "timeout"

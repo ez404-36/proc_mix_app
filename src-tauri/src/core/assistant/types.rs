@@ -37,7 +37,13 @@ impl AssistantRunAccess {
 #[serde(rename_all = "camelCase")]
 pub enum AssistantBackendError {
     Disabled,
+    /// Generic settings-invariant fallback (e.g. corrupted settings row).
     NotConfigured,
+    NoActiveProvider,
+    NoActiveModel,
+    CodexNotConfigured,
+    ApiKeyMissing,
+    RemoteNotAllowed,
     AuthFailed,
     Network,
     Timeout,
