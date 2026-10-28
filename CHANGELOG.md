@@ -5,6 +5,31 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-10-28
+
+### Fixed
+
+- **Assistant errors name the real cause.** Instead of one generic
+  "Configure the endpoint and model." message, the assistant panel now shows
+  the specific failure: no provider selected, no model selected, unreadable
+  Codex configuration, remote endpoints not allowed, or a missing required
+  API key. The provider "Test and fetch models" card shows localized reasons
+  instead of raw backend codes.
+- **Codex provider works with GLM-style configs.** The model configured at
+  the top level of `~/.codex/config.toml` is merged into the model list (and
+  keeps the provider usable when no local model catalog exists); a UTF-8 BOM
+  in `config.toml` and `~\`-style catalog paths are now handled.
+- **Localized retry button.** The assistant error retry button shows the
+  localized label instead of the raw `common.retry` key.
+
+### Added
+
+- **"Allow remote endpoints" toggle** in AI Assistant settings. Remote-endpoint
+  consent is now reachable for Codex configurations that point to external
+  servers (for example GLM via `api.z.ai`); previously the consent checkbox was
+  only shown for URL-based providers, leaving Codex-only setups with no way to
+  grant it.
+
 ## [0.16.0] - 2026-10-27
 
 ### Added

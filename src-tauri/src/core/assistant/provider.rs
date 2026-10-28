@@ -36,11 +36,15 @@ pub struct CodexCliSettings {
     pub api_key: Option<String>,
     pub use_responses_api: bool,
     pub catalog_path: PathBuf,
+    /// The model configured at the top level of `config.toml`. Provider
+    /// setups such as GLM set it directly and never create a model catalog.
+    pub default_model: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct CodexConfigFile {
+    model: Option<String>,
     model_provider: Option<String>,
     model_catalog_json: Option<String>,
     model_providers: HashMap<String, CodexProviderConfigFile>,
@@ -67,11 +71,17 @@ struct CodexCatalogModelFile {
     display_name: Option<String>,
 }
 
-/// Resolve a Codex path that may use `~/`. Returns `None` only when the OS has
-/// no home directory.
+/// Resolve a Codex path that may use `~` with a forward or backward slash
+/// separator. Returns `None` only when the OS has no home directory.
 fn resolve_codex_path(path: &str) -> Option<PathBuf> {
-    if let Some(relative) = path.strip_prefix("~/") {
+    if let Some(relative) = path
+        .strip_prefix("~/")
+        .or_else(|| path.strip_prefix("~\\"))
+    {
         return home_dir().map(|home| home.join(relative));
+    }
+    if path == "~" {
+        return home_dir();
     }
     Some(PathBuf::from(path))
 }
@@ -85,8 +95,7 @@ pub fn load_codex_cli_settings() -> Result<CodexCliSettings, ProviderError> {
     let config_path = codex_home.join("config.toml");
     let config_text = std::fs::read_to_string(&config_path)
         .map_err(|_| ProviderError::NotConfigured("config.toml is unavailable"))?;
-    let config: CodexConfigFile = toml::from_str(&config_text)
-        .map_err(|_| ProviderError::NotConfigured("config.toml is invalid"))?;
+    let config = parse_codex_config(&config_text)?;
 
     let provider_name = config
         .model_provider
@@ -115,7 +124,33 @@ pub fn load_codex_cli_settings() -> Result<CodexCliSettings, ProviderError> {
             .as_deref()
             .is_none_or(|wire| wire.eq_ignore_ascii_case("responses")),
         catalog_path,
+        default_model: config
+            .model
+            .map(|model| model.trim().to_string())
+            .filter(|model| !model.is_empty()),
     })
+}
+
+/// Parse the local Codex `config.toml`. The UTF-8 BOM sometimes added by
+/// Windows editors is tolerated because Codex itself accepts it.
+fn parse_codex_config(text: &str) -> Result<CodexConfigFile, ProviderError> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    toml::from_str(text).map_err(|_| ProviderError::NotConfigured("config.toml is invalid"))
+}
+
+/// Merge the model configured at the top level of `config.toml` into the
+/// catalog list. It is placed first so it reads as the Codex default, and it
+/// stays selectable even when the catalog is missing or does not list it.
+pub fn merge_codex_models(
+    mut catalog: Vec<(String, String)>,
+    default_model: Option<&str>,
+) -> Vec<(String, String)> {
+    if let Some(default_model) = default_model.map(str::trim).filter(|m| !m.is_empty()) {
+        if !catalog.iter().any(|(slug, _)| slug == default_model) {
+            catalog.insert(0, (default_model.to_string(), default_model.to_string()));
+        }
+    }
+    catalog
 }
 
 /// Parse Codex's local catalog. Its shape is provider-specific (`slug` /
@@ -141,9 +176,17 @@ pub fn parse_codex_models(body: &str) -> Result<Vec<(String, String)>, ProviderE
 /// Load models from the catalog referenced by the local Codex configuration.
 pub fn list_codex_cli_models() -> Result<Vec<(String, String)>, ProviderError> {
     let settings = load_codex_cli_settings()?;
-    let body = std::fs::read_to_string(&settings.catalog_path)
-        .map_err(|_| ProviderError::NotConfigured("model catalog is unavailable"))?;
-    parse_codex_models(&body)
+    // A missing or unparsable catalog is not fatal while `config.toml`
+    // still names a model: the configured model is enough to generate.
+    let catalog = std::fs::read_to_string(&settings.catalog_path)
+        .ok()
+        .and_then(|body| parse_codex_models(&body).ok())
+        .unwrap_or_default();
+    let models = merge_codex_models(catalog, settings.default_model.as_deref());
+    if models.is_empty() {
+        return Err(ProviderError::NotConfigured("model catalog is unavailable"));
+    }
+    Ok(models)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -183,7 +226,7 @@ impl ProviderError {
     pub fn backend_error(&self) -> AssistantBackendError {
         match self {
             Self::InvalidBaseUrl => AssistantBackendError::NotConfigured,
-            Self::NotConfigured(_) => AssistantBackendError::NotConfigured,
+            Self::NotConfigured(_) => AssistantBackendError::CodexNotConfigured,
             Self::Cancelled => AssistantBackendError::Timeout,
             Self::Timeout => AssistantBackendError::Timeout,
             Self::AuthFailed => AssistantBackendError::AuthFailed,
@@ -191,7 +234,7 @@ impl ProviderError {
             Self::InvalidResponse => AssistantBackendError::InvalidAssistantResponse,
             Self::Provider => AssistantBackendError::Provider,
             Self::HttpStatus(_) => AssistantBackendError::Provider,
-            Self::RemoteNotAllowed => AssistantBackendError::NotConfigured,
+            Self::RemoteNotAllowed => AssistantBackendError::RemoteNotAllowed,
         }
     }
 }
@@ -979,6 +1022,75 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_codex_config_with_bom_and_default_model() {
+        let config = parse_codex_config(
+            "\u{feff}model = \"glm-5.3-flash\"\n\
+             model_provider = \"glm\"\n\
+             \n\
+             [model_providers.glm]\n\
+             base_url = \"https://api.z.ai/api/coding/paas/v4\"\n\
+             wire_api = \"chat\"\n",
+        )
+        .expect("BOM-prefixed config parses");
+        assert_eq!(config.model.as_deref(), Some("glm-5.3-flash"));
+        assert_eq!(
+            config.model_providers["glm"].base_url.as_deref(),
+            Some("https://api.z.ai/api/coding/paas/v4")
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_codex_config_as_not_configured() {
+        assert!(matches!(
+            parse_codex_config("not [valid toml"),
+            Err(ProviderError::NotConfigured(_)),
+        ));
+    }
+
+    #[test]
+    fn merges_default_codex_model_into_catalog() {
+        let catalog = vec![("gpt-5.1".to_string(), "GPT-5.1".to_string())];
+        let merged = merge_codex_models(catalog, Some(" glm-5.3-flash "));
+        assert_eq!(
+            merged,
+            vec![
+                ("glm-5.3-flash".to_string(), "glm-5.3-flash".to_string()),
+                ("gpt-5.1".to_string(), "GPT-5.1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn does_not_duplicate_default_codex_model() {
+        let catalog = vec![("gpt-5.1".to_string(), "GPT-5.1".to_string())];
+        let merged = merge_codex_models(catalog, Some("gpt-5.1"));
+        assert_eq!(
+            merged,
+            vec![("gpt-5.1".to_string(), "GPT-5.1".to_string())]
+        );
+    }
+
+    #[test]
+    fn empty_catalog_without_default_model_stays_empty() {
+        assert!(merge_codex_models(Vec::new(), None).is_empty());
+    }
+
+    #[test]
+    fn resolves_codex_paths_with_windows_separator() {
+        let expanded = resolve_codex_path("~\\.codex\\models.json")
+            .expect("Windows-style ~ path resolves");
+        assert!(expanded.starts_with(home_dir().expect("home exists")));
+        assert_ne!(expanded, PathBuf::from("~\\.codex\\models.json"));
+
+        let untouched = resolve_codex_path("C:\\Codex\\models.json")
+            .expect("absolute Windows path resolves");
+        assert_eq!(
+            untouched,
+            PathBuf::from("C:\\Codex\\models.json")
+        );
+    }
+
+    #[test]
     fn builds_completion_url_and_rejects_non_http() {
         assert_eq!(
             completion_url("http://127.0.0.1:11434/v1/").unwrap(),
@@ -1045,6 +1157,18 @@ mod tests {
         assert_eq!(
             ProviderError::InvalidResponse.backend_error(),
             AssistantBackendError::InvalidAssistantResponse
+        );
+        assert_eq!(
+            ProviderError::NotConfigured("model provider is missing").backend_error(),
+            AssistantBackendError::CodexNotConfigured
+        );
+        assert_eq!(
+            ProviderError::RemoteNotAllowed.backend_error(),
+            AssistantBackendError::RemoteNotAllowed
+        );
+        assert_eq!(
+            ProviderError::InvalidBaseUrl.backend_error(),
+            AssistantBackendError::NotConfigured
         );
     }
 

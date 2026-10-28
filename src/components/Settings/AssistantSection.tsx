@@ -278,6 +278,29 @@ export function AssistantSection(): ReactElement {
     [t],
   );
 
+  /** Show the localized failure reason instead of a raw backend code. */
+  const formatTestError = useCallback(
+    (rawError: string | undefined): string | null => {
+      if (rawError === undefined) return null;
+      const known: Record<string, string> = {
+        ASSISTANT_CODEX_NOT_CONFIGURED: "assistant.errors.codexNotConfigured",
+        ASSISTANT_REMOTE_NOT_ALLOWED: "assistant.errors.remoteNotAllowed",
+        ASSISTANT_API_KEY_MISSING: "assistant.errors.apiKeyMissing",
+        ASSISTANT_MODEL_FETCH_TIMEOUT: "assistant.errors.timeout",
+        ASSISTANT_AUTH_FAILED: "assistant.errors.authFailed",
+        ASSISTANT_NETWORK: "assistant.errors.network",
+        ASSISTANT_TIMEOUT: "assistant.errors.timeout",
+        ASSISTANT_PROVIDER: "assistant.errors.provider",
+        ASSISTANT_INVALID_RESPONSE: "assistant.errors.invalidAssistantResponse",
+      };
+      const matched = Object.keys(known).find((code) =>
+        rawError.startsWith(code),
+      );
+      return matched !== undefined ? t(known[matched]) : rawError;
+    },
+    [t],
+  );
+
   const removeProvider = useCallback(
     async (providerId: string): Promise<void> => {
       setIsBusy(true);
@@ -480,6 +503,23 @@ export function AssistantSection(): ReactElement {
             <p className="form-hint">
               {t("settings.assistant.runSnapshotsHint")}
             </p>
+
+            <div className="settings-group settings-group--tight settings-group--spaced-top">
+              <ToggleSwitch
+                checked={settings.allowRemoteEndpoints}
+                disabled={isBusy}
+                onChange={(allowed) =>
+                  updateSettings("allowRemoteEndpoints", allowed)
+                }
+                ariaLabel={t("settings.assistant.remoteEndpoints")}
+              />
+              <span className="settings-inline-label">
+                {t("settings.assistant.remoteEndpoints")}
+              </span>
+            </div>
+            <p className="form-hint">
+              {t("settings.assistant.remoteEndpointsHint")}
+            </p>
           </div>
 
           <div className="assistant-settings__grid">
@@ -631,7 +671,7 @@ export function AssistantSection(): ReactElement {
                   </div>
                   {testResults[provider.id] && !testResults[provider.id]?.ok ? (
                     <p className="assistant-panel__error">
-                      {testResults[provider.id]?.error ??
+                      {formatTestError(testResults[provider.id]?.error) ??
                         t("settings.assistant.testFailed")}
                     </p>
                   ) : null}
