@@ -52,7 +52,7 @@ interface AssistantPanelProps {
   onClose?: () => void;
   onApplyPatch?: (
     patch: AssistantPatch,
-  ) => { ok: boolean; error?: AssistantPatchFeedbackError };
+  ) => AssistantPatchApplyOutcome;
   runSnapshot?: AssistantRunSnapshot | null;
   onRequestRun?: () => void;
   /** Editor tests pass this to inspect the expanded chat directly. */
@@ -66,6 +66,8 @@ interface AssistantPanelProps {
 export interface AssistantPatchApplyOutcome {
   ok: boolean;
   error?: AssistantPatchFeedbackError;
+  /** Optional machine-readable field paths explaining the failure. */
+  details?: string;
 }
 
 export function AssistantPanel({
@@ -471,6 +473,7 @@ export function AssistantPanel({
                             target,
                             patch: message.action.patch,
                             error: applyError,
+                            details: result.details,
                           }),
                         );
                       }

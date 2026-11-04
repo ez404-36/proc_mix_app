@@ -34,7 +34,16 @@ export interface AssistantPatchDiff {
 
 export type AssistantPatchApplication<TDraft> =
   | { readonly ok: true; readonly value: TDraft }
-  | { readonly ok: false; readonly error: AssistantPatchApplyError };
+  | {
+      readonly ok: false;
+      readonly error: AssistantPatchApplyError;
+      /**
+       * Optional machine-readable field paths explaining the failure, e.g.
+       * `widgets[0].id, widgets[0].layout`. The retry prompt surfaces them so
+       * the model can repair the exact rejected fields.
+       */
+      readonly details?: string;
+    };
 
 export type AssistantPatchApplyError =
   | "invalidDraft"
@@ -360,6 +369,41 @@ function isMiniAppWidget(value: unknown): value is MiniAppWidget {
   );
 }
 
+/**
+ * Collect machine-readable field paths for a widget value that failed the
+ * structural shape check. Kept in sync with {@link isMiniAppWidget}: the
+ * adapter rejects the same conditions, and the retry prompt surfaces the
+ * returned paths as `INVALID_FIELDS` so the model can repair exactly what was
+ * rejected instead of re-guessing the widget schema.
+ */
+function miniAppWidgetShapeIssues(value: unknown, index: number): string[] {
+  const prefix = `widgets[${index}]`;
+  if (!isRecord(value)) {
+    return [`${prefix}: not an object`];
+  }
+  const issues: string[] = [];
+  if (typeof value.id !== "string") {
+    issues.push(`${prefix}.id`);
+  }
+  const layout = value.layout;
+  if (
+    !isRecord(layout) ||
+    !["x", "y", "w", "h"].every((key) => typeof layout[key] === "number")
+  ) {
+    issues.push(`${prefix}.layout`);
+  }
+  if (
+    value.kind !== "button" &&
+    value.kind !== "toggle" &&
+    value.kind !== "status" &&
+    value.kind !== "artifact" &&
+    value.kind !== "text"
+  ) {
+    issues.push(`${prefix}.kind`);
+  }
+  return issues;
+}
+
 export function applyAssistantPatchToMiniApp(
   patch: AssistantPatch,
   draft: MiniApp,
@@ -377,8 +421,27 @@ export function applyAssistantPatchToMiniApp(
       if (!isStringArray(value)) return { ok: false, error: "invalidValue" };
       next = { ...next, tags: value };
     } else if (operation.path === "widgets") {
-      if (!Array.isArray(value) || !value.every(isMiniAppWidget)) {
-        return { ok: false, error: "invalidValue" };
+      if (!Array.isArray(value)) {
+        return {
+          ok: false,
+          error: "invalidValue",
+          details: "widgets: expected an array",
+        };
+      }
+      const invalidRows = value
+        .map((widget, index) => ({ widget, index, valid: isMiniAppWidget(widget) }))
+        .filter((row) => !row.valid);
+      const shapeIssues = invalidRows.flatMap((row) =>
+        miniAppWidgetShapeIssues(row.widget, row.index),
+      );
+      if (shapeIssues.length > 0) {
+        // Bound the feedback: one widgets array can hold many broken rows and
+        // the first rejected paths are enough for the model to correct the
+        // shape. The trailing ellipsis keeps the truncation visible.
+        const capped = shapeIssues.slice(0, 8);
+        const details =
+          capped.join(", ") + (shapeIssues.length > capped.length ? ", …" : "");
+        return { ok: false, error: "invalidValue", details };
       }
       next = { ...next, widgets: structuredClone(value) as MiniAppWidget[] };
     } else if (operation.path === "panelSize") {

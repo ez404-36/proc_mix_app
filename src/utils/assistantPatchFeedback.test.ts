@@ -56,4 +56,32 @@ describe("buildAssistantPatchRetryPrompt", () => {
     });
     expect(workflowPrompt).not.toContain("`args` field");
   });
+
+  it("includes the mini-app widget schema and invalid field paths", () => {
+    const prompt = buildAssistantPatchRetryPrompt({
+      target: "miniapp",
+      patch: {
+        summary: "Add widgets",
+        operations: [{ op: "replace", path: "widgets", value: [] }],
+      },
+      error: "invalidValue",
+      details: "widgets[0].id, widgets[0].layout",
+    });
+
+    expect(prompt).toContain("INVALID_FIELDS: widgets[0].id, widgets[0].layout");
+    expect(prompt).toContain("MINIAPP_WIDGET_SCHEMA");
+    expect(prompt).toContain("onAction");
+    expect(prompt).toContain("no flat start/stop/command/hint fields");
+  });
+
+  it("omits the mini-app schema and field details when absent", () => {
+    const prompt = buildAssistantPatchRetryPrompt({
+      target: "workflow",
+      patch: { summary: "s", operations: [] },
+      error: "unsupportedPath",
+    });
+
+    expect(prompt).not.toContain("MINIAPP_WIDGET_SCHEMA");
+    expect(prompt).not.toContain("INVALID_FIELDS:");
+  });
 });

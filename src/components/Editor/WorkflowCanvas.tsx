@@ -255,7 +255,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       });
       if (!result.ok) {
         setAssistantApplyError(result.error);
-        return { ok: false };
+        return { ok: false, error: result.error };
       }
       const normalized = flowToWorkflow(
         {
@@ -270,7 +270,7 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
       const validation = validateWorkflow(normalized);
       if (!validation.runnable) {
         setAssistantApplyError("invalidValue");
-        return { ok: false };
+        return { ok: false, error: "invalidValue" };
       }
       setMeta({
         name: result.value.name,

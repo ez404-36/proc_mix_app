@@ -118,6 +118,17 @@ export interface MiniAppWidgetProps extends ArtifactContext {
    */
   onRefreshStatus?: () => void;
   /**
+   * Whether the runner currently tracks a live execution started by this
+   * widget. `ButtonWidget` treats it as an extension of its own local
+   * `isRunning` flag: `triggerCommandRun` resolves as soon as the OS process
+   * is spawned, so without this signal a long-running process would briefly
+   * show the loader and then immediately re-enable its button.
+   *
+   * Optional so standalone widget consumers (especially the editor preview,
+   * which never starts a run) do not need a live execution map.
+   */
+  hasActiveExecution?: boolean;
+  /**
    * Whether the widget's root renders the bordered/background "card" chrome.
    * Defaults to `true` (the editor canvas's WYSIWYG preview relies on this
    * default to keep showing selection/drag affordances). The Runner passes
@@ -288,6 +299,7 @@ interface ButtonWidgetProps extends ArtifactContext {
   widget: Extract<WidgetSpec, { kind: "button" }>;
   onActionComplete?: () => void;
   onExecutionStarted?: (executionId: string) => void;
+  hasActiveExecution?: boolean;
 }
 
 function ButtonWidget({
@@ -299,6 +311,7 @@ function ButtonWidget({
   executionValues,
   artifactSpecs,
   miniAppId,
+  hasActiveExecution = false,
 }: ButtonWidgetProps): ReactElement {
   const { t } = useTranslation();
   const commands = useCommandStore((s) => s.commands);
@@ -318,8 +331,12 @@ function ButtonWidget({
   const isBroken = !isActionRunnable(widget.action, commands);
   const brokenLabel = t("miniapps.runner.brokenCommand");
 
+  // `isRunning` covers the IPC/spawn call itself; `hasActiveExecution` keeps
+  // the same UI state for the whole lifetime of the spawned process.
+  const isButtonRunning = isRunning || hasActiveExecution;
+
   const handleClick = (): void => {
-    if (isRunning || isBroken) return;
+    if (isButtonRunning || isBroken) return;
     setIsRunning(true);
     void (async (): Promise<void> => {
       try {
@@ -341,7 +358,7 @@ function ButtonWidget({
 
   // A configured `icon` (emoji or data URI) replaces the default run glyph;
   // the spinner always wins while a run is in flight.
-  const leadingIcon = isRunning ? (
+  const leadingIcon = isButtonRunning ? (
     <SpinnerIcon />
   ) : (
     (renderIcon(widget.icon, 16, "miniapp-widget__button-icon") ?? <RunIcon />)
@@ -353,14 +370,17 @@ function ButtonWidget({
         type="button"
         className={`btn btn--run miniapp-widget__button${
           isBroken ? " is-broken" : ""
-        }`}
+        }${isButtonRunning ? " is-running" : ""}`}
         onClick={handleClick}
-        disabled={isRunning || isBroken}
+        aria-busy={isButtonRunning}
+        disabled={isButtonRunning || isBroken}
         title={isBroken ? brokenLabel : undefined}
         style={buttonStyleFor(widget.style)}
       >
         {leadingIcon}
-        <span>{isRunning ? t("miniapps.runner.running") : resolvedLabel}</span>
+        <span>
+          {isButtonRunning ? t("miniapps.runner.running") : resolvedLabel}
+        </span>
       </button>
       {isBroken ? <BrokenRefMarker label={brokenLabel} /> : null}
     </span>
@@ -972,6 +992,7 @@ export function MiniAppWidget({
   onActionComplete,
   onExecutionStarted,
   onRefreshStatus,
+  hasActiveExecution,
   artifactValues,
   onArtifactChange,
   artifactNames,
@@ -1003,6 +1024,7 @@ export function MiniAppWidget({
           widget={widget}
           onActionComplete={onActionComplete}
           onExecutionStarted={onExecutionStarted}
+          hasActiveExecution={hasActiveExecution}
           {...sharedContext}
         />
       );

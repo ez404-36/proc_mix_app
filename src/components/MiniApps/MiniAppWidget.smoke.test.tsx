@@ -72,6 +72,8 @@ interface RenderOptions {
   onActionComplete?: () => void;
   onExecutionStarted?: (executionId: string) => void;
   onRefreshStatus?: () => void;
+  /** Mirrors the runner's live execution tracking for widget controls. */
+  hasActiveExecution?: boolean;
   /** Artifact widgets whose specs the panel synthesizes for every action. */
   artifactWidgets?: WidgetSpec[];
   /** Defaults to `true` (the editor's bordered-card look), matching the
@@ -100,6 +102,7 @@ function widgetElement(
       onActionComplete={opts.onActionComplete}
       onExecutionStarted={opts.onExecutionStarted}
       onRefreshStatus={opts.onRefreshStatus}
+      hasActiveExecution={opts.hasActiveExecution}
       artifactValues={values}
       onArtifactChange={opts.onArtifactChange ?? (() => {})}
       artifactNames={new Set(Object.keys(values))}
@@ -376,6 +379,38 @@ describe("MiniAppWidget — button", () => {
       (screen.getByRole("button", { name: /Connect/ }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
+  });
+
+  it("stays disabled with a loader while the spawned process is still active", async () => {
+    renderWidget(buttonWidget(), { hasActiveExecution: true });
+
+    const running = screen.getByRole("button", { name: /Running/ });
+    expect((running as HTMLButtonElement).disabled).toBe(true);
+    expect(running.getAttribute("aria-busy")).toBe("true");
+    expect(running.className).toContain("is-running");
+    expect(running.querySelector("svg")).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(running);
+    });
+
+    expect(triggerCommandRun).not.toHaveBeenCalled();
+  });
+
+  it("re-enables once the execution is no longer active", async () => {
+    const { rerender } = render(
+      widgetElement(buttonWidget(), { hasActiveExecution: true }),
+    );
+
+    const running = screen.getByRole("button", { name: /Running/ });
+    expect((running as HTMLButtonElement).disabled).toBe(true);
+
+    rerender(widgetElement(buttonWidget(), { hasActiveExecution: false }));
+
+    const idle = screen.getByRole("button", { name: /Connect/ });
+    expect((idle as HTMLButtonElement).disabled).toBe(false);
+    expect(idle.getAttribute("aria-busy")).toBe("false");
+    expect(idle.className).not.toContain("is-running");
   });
 
   it("renders disabled with a warning marker when the referenced command is gone", () => {

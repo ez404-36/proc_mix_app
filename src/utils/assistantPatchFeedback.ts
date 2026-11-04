@@ -4,6 +4,18 @@ import type { AssistantPatchApplyError } from "./assistantPatches";
 
 const MAX_FAILED_PATCH_CHARS = 4_000;
 
+/**
+ * Exact widget contract for the mini-app target. The flat
+ * start/stop/command/hint shape is what a model naturally invents without it,
+ * so the retry prompt and the system prompt both carry the real schema.
+ */
+const MINIAPP_WIDGET_SCHEMA = [
+  "MINIAPP_WIDGET_SCHEMA: each widget is one object with required id (string), layout ({\"x\",\"y\",\"w\",\"h\"} numbers inside panelSize), kind (\"button\"|\"toggle\"|\"status\"|\"artifact\"|\"text\") and label (string).",
+  "Action shape (button action; toggle onAction and offAction): {\"kind\":\"commandRef\",\"commandId\":\"...\"} or {\"kind\":\"inline\",\"name\":\"...\",\"script\":\"...\",\"shell\"?:\"bash\"|\"zsh\"|\"fish\"|\"sh\"|\"pwsh\"|\"powershell\"|\"cmd\",\"workingDir\"?:\"...\",\"args\"?:[...],\"env\"?:{...},\"variables\"?:[...]}.",
+  "Toggle status (optional): source = {\"kind\":\"inline\",\"script\":\"...\"} or {\"kind\":\"commandRef\",\"commandId\":\"...\"}; plus optional intervalMs (number), mapping {\"mode\":\"raw\"|\"mapped\",\"rules\"?:[...]} and onValue (string that means ON).",
+  "Widgets have no flat start/stop/command/hint fields. Send complete widget objects and replace the whole widgets array.",
+].join("\n");
+
 export type AssistantPatchFeedbackError =
   | AssistantPatchApplyError
   | "applyFailed";
@@ -31,6 +43,8 @@ export function buildAssistantPatchRetryPrompt(input: {
   target: AssistantTarget;
   patch: AssistantPatch;
   error: AssistantPatchFeedbackError;
+  /** Optional machine-readable field paths explaining the failure. */
+  details?: string;
 }): string {
   const allowedRoots = ASSISTANT_ALLOWED_PATCH_ROOTS[input.target].join(", ");
   const failedPatch = truncateByChars(
@@ -41,7 +55,9 @@ export function buildAssistantPatchRetryPrompt(input: {
   return [
     ASSISTANT_PATCH_RETRY_MARKER,
     `APPLY_ERROR: ${input.error}`,
+    ...(input.details ? [`INVALID_FIELDS: ${input.details}`] : []),
     `ALLOWED_PATCH_ROOTS: ${allowedRoots}`,
+    ...(input.target === "miniapp" ? [MINIAPP_WIDGET_SCHEMA] : []),
     "Use only exact root paths (no dotted paths), complete arrays, and add/replace operations; remove is not supported by the editor adapters.",
     ...(input.target === "command"
       ? [

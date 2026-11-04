@@ -329,6 +329,24 @@ export function MiniAppRunner({
   >({});
   const executions = useExecutionStore((s) => s.executions);
 
+  // Widget ids with at least one still-active execution. Buttons use this to
+  // stay disabled with their spinner after the spawn IPC has resolved; the
+  // Console tab keeps finished runs visible separately, so this is a filtered
+  // projection rather than the tracked map itself.
+  const activeExecutionWidgetIds = useMemo(() => {
+    const widgetIds = new Set<string>();
+    for (const [executionId, widgetId] of Object.entries(executionWidgets)) {
+      const execution = executions[executionId];
+      if (
+        execution !== undefined &&
+        (execution.status === "running" || execution.status === "pending")
+      ) {
+        widgetIds.add(widgetId);
+      }
+    }
+    return widgetIds;
+  }, [executionWidgets, executions]);
+
   const handleExecutionStarted = (
     widgetId: string,
     executionId: string,
@@ -615,6 +633,7 @@ export function MiniAppRunner({
               onExecutionStarted={(executionId) =>
                 handleExecutionStarted(widget.id, executionId)
               }
+              hasActiveExecution={activeExecutionWidgetIds.has(widget.id)}
               onRefreshStatus={() => refreshStatus(widget.id)}
               artifactValues={artifactValues}
               onArtifactChange={updateArtifactValue}

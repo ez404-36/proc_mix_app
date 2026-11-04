@@ -136,17 +136,39 @@ describe("assistant patch adapters", () => {
   });
 
   it("rejects mini-app widgets that lack layout geometry", () => {
-    const miniApp = {
-      name: "Panel",
-      widgets: [],
-      tags: [],
-      panelSize: { w: 400, h: 300 },
-    } as unknown as MiniApp;
     const result = applyAssistantPatchToMiniApp(
       patch("widgets", [{ id: "widget", kind: "button" }]),
-      miniApp,
+      miniAppDraft(),
     );
 
-    expect(result).toEqual({ ok: false, error: "invalidValue" });
+    expect(result).toEqual({
+      ok: false,
+      error: "invalidValue",
+      details: "widgets[0].layout",
+    });
+  });
+
+  it("reports the exact missing fields for a flat start/stop widget shape", () => {
+    const result = applyAssistantPatchToMiniApp(
+      patch("widgets", [
+        { kind: "toggle", label: "Serve", start: "./serve.sh", stop: "pkill" },
+      ]),
+      miniAppDraft(),
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "invalidValue",
+      details: "widgets[0].id, widgets[0].layout",
+    });
   });
 });
+
+function miniAppDraft(): MiniApp {
+  return {
+    name: "Panel",
+    widgets: [],
+    tags: [],
+    panelSize: { w: 400, h: 300 },
+  } as unknown as MiniApp;
+}

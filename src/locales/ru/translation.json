@@ -677,6 +677,8 @@
         "labelRequired": "Укажите подпись.",
         "commandRequired": "Выберите команду.",
         "scriptRequired": "Укажите скрипт.",
+        "actionRequired": "Укажите действие.",
+        "sourceRequired": "Укажите источник статуса.",
         "artifactNameRequired": "Укажите имя.",
         "duplicateArtifactName": "Артефакт с именем «{{name}}» уже существует.",
         "ruleMatchRequired": "В правиле {{index}} не заполнено поле сопоставления.",

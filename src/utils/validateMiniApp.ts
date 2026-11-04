@@ -141,6 +141,17 @@ function validateAction(
   prefix: string,
   artifactNames: ReadonlySet<string>,
 ): void {
+  // Assistant patches cross this boundary as unknown data: a structurally
+  // shape-checked widget can still arrive without its action object, and
+  // reading `.kind` on it would crash instead of producing a repairable issue.
+  if (typeof action !== "object" || action === null) {
+    issues.push({
+      widgetId,
+      field: prefix,
+      messageKey: "miniapps.editor.validation.actionRequired",
+    });
+    return;
+  }
   if (action.kind === "commandRef") {
     if (action.commandId.trim() === "") {
       issues.push({
@@ -194,6 +205,14 @@ function validateSource(
   prefix: string,
   artifactNames: ReadonlySet<string>,
 ): void {
+  if (typeof source !== "object" || source === null) {
+    issues.push({
+      widgetId,
+      field: prefix,
+      messageKey: "miniapps.editor.validation.sourceRequired",
+    });
+    return;
+  }
   if (source.kind === "commandRef") {
     if (source.commandId.trim() === "") {
       issues.push({

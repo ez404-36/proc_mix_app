@@ -1236,6 +1236,37 @@ describe("MiniAppRunner — Processes tab", () => {
     expect(within(panel).getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
+  it("keeps a button's loader active while its execution is running", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+    });
+
+    const running = screen.getByRole("button", { name: /Running/ });
+    expect((running as HTMLButtonElement).disabled).toBe(true);
+    expect(running.className).toContain("is-running");
+
+    act(() => {
+      useExecutionStore.getState().finishExecution("exec-1", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+    });
+
+    const idle = screen.getByRole("button", { name: /Connect/ });
+    expect((idle as HTMLButtonElement).disabled).toBe(false);
+    expect(idle.className).not.toContain("is-running");
+  });
+
   it("excludes a finished run — only running/pending appear", async () => {
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();

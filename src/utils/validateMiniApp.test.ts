@@ -168,6 +168,26 @@ describe("validateMiniApp — widget labels", () => {
 });
 
 describe("validateMiniApp — button / toggle actions", () => {
+  it("flags a missing button action instead of crashing", () => {
+    const draft = makeDraft([button("b1", { action: undefined })]);
+    expect(findIssue(validateMiniApp(draft), "b1", "action")).toMatchObject({
+      messageKey: "miniapps.editor.validation.actionRequired",
+    });
+  });
+
+  it("flags toggle actions that are missing entirely", () => {
+    const draft = makeDraft([
+      toggle("t1", { onAction: undefined, offAction: undefined }),
+    ]);
+    const issues = validateMiniApp(draft);
+    expect(findIssue(issues, "t1", "onAction")).toMatchObject({
+      messageKey: "miniapps.editor.validation.actionRequired",
+    });
+    expect(findIssue(issues, "t1", "offAction")).toMatchObject({
+      messageKey: "miniapps.editor.validation.actionRequired",
+    });
+  });
+
   it("flags a commandRef action with an empty commandId", () => {
     const draft = makeDraft([
       button("b1", { action: { kind: "commandRef", commandId: "" } }),
@@ -264,6 +284,13 @@ describe("validateMiniApp — button / toggle actions", () => {
 });
 
 describe("validateMiniApp — status sources and mapping", () => {
+  it("flags a missing status source instead of crashing", () => {
+    const draft = makeDraft([statusWidget("s1", { source: undefined })]);
+    expect(findIssue(validateMiniApp(draft), "s1", "source")).toMatchObject({
+      messageKey: "miniapps.editor.validation.sourceRequired",
+    });
+  });
+
   it("flags a status widget whose commandRef source is unset", () => {
     const draft = makeDraft([
       statusWidget("s1", { source: { kind: "commandRef", commandId: "" } }),
