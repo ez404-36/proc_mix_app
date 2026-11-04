@@ -422,3 +422,29 @@ jobs:
           name: procmix-linux-appimage
           path: src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
+
+  # Publish the draft release ONLY after both platform builds have uploaded
+  # their installers, so the public release is never visible without its
+  # artifacts. This is the tail of the flow the create-release job sets up:
+  # check -> create-release (draft) -> build-windows + build-linux -> publish.
+  # Tag pushes only: workflow_dispatch builds produce no release at all.
+  # `gh release edit --draft=false` is idempotent — if a maintainer already
+  # published the release manually while the build was running, this is a
+  # no-op and the assets simply continue landing in that release.
+  publish-release:
+    needs: [build-windows, build-linux]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag='${{ github.ref_name }}'
+          gh release edit "$tag" \
+            --repo '${{ github.repository }}' \
+            --draft=false
+          echo "Published release $tag (installers attached before publication)."
