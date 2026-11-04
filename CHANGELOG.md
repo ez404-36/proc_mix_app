@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   widgets[0].layout`) back to the model; mini-app retries include the full
   widget schema, and the mini-app system prompt documents the same schema up
   front, so corrected patches succeed instead of looping.
+- **Mini-app button running state.** A button widget stays disabled with its
+  spinner while the process it spawned is still running and re-enables as soon
+  as the execution finishes, so long-running builds cannot be triggered twice
+  by accident.
 
 ### Fixed
 
