@@ -667,6 +667,8 @@
         "labelRequired": "A label is required.",
         "commandRequired": "Select a command.",
         "scriptRequired": "A script is required.",
+        "actionRequired": "An action is required.",
+        "sourceRequired": "A status source is required.",
         "artifactNameRequired": "A name is required.",
         "duplicateArtifactName": "Another artifact is already named \"{{name}}\".",
         "ruleMatchRequired": "Rule {{index}} has an empty match value.",

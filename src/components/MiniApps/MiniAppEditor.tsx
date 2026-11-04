@@ -848,15 +848,27 @@ export function MiniAppEditor(): ReactElement | null {
   const applyAssistantPatch = useCallback(
     (
       patch: AssistantPatch,
-    ): { ok: boolean; error?: AssistantPatchApplyError } => {
+    ): {
+      ok: boolean;
+      error?: AssistantPatchApplyError;
+      details?: string;
+    } => {
       const result = applyAssistantPatchToMiniApp(patch, draft);
       if (!result.ok) {
         setAssistantApplyError(result.error);
-        return { ok: false };
+        return { ok: false, error: result.error, details: result.details };
       }
-      if (validateMiniApp(result.value).length > 0) {
+      const issues = validateMiniApp(result.value);
+      if (issues.length > 0) {
         setAssistantApplyError("invalidValue");
-        return { ok: false };
+        // Feed the semantic validator's field paths back to the model: they
+        // are exactly what `validateMiniApp` would highlight in the editor.
+        const capped = issues.slice(0, 8);
+        const details =
+          capped
+            .map((issue) => `${issue.widgetId ?? "miniapp"}.${issue.field}`)
+            .join(", ") + (issues.length > capped.length ? ", …" : "");
+        return { ok: false, error: "invalidValue", details };
       }
       updateDraft(result.value);
       setAssistantApplyError(null);

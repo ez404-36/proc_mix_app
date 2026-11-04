@@ -54,6 +54,18 @@ catchUpPolicy is \"none\", \"once\", or \"all\"; timeoutSeconds must be a positi
 maxRetries is a non-negative integer. Propose `cron` only as a valid 5-field Unix expression.\n",
         );
     }
+    if target == AssistantTarget::Miniapp {
+        rules.push_str(
+            "Widget shapes: every widget object requires \"id\" (string), \"layout\" ({\"x\",\"y\",\
+\"w\",\"h\"} numbers inside panelSize), \"kind\" (\"button\"|\"toggle\"|\"status\"|\"artifact\"|\
+\"text\"), and \"label\". Button widgets need \"action\"; toggle widgets need \"onAction\" and \
+\"offAction\"; each action is {\"kind\":\"commandRef\",\"commandId\":\"...\"} or \
+{\"kind\":\"inline\",\"name\":\"...\",\"script\":\"...\",\"shell\"?:\"bash\",\"workingDir\"?:\"...\"}. \
+Widgets have no flat start/stop/command/hint fields. Optional toggle \"status\": \
+{\"source\":{\"kind\":\"inline\",\"script\":\"...\"},\"intervalMs\":number,\"mapping\":{\"mode\":\
+\"raw\"},\"onValue\":\"...\"}. Send complete widget objects in one widgets replacement.\n",
+        );
+    }
     rules
 }
 
@@ -124,5 +136,17 @@ mod tests {
         let miniapp = system_prompt(AssistantTarget::Miniapp);
         assert!(!miniapp.contains("variables.append"));
         assert!(miniapp.contains("widgets"));
+    }
+
+    #[test]
+    fn miniapp_prompt_lists_widget_schema() {
+        let prompt = system_prompt(AssistantTarget::Miniapp);
+        for marker in ["\"layout\"", "\"onAction\"", "\"offAction\"", "\"action\""] {
+            assert!(prompt.contains(marker), "missing {marker}");
+        }
+        assert!(prompt.contains("no flat start/stop/command/hint fields"));
+
+        let command = system_prompt(AssistantTarget::Command);
+        assert!(!command.contains("\"onAction\""));
     }
 }

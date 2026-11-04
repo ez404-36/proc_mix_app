@@ -5,6 +5,26 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.2] - 2026-11-04
+
+### Added
+
+- **Assistant patch retries carry the failure details.** A failed patch apply
+  now sends the real error code (`invalidValue`, `unsupportedPath`, …) and the
+  exact rejected field paths (`INVALID_FIELDS: widgets[0].id,
+  widgets[0].layout`) back to the model; mini-app retries include the full
+  widget schema, and the mini-app system prompt documents the same schema up
+  front, so corrected patches succeed instead of looping.
+
+### Fixed
+
+- **Precise apply errors.** The mini-app and workflow editors return the actual
+  apply error to the assistant panel instead of the generic "cannot be
+  applied" message.
+- **Crash-free widget validation.** Widget patches missing `action`,
+  `onAction`/`offAction`, or a status `source` now produce localized "an
+  action is required" validation issues instead of crashing validation.
+
 ## [0.16.1] - 2026-10-28
 
 ### Fixed
