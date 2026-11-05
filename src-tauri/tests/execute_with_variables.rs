@@ -105,6 +105,7 @@ async fn echo_substitutes_variable_from_values_and_runs_successfully() {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     let id = spawn_execution(app, state, req)
@@ -166,6 +167,7 @@ async fn missing_variable_without_default_returns_typed_error_and_does_not_spawn
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     let err = spawn_execution(app, state, req)
@@ -225,6 +227,7 @@ async fn variable_default_value_is_used_when_no_value_supplied() {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     spawn_execution(app, state, req).await.expect("spawn ok");

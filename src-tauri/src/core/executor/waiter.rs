@@ -997,6 +997,7 @@ mod kill_tree_tests {
             id.clone(),
             RunningEntry {
                 cancel_tx: Some(cancel_tx),
+                stdin: None,
                 #[cfg(unix)]
                 pgid,
             },
@@ -1066,6 +1067,7 @@ mod kill_tree_tests {
             silent: false,
             target: ExecutionTarget::Local,
             ssh_password: None,
+            stdin: false,
         };
 
         let started = std::time::Instant::now();
@@ -1133,6 +1135,7 @@ mod kill_tree_tests {
             silent: false,
             target: ExecutionTarget::Local,
             ssh_password: None,
+            stdin: false,
         };
 
         let started = std::time::Instant::now();

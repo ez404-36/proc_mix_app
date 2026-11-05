@@ -74,6 +74,11 @@ export interface RunOptions {
    * A blank string is treated as absent.
    */
   sshPassword?: string;
+  /**
+   * Mirrors `ExecuteRequest.stdin` on the Rust side. When true, a local
+   * non-elevated run keeps a pipe that `sendExecutionStdin` can write to.
+   */
+  stdin?: boolean;
 }
 
 interface ExecuteRequestPayload {
@@ -232,12 +237,20 @@ export async function runCommand(
     // one; omitted otherwise so key-auth remote and local runs stay
     // byte-identical on the wire.
     ...(sshPassword ? { sshPassword } : {}),
+    ...(opts.stdin === true ? { stdin: true } : {}),
   };
   return invoke<string>("execute_command", { req });
 }
 
 export async function cancelExecution(executionId: string): Promise<void> {
   await invoke("cancel_execution", { executionId });
+}
+
+export async function sendExecutionStdin(
+  executionId: string,
+  input: string,
+): Promise<void> {
+  await invoke("write_execution_stdin", { executionId, input });
 }
 
 export async function listRunningExecutions(): Promise<string[]> {

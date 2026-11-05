@@ -11,10 +11,11 @@
 //   - `streaming`     — stdout/stderr reader tasks (redaction + buffer).
 //   - `waiter`        — the wait/kill/extract/terminal-event task.
 //
-// The public surface (`spawn_execution`, `spawn_execution_with_completion`,
-// `cancel_execution`, and all re-exported types) is byte-identical to the
-// pre-refactor single-file module, so `commands/mod.rs` and
-// `core/workflow.rs` keep their existing `crate::core::executor::*` imports.
+// The public execution surface is exposed directly by this module
+// (`spawn_execution`, `spawn_execution_with_completion`,
+// `cancel_execution`, `write_execution_stdin`, and all re-exported types),
+// so `commands/mod.rs` and `core/workflow.rs` keep their existing
+// `crate::core::executor::*` imports.
 
 mod command_build;
 mod privilege;
@@ -38,6 +39,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tauri::{AppHandle, Emitter, Runtime};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -331,7 +333,6 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
     #[cfg(unix)]
     if req.elevated {
         if let (Some(pw), Some(mut stdin)) = (admin_password, child.stdin.take()) {
-            use tokio::io::AsyncWriteExt;
             // This is async stdin so a tokio task is correct. Writing
             // happens in the background so we don't block the executor's
             // caller while sudo is still authenticating.
@@ -343,6 +344,19 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
             });
         }
     }
+
+    // Keep the writer half only for the supported interactive path: a local,
+    // non-elevated run. Elevated runs reserve stdin for sudo; SSH deliberately
+    // returns before this point with stdin closed.
+    let stdin_pipe = if req.stdin && !req.elevated && matches!(req.target, ExecutionTarget::Local) {
+        child
+            .stdin
+            .take()
+            .map(|stdin| Arc::new(tokio::sync::Mutex::new(Some(stdin))))
+    } else {
+        None
+    };
+    let has_stdin = stdin_pipe.is_some();
 
     let pid = child.id();
 
@@ -385,6 +399,7 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
                 variables: started_variables,
                 working_dir: started_working_dir,
                 workflow_run_id: workflow_run_id.clone(),
+                stdin: has_stdin,
             },
         );
     }
@@ -435,6 +450,7 @@ pub async fn spawn_execution_with_completion<R: Runtime>(
             execution_id.clone(),
             RunningEntry {
                 cancel_tx: Some(cancel_tx),
+                stdin: stdin_pipe,
                 // Stored so the shutdown hook can group-kill synchronously when
                 // the runtime is torn down before the waiter can react.
                 #[cfg(unix)]
@@ -512,6 +528,39 @@ pub async fn cancel_execution(
     // Not found: already reaped — treat as success so the UI can stay
     // idempotent across rapid clicks.
     Ok(())
+}
+
+/// Write one newline-terminated command line to an opt-in local stdin pipe.
+/// Success means the bytes reached the pipe, not that the child consumed them.
+pub async fn write_execution_stdin(
+    state: Arc<ExecutorState>,
+    execution_id: String,
+    input: String,
+) -> Result<(), String> {
+    let stdin = {
+        let running = state.running.lock().await;
+        running
+            .get(&execution_id)
+            .and_then(|entry| entry.stdin.clone())
+            .ok_or(ERR_STDIN_UNAVAILABLE.to_string())?
+    };
+
+    let mut slot = stdin.lock().await;
+    let Some(stdin) = slot.as_mut() else {
+        return Err(ERR_STDIN_UNAVAILABLE.to_string());
+    };
+    stdin
+        .write_all(input.as_bytes())
+        .await
+        .map_err(|err| format!("{ERR_STDIN_WRITE_FAILED}{err}"))?;
+    stdin
+        .write_all(b"\n")
+        .await
+        .map_err(|err| format!("{ERR_STDIN_WRITE_FAILED}{err}"))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|err| format!("{ERR_STDIN_WRITE_FAILED}{err}"))
 }
 
 /// Synchronously tear down every in-flight run. Called from the Tauri exit
@@ -615,6 +664,7 @@ mod shutdown_tests {
                 "shutdown-test".to_string(),
                 RunningEntry {
                     cancel_tx: None,
+                    stdin: None,
                     pgid: Some(pgid),
                 },
             );
@@ -644,6 +694,66 @@ mod shutdown_tests {
         }
         let _ = child.try_wait();
         assert!(!is_alive(pid), "child must be dead after shutdown SIGTERM");
+    }
+}
+
+#[cfg(test)]
+mod stdin_tests {
+    use super::*;
+    use std::process::Stdio;
+    use tokio::io::AsyncReadExt;
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn write_execution_stdin_appends_a_newline_for_a_real_child() {
+        let mut command = tokio::process::Command::new("cat");
+        command.stdin(Stdio::piped()).stdout(Stdio::piped());
+        let mut child = command.spawn().expect("cat must be installed");
+        let stdin = child.stdin.take().expect("piped child must have stdin");
+        let state = Arc::new(ExecutorState::new());
+        state.running.lock().await.insert(
+            "stdin-test".to_string(),
+            RunningEntry {
+                cancel_tx: None,
+                stdin: Some(Arc::new(Mutex::new(Some(stdin)))),
+                #[cfg(unix)]
+                pgid: None,
+            },
+        );
+
+        write_execution_stdin(state.clone(), "stdin-test".into(), "state-1".into())
+            .await
+            .expect("stdin write must succeed");
+
+        // Close the pipe so `cat` can finish and flush its echoed line.
+        let shared_stdin = state
+            .running
+            .lock()
+            .await
+            .get("stdin-test")
+            .and_then(|entry| entry.stdin.clone())
+            .expect("entry must still exist");
+        shared_stdin.lock().await.take();
+
+        let mut output = String::new();
+        child
+            .stdout
+            .take()
+            .expect("piped child must have stdout")
+            .read_to_string(&mut output)
+            .await
+            .expect("stdout read must succeed");
+        assert_eq!(output, "state-1\n");
+        child.wait().await.expect("child wait must succeed");
+    }
+
+    #[tokio::test]
+    async fn write_execution_stdin_rejects_a_run_without_a_pipe() {
+        let state = Arc::new(ExecutorState::new());
+        let error = write_execution_stdin(state, "missing".into(), "state-1".into())
+            .await
+            .expect_err("missing stdin must be unavailable");
+        assert_eq!(error, ERR_STDIN_UNAVAILABLE);
     }
 }
 

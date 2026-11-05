@@ -225,6 +225,7 @@ function handleEvent(
         info.target,
         event.workingDir,
         event.pid,
+        event.stdin,
       );
       // The console panel opens on the "Runs" tab regardless of which tab
       // (Runs or Terminal) was active before — covers backend-initiated

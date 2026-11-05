@@ -13,7 +13,14 @@
 // and is invisible to any test that only asserts on rendered markup.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 vi.mock("../../utils/miniappRepository", () => ({
   listMiniAppsFromDb: vi.fn().mockResolvedValue([]),
@@ -35,6 +42,7 @@ vi.mock("../../services/commandRunner", () => ({
 
 vi.mock("../../utils/executor", () => ({
   cancelExecution: vi.fn().mockResolvedValue(undefined),
+  sendExecutionStdin: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -64,7 +72,7 @@ import { useExecutionStore } from "../../stores/executionStore";
 import { useMiniAppStore } from "../../stores/miniappStore";
 import { useUIStore } from "../../stores/uiStore";
 import type { MiniApp, MiniAppWidget } from "../../types";
-import { cancelExecution } from "../../utils/executor";
+import { cancelExecution, sendExecutionStdin } from "../../utils/executor";
 import { listMiniAppsFromDb } from "../../utils/miniappRepository";
 import { ContextMenuProvider } from "../ContextMenu";
 import { MiniAppRunner } from "./MiniAppRunner";
@@ -1045,6 +1053,58 @@ describe("MiniAppRunner — Console tab", () => {
     ).toBeTruthy();
   });
 
+  it("hides stdin for a run that did not request it", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+    });
+    await openConsoleTab();
+
+    expect(
+      screen.queryByRole("textbox", { name: "Process input" }),
+    ).toBeNull();
+  });
+
+  it("sends an Enter-terminated command to an input-enabled run", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore.getState().startExecution(
+        "exec-1",
+        undefined,
+        "Connect",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+    });
+    await openConsoleTab();
+
+    const input = screen.getByRole("textbox", { name: "Process input" });
+    fireEvent.change(input, { target: { value: "state on" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+
+    await waitFor(() => {
+      expect(sendExecutionStdin).toHaveBeenCalledWith("exec-1", "state on");
+    });
+    expect((input as HTMLInputElement).value).toBe("");
+  });
+
   it("merges MULTIPLE concurrent runs into one chronological log, not a chip switcher", async () => {
     vi.mocked(triggerCommandRun)
       .mockResolvedValueOnce("exec-a")
@@ -1247,7 +1307,7 @@ describe("MiniAppRunner — Processes tab", () => {
         .startExecution("exec-1", undefined, "Connect");
     });
 
-    const running = screen.getByRole("button", { name: /Running/ });
+    const running = screen.getByRole("button", { name: /Connect/ });
     expect((running as HTMLButtonElement).disabled).toBe(true);
     expect(running.className).toContain("is-running");
 

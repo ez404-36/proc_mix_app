@@ -567,6 +567,7 @@ fn echo_request(script: &str) -> ExecuteRequest {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     }
 }
 

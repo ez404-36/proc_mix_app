@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useRef } from "react";
-import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactElement,
+} from "react";
+import { Message } from "@arco-design/web-react";
 import { useTranslation } from "react-i18next";
 import { AnsiText } from "../AnsiText";
 import { useContextMenu } from "../ContextMenu";
 import { buildConsoleCopyMenu } from "../../utils/consoleClipboard";
 import { useExecutionStore } from "../../stores/executionStore";
 import type { Execution } from "../../types";
-import { cancelExecution } from "../../utils/executor";
+import { cancelExecution, sendExecutionStdin } from "../../utils/executor";
 import { CancelIcon, ClearIcon, SpinnerIcon } from "../icons";
 
 /** One tracked run belonging to this mini-app, in the shape the tabs need. */
@@ -77,12 +82,59 @@ function ConsoleTabBody({ runs, onClear }: ConsoleTabBodyProps): ReactElement {
   const { show } = useContextMenu();
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const totalLogLength = runs.reduce((n, r) => n + r.execution.log.length, 0);
+  const activeInputRunIds = useMemo(
+    () =>
+      runs
+        .filter(
+          ({ execution }) =>
+            execution.stdin === true &&
+            (execution.status === "running" || execution.status === "pending"),
+        )
+        .map(({ execution }) => execution.id),
+    [runs],
+  );
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [stdinCommand, setStdinCommand] = useState("");
+  const [stdinPending, setStdinPending] = useState(false);
+  const selectedRunIdIsValid = activeInputRunIds.includes(selectedRunId ?? "");
+  const targetRunId: string | undefined = selectedRunIdIsValid
+    ? (selectedRunId ?? undefined)
+    : activeInputRunIds[0];
 
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [totalLogLength, runs.length]);
+
+  useEffect(() => {
+    if (!selectedRunIdIsValid && activeInputRunIds.length > 0) {
+      setSelectedRunId(activeInputRunIds[0]);
+    }
+  }, [activeInputRunIds, selectedRunIdIsValid]);
+
+  const submitStdin = async (): Promise<void> => {
+    if (!targetRunId || stdinCommand.trim() === "" || stdinPending) return;
+    setStdinPending(true);
+    try {
+      await sendExecutionStdin(targetRunId, stdinCommand);
+      setStdinCommand("");
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      Message.error(
+        t("miniapps.console.stdinFailed", {
+          defaultValue: "Failed to send command: {{detail}}",
+          detail,
+        }),
+      );
+    } finally {
+      setStdinPending(false);
+    }
+  };
+
+  const handleStdinKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === "Enter") void submitStdin();
+  };
 
   const handleContextMenu = (e: ReactMouseEvent<HTMLDivElement>): void => {
     show({
@@ -166,6 +218,46 @@ function ConsoleTabBody({ runs, onClear }: ConsoleTabBodyProps): ReactElement {
           </div>
         ))}
       </div>
+      {targetRunId !== undefined ? (
+        <div className="miniapp-console__stdin">
+          {activeInputRunIds.length > 1 ? (
+            <select
+              className="input miniapp-console__stdin-run"
+              value={targetRunId}
+              onChange={(event) => setSelectedRunId(event.target.value)}
+              aria-label={t("miniapps.console.stdinRun", {
+                defaultValue: "Process",
+              })}
+            >
+              {runs
+                .filter(
+                  ({ execution }) =>
+                    execution.stdin === true &&
+                    (execution.status === "running" ||
+                      execution.status === "pending"),
+                )
+                .map(({ entry, execution }) => (
+                  <option key={execution.id} value={execution.id}>
+                    {entry.widgetLabel}
+                  </option>
+                ))}
+            </select>
+          ) : null}
+          <input
+            className="input miniapp-console__stdin-input"
+            value={stdinCommand}
+            onChange={(event) => setStdinCommand(event.target.value)}
+            onKeyDown={handleStdinKeyDown}
+            disabled={stdinPending}
+            placeholder={t("miniapps.console.stdinPlaceholder", {
+              defaultValue: "Type a command and press Enter",
+            })}
+            aria-label={t("miniapps.console.stdinInput", {
+              defaultValue: "Process input",
+            })}
+          />
+        </div>
+      ) : null}
     </>
   );
 }
