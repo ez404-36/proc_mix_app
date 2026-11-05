@@ -12,7 +12,7 @@
 // broken/disabled state for a widget whose `commandRef` no longer resolves.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 
 vi.mock("../../services/commandRunner", () => ({
@@ -369,8 +369,9 @@ describe("MiniAppWidget — button", () => {
       fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
     });
 
-    const running = screen.getByRole("button", { name: /Running/ });
+    const running = screen.getByRole("button", { name: /Connect/ });
     expect((running as HTMLButtonElement).disabled).toBe(true);
+    expect(within(running).getByText("Connect")).toBeTruthy();
 
     await act(async () => {
       settle("exec-1");
@@ -384,7 +385,7 @@ describe("MiniAppWidget — button", () => {
   it("stays disabled with a loader while the spawned process is still active", async () => {
     renderWidget(buttonWidget(), { hasActiveExecution: true });
 
-    const running = screen.getByRole("button", { name: /Running/ });
+    const running = screen.getByRole("button", { name: /Connect/ });
     expect((running as HTMLButtonElement).disabled).toBe(true);
     expect(running.getAttribute("aria-busy")).toBe("true");
     expect(running.className).toContain("is-running");
@@ -402,7 +403,7 @@ describe("MiniAppWidget — button", () => {
       widgetElement(buttonWidget(), { hasActiveExecution: true }),
     );
 
-    const running = screen.getByRole("button", { name: /Running/ });
+    const running = screen.getByRole("button", { name: /Connect/ });
     expect((running as HTMLButtonElement).disabled).toBe(true);
 
     rerender(widgetElement(buttonWidget(), { hasActiveExecution: false }));

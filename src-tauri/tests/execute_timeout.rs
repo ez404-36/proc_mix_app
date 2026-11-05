@@ -94,6 +94,7 @@ async fn timeout_kills_long_running_command() {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     let start = Instant::now();
@@ -171,6 +172,7 @@ async fn fast_command_with_timeout_completes_normally() {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     spawn_execution(app, state, req)
@@ -241,6 +243,7 @@ async fn no_timeout_command_completes_normally() {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     spawn_execution(app, state, req)

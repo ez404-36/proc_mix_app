@@ -129,6 +129,14 @@ pub const ERR_REMOTE_ELEVATION_UNSUPPORTED: &str = "REMOTE_ELEVATION_UNSUPPORTED
 /// is a defensive guard against that contract being violated.
 pub const ERR_REMOTE_TARGET_UNRESOLVED: &str = "REMOTE_TARGET_UNRESOLVED";
 
+/// Stable sentinel returned when a run has no UI-writable stdin pipe. The UI
+/// hides the input unless `Started.stdin` is true; this also covers the race
+/// where a process finished just before submit.
+pub const ERR_STDIN_UNAVAILABLE: &str = "STDIN_UNAVAILABLE";
+
+/// Stable prefix for OS errors returned while writing to a run's stdin pipe.
+pub const ERR_STDIN_WRITE_FAILED: &str = "STDIN_WRITE_FAILED:";
+
 /// Prefix returned BEFORE the child is spawned when parking the one-shot SSH
 /// password in the keychain fails (no Secret Service on a Linux headless box,
 /// permission denied, …). The backend error message follows the colon. The JS
@@ -277,6 +285,10 @@ pub struct ExecuteRequest {
     /// parsing cleanly.
     #[serde(default)]
     pub target: ExecutionTarget,
+    /// Request a local, non-elevated stdin pipe so newline-terminated lines
+    /// can be delivered to the child while it is running.
+    #[serde(default)]
+    pub stdin: bool,
     /// One-shot SSH password for this remote run only (the "enter password at
     /// run time" flow). When `Some` and the target is
     /// [`ExecutionTarget::Remote`] on Unix, the executor parks it in a
@@ -339,6 +351,7 @@ impl std::fmt::Debug for ExecuteRequest {
             .field("capture_output", &self.capture_output)
             .field("silent", &self.silent)
             .field("target", &self.target)
+            .field("stdin", &self.stdin)
             .field("ssh_password", &ssh_password)
             .finish()
     }
@@ -431,6 +444,7 @@ impl ExecuteRequest {
             capture_output: opts.capture_output,
             silent: opts.silent,
             target: cmd.target.clone().unwrap_or_default(),
+            stdin: false,
             ssh_password: None,
         }
     }
@@ -526,6 +540,10 @@ pub enum ExecutionEvent {
         /// runs so legacy payloads stay byte-identical.
         #[serde(skip_serializing_if = "Option::is_none")]
         workflow_run_id: Option<String>,
+        /// `true` when the executor kept a stdin pipe the UI can write to.
+        /// Omitted from the wire when false so legacy payloads stay unchanged.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stdin: bool,
     },
     #[serde(rename = "stdout")]
     Stdout {
@@ -770,6 +788,9 @@ pub const TRUNCATION_MARKER: &str = "…(truncated)";
 /// waiter needs it.
 pub struct RunningEntry {
     pub cancel_tx: Option<oneshot::Sender<()>>,
+    /// Writer half of an opt-in local stdin pipe. `None` when the run did not
+    /// request stdin or could not use it (sudo/UAC/SSH).
+    pub stdin: Option<Arc<Mutex<Option<tokio::process::ChildStdin>>>>,
     /// Process-group id of the spawned child, captured at spawn time. The
     /// waiter normally owns the kill, but on app shutdown the runtime is torn
     /// down before waiter tasks can run, so the exit hook needs to group-kill
@@ -878,6 +899,7 @@ mod wire_format_tests {
             variables: Vec::new(),
             working_dir: None,
             workflow_run_id: None,
+            stdin: false,
         };
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["kind"], "started");
@@ -895,6 +917,7 @@ mod wire_format_tests {
         // Absent working_dir is omitted entirely (no `null` on the wire).
         assert!(json.get("workingDir").is_none());
         assert!(json.get("working_dir").is_none());
+        assert!(json.get("stdin").is_none());
     }
 
     #[test]
@@ -906,6 +929,7 @@ mod wire_format_tests {
             variables: Vec::new(),
             working_dir: Some("/home/user/project".into()),
             workflow_run_id: None,
+            stdin: false,
         };
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["workingDir"], "/home/user/project");
@@ -932,6 +956,7 @@ mod wire_format_tests {
             ],
             working_dir: None,
             workflow_run_id: None,
+            stdin: false,
         };
         let json = serde_json::to_value(&e).unwrap();
         let vars = json["variables"].as_array().expect("variables present");
@@ -1084,6 +1109,7 @@ mod wire_format_tests {
             variables: Vec::new(),
             working_dir: None,
             workflow_run_id: Some("run-1".into()),
+            stdin: false,
         };
         let sj = serde_json::to_value(&started).unwrap();
         assert_eq!(sj["workflowRunId"], "run-1");
@@ -1134,6 +1160,7 @@ mod wire_format_tests {
             silent: false,
             target: ExecutionTarget::Local,
             ssh_password: None,
+            stdin: false,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert!(json["workingDir"].is_string());
@@ -1196,6 +1223,7 @@ mod wire_format_tests {
             capture_output: false,
             silent: false,
             target: ExecutionTarget::Local,
+            stdin: false,
             ssh_password: Some("sshpw-secret".into()),
         };
         let dbg = format!("{req:?}");

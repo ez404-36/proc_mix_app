@@ -10721,6 +10721,30 @@ body.is-editor-fullscreen .output-panel {
   font-style: italic;
 }
 
+.miniapp-console__stdin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--console-border);
+  background: var(--console-header-bg, var(--console-bg));
+}
+
+.miniapp-console__stdin-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.miniapp-console__stdin-run {
+  flex: 0 1 180px;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
 /* Processes tab body: only running/pending runs, each with PID + Cancel.
    Functionally the old `MiniAppActiveProcesses` component's content. */
 .miniapp-processes {

@@ -73,6 +73,7 @@ interface ExecutionState {
     target?: import("../types").ExecutionTarget,
     workingDir?: string,
     pid?: number,
+    stdin?: boolean,
   ) => void;
   /**
    * Create (or reuse) the single aggregated execution for a workflow run,
@@ -269,6 +270,7 @@ export const useExecutionStore = create<ExecutionState>()(
     target,
     workingDir,
     pid,
+    stdin,
   ) =>
     set((state) => {
       const existing = state.executions[id];
@@ -285,6 +287,7 @@ export const useExecutionStore = create<ExecutionState>()(
             target: existing.target ?? target,
             workingDir: existing.workingDir ?? workingDir,
             pid: existing.pid ?? pid,
+            stdin: existing.stdin ?? stdin,
             // If a stub was created by an out-of-order log event, mark it
             // running here (it already was, but be explicit).
             status: existing.status,
@@ -301,6 +304,7 @@ export const useExecutionStore = create<ExecutionState>()(
             target,
             workingDir,
             pid,
+            stdin,
             status: "running",
             startedAt: Date.now(),
             log: [],

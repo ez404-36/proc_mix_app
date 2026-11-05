@@ -29,6 +29,15 @@ pub async fn cancel_execution(
 }
 
 #[tauri::command]
+pub async fn write_execution_stdin(
+    state: State<'_, Arc<ExecutorState>>,
+    execution_id: String,
+    input: String,
+) -> Result<(), String> {
+    executor::write_execution_stdin(state.inner().clone(), execution_id, input).await
+}
+
+#[tauri::command]
 pub async fn list_running_executions(
     state: State<'_, Arc<ExecutorState>>,
 ) -> Result<Vec<String>, String> {

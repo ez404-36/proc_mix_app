@@ -335,6 +335,7 @@ pub fn run() {
             commands::assistant_generate,
             commands::assistant_cancel,
             commands::cancel_execution,
+            commands::write_execution_stdin,
             commands::list_running_executions,
             commands::update_tray_menu,
             commands::get_platform,

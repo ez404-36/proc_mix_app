@@ -246,6 +246,7 @@ async function runWidgetAction(
   try {
     const executionId = await triggerCommandRun(cmd, {
       variableValues: variableValues ?? {},
+      stdin: true,
       ...(miniAppId !== undefined
         ? { executionId: makeMiniAppExecutionId(miniAppId) }
         : {}),
@@ -378,9 +379,7 @@ function ButtonWidget({
         style={buttonStyleFor(widget.style)}
       >
         {leadingIcon}
-        <span>
-          {isButtonRunning ? t("miniapps.runner.running") : resolvedLabel}
-        </span>
+        <span>{resolvedLabel}</span>
       </button>
       {isBroken ? <BrokenRefMarker label={brokenLabel} /> : null}
     </span>

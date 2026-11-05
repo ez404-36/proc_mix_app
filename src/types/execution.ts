@@ -40,6 +40,12 @@ export interface StartedEvent extends ExecutionEventBase {
    * runs. Absent for a remote (SSH) run, where the local cwd does not apply.
    */
   workingDir?: string;
+  /**
+   * Whether the executor kept a stdin pipe that the UI can write to. Omitted
+   * when false. Only local, non-elevated runs requested through the stdin
+   * option set this.
+   */
+  stdin?: boolean;
 }
 
 export interface StdoutEvent extends ExecutionEventBase {
@@ -169,6 +175,12 @@ export interface Execution {
    * single "the" pid for the whole mini-app.
    */
   pid?: number;
+  /**
+   * Whether the UI can send newline-terminated commands to this run's stdin.
+   * Captured from the `started` event. Absent for runs that did not opt in,
+   * elevated runs, remote runs, and workflow aggregates.
+   */
+  stdin?: boolean;
   /**
    * Marks this as the aggregated process for a whole workflow run (its `id`
    * is the workflow `run_id`). Drives panel behavior: the Cancel button

@@ -113,6 +113,7 @@ async fn sensitive_variable_value_is_redacted_in_stdout() {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     spawn_execution(app, state, req)
@@ -166,6 +167,7 @@ async fn non_sensitive_variable_value_is_not_redacted() {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     spawn_execution(app, state, req)
@@ -205,6 +207,7 @@ async fn nonexistent_working_dir_fails_fast() {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     let result = spawn_execution(app, state, req).await;
@@ -248,6 +251,7 @@ async fn existing_working_dir_runs() {
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     };
 
     spawn_execution(app, state, req)

@@ -790,13 +790,14 @@ pub(super) fn build_command(
     cmd.no_console_window();
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    // Only the Unix elevated path needs a piped stdin (to hand sudo
-    // the password). On Windows the UAC wrapper has nothing to read;
-    // non-elevated runs explicitly null stdin so the script can't
-    // hang waiting on input it has no way to receive.
+    // Only the Unix elevated path needs a piped stdin (to hand sudo the
+    // password). Interactive runs get a caller-owned pipe; Windows UAC has
+    // nothing to read and remains non-interactive. Every other run gets null
+    // stdin so the script cannot hang waiting on input it has no way to
+    // receive.
     #[cfg(unix)]
     {
-        if req.elevated {
+        if req.elevated || req.stdin {
             cmd.stdin(Stdio::piped());
         } else {
             cmd.stdin(Stdio::null());
@@ -804,7 +805,11 @@ pub(super) fn build_command(
     }
     #[cfg(not(unix))]
     {
-        cmd.stdin(Stdio::null());
+        if !req.elevated && req.stdin {
+            cmd.stdin(Stdio::piped());
+        } else {
+            cmd.stdin(Stdio::null());
+        }
     }
 
     // On Unix, put the child in its own process group so we can kill the

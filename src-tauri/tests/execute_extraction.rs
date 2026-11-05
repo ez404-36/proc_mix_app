@@ -93,6 +93,7 @@ fn request_with_schema(script: &str, schema: OutputSchemaRecord) -> ExecuteReque
         silent: false,
         target: ExecutionTarget::Local,
         ssh_password: None,
+        stdin: false,
     }
 }
 
