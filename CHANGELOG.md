@@ -5,6 +5,20 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.4] - 2026-11-08
+
+### Changed
+
+- **Per-process mini-app console.** The mini-app Console tab now shows one
+  chip per run (newest first; running runs carry a live spinner) instead of a
+  single merged log. Selecting a chip shows that process's own log, status,
+  and PID, and the stdin field targets exactly the selected process — the
+  multi-process selector is gone. A running chip offers Cancel, a finished
+  one offers per-run Clear; a typed stdin draft is dropped when the target
+  run changes so a command can never be sent to the wrong process. The
+  separate Processes tab is removed — its running count badge now lives on
+  the Console tab, and its Cancel/PID rows are absorbed by the chips.
+
 ## [0.16.3] - 2026-11-05
 
 ### Added

@@ -476,13 +476,6 @@
         "probeError": "Status check could not run",
         "unmatched": "Unmatched"
       },
-      "processes": {
-        "title": "Active processes",
-        "pid": "PID {{pid}}",
-        "pidPending": "starting…",
-        "cancel": "Cancel",
-        "empty": "No active processes."
-      },
       "windowResolveFailed": "Could not open this mini-app window: {{message}}",
       "closeConfirm": {
         "title": "Close mini-app?",
@@ -494,13 +487,15 @@
       "tabs": {
         "interface": "Interface",
         "console": "Console",
-        "processes": "Processes",
         "runningCount": "{{count}} running"
       }
     },
     "console": {
       "empty": "No output yet.",
-      "runHeader": "▸ {{label}} · {{status}}",
+      "chipsLabel": "Runs",
+      "pid": "PID {{pid}}",
+      "pidPending": "starting…",
+      "cancel": "Cancel",
       "status": {
         "pending": "Pending",
         "running": "Running",

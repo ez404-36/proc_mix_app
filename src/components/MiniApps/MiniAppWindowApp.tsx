@@ -56,7 +56,7 @@ const ARCO_LOCALE_MAP: Record<Language, Locale> = {
  *   3. Wires the execution bridge — gated to this window's OWN mini-app id
  *      (see `useExecutionBridge`) — so widget runs stream output/PIDs into
  *      THIS window's `executionStore` only, consumed by `MiniAppRunnerTabs`
- *      (Console/Processes tabs) inside `MiniAppRunner`.
+ *      Console tab) inside `MiniAppRunner`.
  *   4. Installs the `onCloseRequested` guard: if the mini-app has active
  *      processes when the user tries to close (native × / minimize is
  *      unaffected — only closing is intercepted), a confirmation dialog asks

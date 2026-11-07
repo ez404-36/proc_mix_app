@@ -14,31 +14,33 @@ import type { Execution } from "../../types";
 import { cancelExecution, sendExecutionStdin } from "../../utils/executor";
 import { CancelIcon, ClearIcon, SpinnerIcon } from "../icons";
 
-/** One tracked run belonging to this mini-app, in the shape the tabs need. */
+/** One tracked run belonging to this mini-app, in the shape the Console
+ *  tab needs. */
 export interface MiniAppConsoleEntry {
   executionId: string;
   widgetLabel: string;
 }
 
-export type MiniAppRunnerTab = "interface" | "console" | "processes";
+export type MiniAppRunnerTab = "interface" | "console";
 
 interface MiniAppRunnerTabsProps {
   /** Every widget run currently tracked for THIS mini-app (running or
    *  recently finished — see `MiniAppRunner`'s `executionWidgets`). Order is
-   *  not significant; both the Console and Processes bodies sort by
-   *  `startedAt` themselves. */
+   *  not significant; the Console body sorts by `startedAt` itself. */
   entries: ReadonlyArray<MiniAppConsoleEntry>;
   activeTab: MiniAppRunnerTab;
   onTabChange: (tab: MiniAppRunnerTab) => void;
   /** The Interface tab's body — the widget panel (or its empty state),
    *  rendered by `MiniAppRunner`. Kept as a prop rather than owned here so
-   *  this component stays scoped to the tab strip + Console/Processes
-   *  bodies, matching `MiniAppRunner`'s existing widget-panel JSX. */
+   *  this component stays scoped to the tab strip + Console body, matching
+   *  `MiniAppRunner`'s existing widget-panel JSX. */
   interfaceBody: ReactElement;
 }
 
-/** Runs sorted oldest-first (by `startedAt`), for the Console tab's
- *  chronological merged log. */
+/** Runs sorted newest-first (by `startedAt`) — the Console tab's chip
+ *  order, mirroring OutputPanel's recents strip. The newest run is also the
+ *  default selection, so a fresh click lands on the log the user just
+ *  started. */
 function useSortedRuns(
   entries: ReadonlyArray<MiniAppConsoleEntry>,
   executions: Record<string, Execution>,
@@ -51,73 +53,68 @@ function useSortedRuns(
           (r): r is { entry: MiniAppConsoleEntry; execution: Execution } =>
             r.execution !== undefined,
         )
-        .sort((a, b) => a.execution.startedAt - b.execution.startedAt),
+        .sort((a, b) => b.execution.startedAt - a.execution.startedAt),
     [entries, executions],
   );
 }
 
 interface ConsoleTabBodyProps {
   runs: ReadonlyArray<{ entry: MiniAppConsoleEntry; execution: Execution }>;
-  onClear: () => void;
 }
 
 /**
- * One continuous, chronologically-merged log across every tracked run
- * (running AND finished) — NOT split by chip/tab-switcher. Each run's own
- * output block is preceded by a synthetic, presentation-only separator line
- * (styled like a workflow step header, see `.output-line--meta` /
- * `.output-line--workdir` in `theme.css`, produced for workflow steps by
- * `useWorkflowBridge.buildStepHeaderLines`). This does NOT call
- * `appendWorkflowStepHeader` — that mutates an execution's persisted log in
- * the store; the separator here is purely a rendered artifact of this
- * component, never written back to any execution.
+ * Per-process console: a chip strip (one chip per tracked run, newest
+ * first), the selected run's toolbar (label · status · PID · Clear/Cancel),
+ * that run's own log, and a stdin row targeting exactly that run. There is
+ * deliberately NO merged across-runs view — with several concurrent
+ * processes a single interleaved log makes the stdin target ambiguous, so
+ * the chips ARE the process list and the selection is the stdin target.
  *
- * The Clear button is pinned top-right INSIDE this body (not in the tab
- * strip) — it acts on the console's content, so it reads as part of the
- * console rather than a fourth tab-level control sitting at the same visual
- * height as Interface/Console/Processes.
+ * Selection falls back to the newest run whenever the selected run has been
+ * cleared or evicted (`selected ?? runs[0]`), so the body never renders
+ * against a stale id. Clear removes ONLY the selected (terminated) run via
+ * `clearExecution(id)` — a running run shows Cancel instead and cannot be
+ * cleared mid-flight.
  */
-function ConsoleTabBody({ runs, onClear }: ConsoleTabBodyProps): ReactElement {
+function ConsoleTabBody({ runs }: ConsoleTabBodyProps): ReactElement {
   const { t } = useTranslation();
   const { show } = useContextMenu();
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  const totalLogLength = runs.reduce((n, r) => n + r.execution.log.length, 0);
-  const activeInputRunIds = useMemo(
-    () =>
-      runs
-        .filter(
-          ({ execution }) =>
-            execution.stdin === true &&
-            (execution.status === "running" || execution.status === "pending"),
-        )
-        .map(({ execution }) => execution.id),
-    [runs],
-  );
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [stdinCommand, setStdinCommand] = useState("");
   const [stdinPending, setStdinPending] = useState(false);
-  const selectedRunIdIsValid = activeInputRunIds.includes(selectedRunId ?? "");
-  const targetRunId: string | undefined = selectedRunIdIsValid
-    ? (selectedRunId ?? undefined)
-    : activeInputRunIds[0];
+
+  const selected = runs.find((r) => r.execution.id === selectedRunId) ?? runs[0];
+
+  const isActive =
+    selected !== undefined &&
+    (selected.execution.status === "running" ||
+      selected.execution.status === "pending");
+  const acceptsStdin = isActive && selected.execution.stdin === true;
+
+  const selectedExecutionId = selected?.execution.id ?? null;
+
+  // The stdin input is per-target: typed text always belongs to the run it
+  // was typed FOR. When the target changes (chip click, or the selected run
+  // was cleared/evicted and selection fell back to another run), drop the
+  // draft — otherwise pressing Enter after a switch would silently send the
+  // previous run's command to the new one.
+  useEffect(() => {
+    setStdinCommand("");
+  }, [selectedExecutionId]);
 
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [totalLogLength, runs.length]);
-
-  useEffect(() => {
-    if (!selectedRunIdIsValid && activeInputRunIds.length > 0) {
-      setSelectedRunId(activeInputRunIds[0]);
-    }
-  }, [activeInputRunIds, selectedRunIdIsValid]);
+  }, [selectedRunId, selected?.execution.log.length]);
 
   const submitStdin = async (): Promise<void> => {
-    if (!targetRunId || stdinCommand.trim() === "" || stdinPending) return;
+    if (selected === undefined || !acceptsStdin) return;
+    if (stdinCommand.trim() === "" || stdinPending) return;
     setStdinPending(true);
     try {
-      await sendExecutionStdin(targetRunId, stdinCommand);
+      await sendExecutionStdin(selected.execution.id, stdinCommand);
       setStdinCommand("");
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
@@ -132,7 +129,9 @@ function ConsoleTabBody({ runs, onClear }: ConsoleTabBodyProps): ReactElement {
     }
   };
 
-  const handleStdinKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+  const handleStdinKeyDown = (
+    event: ReactKeyboardEvent<HTMLInputElement>,
+  ): void => {
     if (event.key === "Enter") void submitStdin();
   };
 
@@ -147,102 +146,149 @@ function ConsoleTabBody({ runs, onClear }: ConsoleTabBodyProps): ReactElement {
     });
   };
 
-  const clearButton = (
-    <button
-      type="button"
-      className="miniapp-console__clear"
-      onClick={onClear}
-      aria-label={t("common.clear")}
-      title={t("common.clear")}
-    >
-      <ClearIcon />
-    </button>
-  );
-
-  if (runs.length === 0) {
+  if (selected === undefined) {
     return (
-      <>
-        {clearButton}
-        <div className="empty-state">
-          {t("miniapps.console.empty", { defaultValue: "No output yet." })}
-        </div>
-      </>
+      <div className="empty-state">
+        {t("miniapps.console.empty", { defaultValue: "No output yet." })}
+      </div>
     );
   }
 
+  const { entry, execution } = selected;
+
   return (
     <>
-      {clearButton}
+      <div
+        className="miniapp-console__chips"
+        role="group"
+        aria-label={t("miniapps.console.chipsLabel", { defaultValue: "Runs" })}
+      >
+        {runs.map(({ entry: chipEntry, execution: chipExecution }) => {
+          const chipIsActive =
+            chipExecution.status === "running" ||
+            chipExecution.status === "pending";
+          const isSelected = chipExecution.id === execution.id;
+          return (
+            <button
+              key={chipExecution.id}
+              type="button"
+              aria-pressed={isSelected}
+              className={`miniapp-console__chip${
+                isSelected ? " is-active" : ""
+              }`}
+              onClick={() => setSelectedRunId(chipExecution.id)}
+              title={chipEntry.widgetLabel}
+            >
+              {chipIsActive ? (
+                <span
+                  className="miniapp-console__chip-spinner"
+                  aria-hidden="true"
+                >
+                  <SpinnerIcon />
+                </span>
+              ) : null}
+              <span className="miniapp-console__chip-label">
+                {chipEntry.widgetLabel}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="miniapp-console__toolbar">
+        <span
+          className="miniapp-console__toolbar-label"
+          title={entry.widgetLabel}
+        >
+          {entry.widgetLabel}
+        </span>
+        <span className="miniapp-console__toolbar-status">
+          {t(`miniapps.console.status.${execution.status}`, {
+            defaultValue: execution.status,
+          })}
+        </span>
+        <span className="miniapp-console__toolbar-pid">
+          {execution.pid !== undefined
+            ? t("miniapps.console.pid", {
+                defaultValue: "PID {{pid}}",
+                pid: execution.pid,
+              })
+            : isActive
+              ? t("miniapps.console.pidPending", {
+                  defaultValue: "starting…",
+                })
+              : ""}
+        </span>
+        <span className="miniapp-console__toolbar-actions">
+          {!isActive ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--icon"
+              onClick={() => {
+                useExecutionStore.getState().clearExecution(execution.id);
+              }}
+              aria-label={t("common.clear")}
+              title={t("common.clear")}
+            >
+              <ClearIcon />
+            </button>
+          ) : null}
+          {isActive ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--icon"
+              onClick={() => {
+                void cancelExecution(execution.id).catch((err: unknown) => {
+                  console.error(
+                    "failed to cancel mini-app process",
+                    execution.id,
+                    err,
+                  );
+                });
+              }}
+              aria-label={t("miniapps.console.cancel", {
+                defaultValue: "Cancel",
+              })}
+              title={t("miniapps.console.cancel", { defaultValue: "Cancel" })}
+            >
+              <CancelIcon />
+            </button>
+          ) : null}
+        </span>
+      </div>
       <div
         ref={bodyRef}
         className="miniapp-console__body"
         onContextMenu={handleContextMenu}
       >
-        {runs.map(({ entry, execution }) => (
-          <div key={execution.id} className="miniapp-console__run-block">
-            <div className="output-line output-line--meta">
-              {t("miniapps.console.runHeader", {
-                defaultValue: "▸ {{label}} · {{status}}",
-                label: entry.widgetLabel,
-                status: t(`miniapps.console.status.${execution.status}`, {
-                  defaultValue: execution.status,
-                }),
-              })}
-            </div>
-            {execution.log.length === 0 && execution.status === "running" ? (
-              <div className="miniapp-console__placeholder">
-                {t("outputPanel.waiting")}
-              </div>
-            ) : (
-              execution.log.map((line, idx) => (
-                <div
-                  key={`${execution.id}-${idx}`}
-                  className={`output-line output-line--${line.stream}${
-                    line.variant === "workdir" ? " output-line--workdir" : ""
-                  }`}
-                >
-                  <AnsiText text={line.line} />
-                </div>
-              ))
-            )}
-            {execution.error ? (
-              <div className="output-line output-line--stderr">
-                <AnsiText text={execution.error} />
-              </div>
-            ) : null}
-            {execution.timedOut ? (
-              <div className="output-line output-line--timeout">
-                {t("outputPanel.timedOutLine")}
-              </div>
-            ) : null}
+        {execution.log.length === 0 && isActive ? (
+          <div className="miniapp-console__placeholder">
+            {t("outputPanel.waiting")}
           </div>
-        ))}
-      </div>
-      {targetRunId !== undefined ? (
-        <div className="miniapp-console__stdin">
-          {activeInputRunIds.length > 1 ? (
-            <select
-              className="input miniapp-console__stdin-run"
-              value={targetRunId}
-              onChange={(event) => setSelectedRunId(event.target.value)}
-              aria-label={t("miniapps.console.stdinRun", {
-                defaultValue: "Process",
-              })}
+        ) : (
+          execution.log.map((line, idx) => (
+            <div
+              key={`${execution.id}-${idx}`}
+              className={`output-line output-line--${line.stream}${
+                line.variant === "workdir" ? " output-line--workdir" : ""
+              }`}
             >
-              {runs
-                .filter(
-                  ({ execution }) =>
-                    execution.stdin === true &&
-                    (execution.status === "running" ||
-                      execution.status === "pending"),
-                )
-                .map(({ entry, execution }) => (
-                  <option key={execution.id} value={execution.id}>
-                    {entry.widgetLabel}
-                  </option>
-                ))}
-            </select>
-          ) : null}
+              <AnsiText text={line.line} />
+            </div>
+          ))
+        )}
+        {execution.error ? (
+          <div className="output-line output-line--stderr">
+            <AnsiText text={execution.error} />
+          </div>
+        ) : null}
+        {execution.timedOut ? (
+          <div className="output-line output-line--timeout">
+            {t("outputPanel.timedOutLine")}
+          </div>
+        ) : null}
+      </div>
+      {acceptsStdin ? (
+        <div className="miniapp-console__stdin">
           <input
             className="input miniapp-console__stdin-input"
             value={stdinCommand}
@@ -262,83 +308,19 @@ function ConsoleTabBody({ runs, onClear }: ConsoleTabBodyProps): ReactElement {
   );
 }
 
-interface ProcessesTabBodyProps {
-  runs: ReadonlyArray<{ entry: MiniAppConsoleEntry; execution: Execution }>;
-}
-
-/** Live subset of `runs` filtered to `running`/`pending` — functionally the
- *  old `MiniAppActiveProcesses` component's content, now a tab body. */
-function ProcessesTabBody({ runs }: ProcessesTabBodyProps): ReactElement {
-  const { t } = useTranslation();
-  const active = runs.filter(
-    (r) => r.execution.status === "running" || r.execution.status === "pending",
-  );
-
-  const handleCancel = (executionId: string): void => {
-    void cancelExecution(executionId).catch((err: unknown) => {
-      console.error("failed to cancel mini-app process", executionId, err);
-    });
-  };
-
-  if (active.length === 0) {
-    return (
-      <div className="empty-state">
-        {t("miniapps.runner.processes.empty", {
-          defaultValue: "No active processes.",
-        })}
-      </div>
-    );
-  }
-
-  return (
-    <ul className="miniapp-processes__list">
-      {active.map(({ entry, execution }) => (
-        <li key={execution.id} className="miniapp-processes__item">
-          <span className="miniapp-processes__spinner" aria-hidden="true">
-            <SpinnerIcon />
-          </span>
-          <span className="miniapp-processes__label" title={entry.widgetLabel}>
-            {entry.widgetLabel}
-          </span>
-          <span className="miniapp-processes__pid">
-            {execution.pid !== undefined
-              ? t("miniapps.runner.processes.pid", { pid: execution.pid })
-              : t("miniapps.runner.processes.pidPending")}
-          </span>
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon miniapp-processes__cancel"
-            onClick={() => handleCancel(execution.id)}
-            aria-label={t("miniapps.runner.processes.cancel")}
-            title={t("miniapps.runner.processes.cancel")}
-          >
-            <CancelIcon />
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 /**
- * Permanent 3-tab layout for the Mini-App runner: Interface / Console /
- * Processes, positioned under the runner's header. Replaces the earlier
- * collapsible, bottom-docked `MiniAppConsolePanel` (chip-switcher,
- * auto-expand/collapse) — that whole interaction model no longer exists.
+ * Permanent 2-tab layout for the Mini-App runner: Interface / Console,
+ * positioned under the runner's header.
  *
  *  - Interface: the widget panel (owned by `MiniAppRunner`, passed in as
  *    `interfaceBody`).
- *  - Console: ONE continuous, chronologically-merged log across every
- *    tracked run (running + finished), with a Clear button (the ONLY place
- *    Clear lives).
- *  - Processes: only `running`/`pending` runs, each with its PID (or
- *    "starting…") and a Cancel button. A live badge on the tab itself shows
- *    the running count.
+ *  - Console: per-process run chips + the selected run's log, status, PID,
+ *    Clear/Cancel, and stdin. A live badge on the tab itself shows the
+ *    running count (it used to live on a separate Processes tab, which the
+ *    chips absorbed — a running chip IS the process row).
  *
- * Deliberately NO auto-switching between tabs when a run starts, and NO
- * badge/highlight on the Console tab for new output — both were explicitly
- * rejected in favour of a fully user-driven tab choice (see the design
- * discussion this component implements).
+ * Deliberately NO auto-switching between tabs when a run starts — the
+ * user's tab choice is authoritative.
  */
 export function MiniAppRunnerTabs({
   entries,
@@ -358,10 +340,6 @@ export function MiniAppRunnerTabs({
       ).length,
     [runs],
   );
-
-  const handleClear = (): void => {
-    useExecutionStore.getState().clearTerminated();
-  };
 
   return (
     <div className="miniapp-runner__tabs-wrap">
@@ -391,19 +369,6 @@ export function MiniAppRunnerTabs({
           onClick={() => onTabChange("console")}
         >
           {t("miniapps.runner.tabs.console", { defaultValue: "Console" })}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="miniapp-runner-tab-processes"
-          aria-controls="miniapp-runner-panel-processes"
-          aria-selected={activeTab === "processes"}
-          className={`miniapp-runner__tab${
-            activeTab === "processes" ? " is-active" : ""
-          }`}
-          onClick={() => onTabChange("processes")}
-        >
-          {t("miniapps.runner.tabs.processes", { defaultValue: "Processes" })}
           {runningCount > 0 ? (
             <span
               className="miniapp-runner__tab-badge"
@@ -433,18 +398,7 @@ export function MiniAppRunnerTabs({
         hidden={activeTab !== "console"}
         className="miniapp-console"
       >
-        {activeTab === "console" ? (
-          <ConsoleTabBody runs={runs} onClear={handleClear} />
-        ) : null}
-      </div>
-      <div
-        id="miniapp-runner-panel-processes"
-        role="tabpanel"
-        aria-labelledby="miniapp-runner-tab-processes"
-        hidden={activeTab !== "processes"}
-        className="miniapp-processes"
-      >
-        {activeTab === "processes" ? <ProcessesTabBody runs={runs} /> : null}
+        {activeTab === "console" ? <ConsoleTabBody runs={runs} /> : null}
       </div>
     </div>
   );

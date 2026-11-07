@@ -482,13 +482,6 @@
         "probeError": "Не удалось выполнить проверку статуса",
         "unmatched": "Не распознано"
       },
-      "processes": {
-        "title": "Активные процессы",
-        "pid": "PID {{pid}}",
-        "pidPending": "запускается…",
-        "cancel": "Отмена",
-        "empty": "Нет активных процессов."
-      },
       "windowResolveFailed": "Не удалось открыть окно мини-приложения: {{message}}",
       "closeConfirm": {
         "title": "Закрыть мини-приложение?",
@@ -502,13 +495,15 @@
       "tabs": {
         "interface": "Интерфейс",
         "console": "Консоль",
-        "processes": "Процессы",
         "runningCount": "Выполняется: {{count}}"
       }
     },
     "console": {
       "empty": "Пока нет вывода.",
-      "runHeader": "▸ {{label}} · {{status}}",
+      "chipsLabel": "Запуски",
+      "pid": "PID {{pid}}",
+      "pidPending": "запускается…",
+      "cancel": "Отмена",
       "status": {
         "pending": "Ожидание",
         "running": "Выполняется",

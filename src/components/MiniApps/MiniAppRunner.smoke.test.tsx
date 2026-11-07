@@ -940,7 +940,7 @@ describe("MiniAppRunner — hydration", () => {
 });
 
 describe("MiniAppRunner — tabs", () => {
-  it("shows the Interface tab by default, with Console/Processes hidden", async () => {
+  it("shows the Interface tab by default, with the Console panel hidden", async () => {
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
@@ -954,10 +954,6 @@ describe("MiniAppRunner — tabs", () => {
       true,
     );
     expect(document.getElementById("miniapp-runner-panel-console")).toHaveProperty(
-      "hidden",
-      true,
-    );
-    expect(document.getElementById("miniapp-runner-panel-processes")).toHaveProperty(
       "hidden",
       true,
     );
@@ -981,11 +977,11 @@ describe("MiniAppRunner — tabs", () => {
     ).toBe("true");
 
     act(() => {
-      fireEvent.click(screen.getByRole("tab", { name: "Console" }));
+      fireEvent.click(screen.getByRole("tab", { name: /^Console/ }));
     });
 
     expect(
-      screen.getByRole("tab", { name: "Console" }).getAttribute(
+      screen.getByRole("tab", { name: /^Console/ }).getAttribute(
         "aria-selected",
       ),
     ).toBe("true");
@@ -1000,10 +996,10 @@ describe("MiniAppRunner — tabs", () => {
     await renderRunner();
 
     act(() => {
-      fireEvent.click(screen.getByRole("tab", { name: "Console" }));
+      fireEvent.click(screen.getByRole("tab", { name: /^Console/ }));
     });
     expect(
-      screen.getByRole("tab", { name: "Console" }).getAttribute(
+      screen.getByRole("tab", { name: /^Console/ }).getAttribute(
         "aria-selected",
       ),
     ).toBe("true");
@@ -1022,7 +1018,7 @@ describe("MiniAppRunner — tabs", () => {
 describe("MiniAppRunner — Console tab", () => {
   async function openConsoleTab(): Promise<void> {
     act(() => {
-      fireEvent.click(screen.getByRole("tab", { name: "Console" }));
+      fireEvent.click(screen.getByRole("tab", { name: /^Console/ }));
     });
   }
 
@@ -1034,7 +1030,7 @@ describe("MiniAppRunner — Console tab", () => {
     expect(screen.getByText("No output yet.")).toBeTruthy();
   });
 
-  it("shows a run block with the widget's label once the execution is registered", async () => {
+  it("shows the run's chip and toolbar label once the execution is registered", async () => {
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
@@ -1049,7 +1045,7 @@ describe("MiniAppRunner — Console tab", () => {
     expect(
       within(
         document.getElementById("miniapp-runner-panel-console") as HTMLElement,
-      ).getByText(/Connect/),
+      ).getAllByText(/Connect/).length,
     ).toBeTruthy();
   });
 
@@ -1105,7 +1101,7 @@ describe("MiniAppRunner — Console tab", () => {
     expect((input as HTMLInputElement).value).toBe("");
   });
 
-  it("merges MULTIPLE concurrent runs into one chronological log, not a chip switcher", async () => {
+  it("switches between MULTIPLE concurrent runs via chips, one log per selected run", async () => {
     vi.mocked(triggerCommandRun)
       .mockResolvedValueOnce("exec-a")
       .mockResolvedValueOnce("exec-b");
@@ -1140,12 +1136,182 @@ describe("MiniAppRunner — Console tab", () => {
     const panel = document.getElementById(
       "miniapp-runner-panel-console",
     ) as HTMLElement;
-    // No chip-switcher element — both runs' blocks render together.
-    expect(panel.querySelectorAll(".miniapp-console__run-block")).toHaveLength(
-      2,
+    // One chip per run.
+    expect(panel.querySelectorAll(".miniapp-console__chip")).toHaveLength(2);
+    expect(within(panel).getAllByText(/Connect A/).length).toBeTruthy();
+    expect(within(panel).getAllByText(/Connect B/).length).toBeTruthy();
+
+    const toolbarLabel = (): string =>
+      panel.querySelector(".miniapp-console__toolbar-label")?.textContent ?? "";
+    const chipFor = (label: string): HTMLElement => {
+      const chip = [
+        ...panel.querySelectorAll(".miniapp-console__chip"),
+      ].find((c) => c.textContent?.includes(label));
+      if (!(chip instanceof HTMLElement)) {
+        throw new Error(`chip for ${label} not found`);
+      }
+      return chip;
+    };
+
+    // Selecting a chip switches the WHOLE console body to that run.
+    fireEvent.click(chipFor("Connect B"));
+    expect(toolbarLabel()).toBe("Connect B");
+    expect(chipFor("Connect B").className).toContain("is-active");
+
+    fireEvent.click(chipFor("Connect A"));
+    expect(toolbarLabel()).toBe("Connect A");
+    expect(chipFor("Connect A").className).toContain("is-active");
+  });
+
+  it("sends stdin to the SELECTED run when several input-enabled runs are live", async () => {
+    vi.mocked(triggerCommandRun)
+      .mockResolvedValueOnce("exec-a")
+      .mockResolvedValueOnce("exec-b");
+    stageMiniApp(
+      makeMiniApp({
+        widgets: [
+          buttonWidget({ id: "w-1", label: "Connect A" }),
+          buttonWidget({
+            id: "w-2",
+            label: "Connect B",
+            action: { kind: "inline", name: "Connect B", script: "vpn up b" },
+          }),
+        ],
+      }),
     );
-    expect(within(panel).getByText(/Connect A/)).toBeTruthy();
-    expect(within(panel).getByText(/Connect B/)).toBeTruthy();
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect A/ }));
+      useExecutionStore.getState().startExecution(
+        "exec-a",
+        undefined,
+        "Connect A",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /Connect B/ }));
+      useExecutionStore.getState().startExecution(
+        "exec-b",
+        undefined,
+        "Connect B",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+    });
+    await openConsoleTab();
+
+    const panel = document.getElementById(
+      "miniapp-runner-panel-console",
+    ) as HTMLElement;
+    const chipB = [...panel.querySelectorAll(".miniapp-console__chip")].find(
+      (c) => c.textContent?.includes("Connect B"),
+    );
+    if (!(chipB instanceof HTMLElement)) {
+      throw new Error("chip for Connect B not found");
+    }
+    fireEvent.click(chipB);
+
+    const input = screen.getByRole("textbox", { name: "Process input" });
+    fireEvent.change(input, { target: { value: "state on" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+
+    await waitFor(() => {
+      expect(sendExecutionStdin).toHaveBeenCalledWith("exec-b", "state on");
+    });
+  });
+
+  it("drops the stdin draft when the target run changes", async () => {
+    // A command typed for run A must NOT be silently inherited by run B:
+    // switching chips (or a fallback re-selection after Clear) changes the
+    // stdin target, so the draft is cleared.
+    vi.mocked(triggerCommandRun)
+      .mockResolvedValueOnce("exec-a")
+      .mockResolvedValueOnce("exec-b");
+    stageMiniApp(
+      makeMiniApp({
+        widgets: [
+          buttonWidget({ id: "w-1", label: "Connect A" }),
+          buttonWidget({
+            id: "w-2",
+            label: "Connect B",
+            action: { kind: "inline", name: "Connect B", script: "vpn up b" },
+          }),
+        ],
+      }),
+    );
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect A/ }));
+      useExecutionStore.getState().startExecution(
+        "exec-a",
+        undefined,
+        "Connect A",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /Connect B/ }));
+      useExecutionStore.getState().startExecution(
+        "exec-b",
+        undefined,
+        "Connect B",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+    });
+    await openConsoleTab();
+
+    const panel = document.getElementById(
+      "miniapp-runner-panel-console",
+    ) as HTMLElement;
+    const input = screen.getByRole("textbox", {
+      name: "Process input",
+    }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "typed for the wrong run" } });
+
+    const chipA = [...panel.querySelectorAll(".miniapp-console__chip")].find(
+      (c) => c.textContent?.includes("Connect A"),
+    );
+    if (!(chipA instanceof HTMLElement)) {
+      throw new Error("chip for Connect A not found");
+    }
+    fireEvent.click(chipA);
+
+    expect(
+      (screen.getByRole("textbox", { name: "Process input" }) as HTMLInputElement)
+        .value,
+    ).toBe("");
   });
 
   it("keeps a run visible after it reaches a terminal status", async () => {
@@ -1177,7 +1343,7 @@ describe("MiniAppRunner — Console tab", () => {
     expect(
       within(
         document.getElementById("miniapp-runner-panel-console") as HTMLElement,
-      ).getByText(/Connect/),
+      ).getAllByText(/Connect/).length,
     ).toBeTruthy();
   });
 
@@ -1208,7 +1374,7 @@ describe("MiniAppRunner — Console tab", () => {
     expect(
       within(
         document.getElementById("miniapp-runner-panel-console") as HTMLElement,
-      ).getByText(/Connect/),
+      ).getAllByText(/Connect/).length,
     ).toBeTruthy();
   });
 
@@ -1234,7 +1400,7 @@ describe("MiniAppRunner — Console tab", () => {
     expect(
       within(
         document.getElementById("miniapp-runner-panel-console") as HTMLElement,
-      ).getByText(/Connect/),
+      ).getAllByText(/Connect/).length,
     ).toBeTruthy();
 
     act(() => {
@@ -1244,40 +1410,7 @@ describe("MiniAppRunner — Console tab", () => {
     expect(screen.getByText("No output yet.")).toBeTruthy();
   });
 
-  it("Clear is only available on the Console tab", async () => {
-    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
-    await renderRunner();
-
-    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
-
-    act(() => {
-      fireEvent.click(screen.getByRole("tab", { name: /Processes/ }));
-    });
-    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
-
-    act(() => {
-      fireEvent.click(screen.getByRole("tab", { name: "Console" }));
-    });
-    expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
-  });
-});
-
-describe("MiniAppRunner — Processes tab", () => {
-  async function openProcessesTab(): Promise<void> {
-    act(() => {
-      fireEvent.click(screen.getByRole("tab", { name: /Processes/ }));
-    });
-  }
-
-  it("shows the empty state when nothing is running", async () => {
-    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
-    await renderRunner();
-    await openProcessesTab();
-
-    expect(screen.getByText("No active processes.")).toBeTruthy();
-  });
-
-  it("lists a running execution with its widget label and a Cancel button", async () => {
+  it("shows Clear only for a finished run, on the Console tab", async () => {
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
@@ -1287,12 +1420,125 @@ describe("MiniAppRunner — Processes tab", () => {
         .getState()
         .startExecution("exec-1", undefined, "Connect");
     });
-    await openProcessesTab();
+
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: /^Console/ }));
+    });
+    // Still running — Cancel instead of Clear.
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Cancel" }),
+    ).toBeTruthy();
+
+    act(() => {
+      useExecutionStore.getState().finishExecution("exec-1", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+    });
+
+    expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  });
+
+  it("Clear removes only the SELECTED run, leaving sibling chips intact", async () => {
+    vi.mocked(triggerCommandRun)
+      .mockResolvedValueOnce("exec-a")
+      .mockResolvedValueOnce("exec-b");
+    stageMiniApp(
+      makeMiniApp({
+        widgets: [
+          buttonWidget({ id: "w-1", label: "Connect A" }),
+          buttonWidget({
+            id: "w-2",
+            label: "Connect B",
+            action: { kind: "inline", name: "Connect B", script: "vpn up b" },
+          }),
+        ],
+      }),
+    );
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect A/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-a", undefined, "Connect A");
+      useExecutionStore.getState().finishExecution("exec-a", {
+        status: "success",
+        exitCode: 0,
+        durationMs: 0,
+        finishedAt: Date.now(),
+        error: undefined,
+        timedOut: false,
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Connect B/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-b", undefined, "Connect B");
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: /^Console/ }));
+    });
+    // Finished runs stay visible (evicted only by MAX_FINISHED_CONSOLE_RUNS),
+    // so both chips exist; the newest (still-running Connect B) is selected.
+    const panel = document.getElementById(
+      "miniapp-runner-panel-console",
+    ) as HTMLElement;
+    expect(panel.querySelectorAll(".miniapp-console__chip")).toHaveLength(2);
+
+    // Select the finished Connect A and clear it.
+    const chipA = [...panel.querySelectorAll(".miniapp-console__chip")].find(
+      (c) => c.textContent?.includes("Connect A"),
+    );
+    if (!(chipA instanceof HTMLElement)) {
+      throw new Error("chip for Connect A not found");
+    }
+    fireEvent.click(chipA);
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    });
+
+    // Connect A is gone; Connect B's chip remains and becomes the fallback
+    // selection.
+    expect(panel.querySelectorAll(".miniapp-console__chip")).toHaveLength(1);
+    expect(
+      panel.querySelector(".miniapp-console__toolbar-label")?.textContent,
+    ).toBe("Connect B");
+  });
+});
+
+describe("MiniAppRunner — Console process controls", () => {
+  async function openConsoleTab(): Promise<void> {
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: /^Console/ }));
+    });
+  }
+
+  it("shows a running run's toolbar with its label and a Cancel button", async () => {
+    stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
+    await renderRunner();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+      useExecutionStore
+        .getState()
+        .startExecution("exec-1", undefined, "Connect");
+    });
+    await openConsoleTab();
 
     const panel = document.getElementById(
-      "miniapp-runner-panel-processes",
+      "miniapp-runner-panel-console",
     ) as HTMLElement;
-    expect(within(panel).getByText("Connect")).toBeTruthy();
+    expect(
+      panel.querySelector(".miniapp-console__toolbar-label")?.textContent,
+    ).toBe("Connect");
     expect(within(panel).getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
@@ -1327,7 +1573,7 @@ describe("MiniAppRunner — Processes tab", () => {
     expect(idle.className).not.toContain("is-running");
   });
 
-  it("excludes a finished run — only running/pending appear", async () => {
+  it("drops the Cancel button once the selected run finishes", async () => {
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
@@ -1345,9 +1591,12 @@ describe("MiniAppRunner — Processes tab", () => {
         timedOut: false,
       });
     });
-    await openProcessesTab();
+    await openConsoleTab();
 
-    expect(screen.getByText("No active processes.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Clear" }),
+    ).toBeTruthy();
   });
 
   it("Cancel invokes cancelExecution with the running execution's id", async () => {
@@ -1360,7 +1609,7 @@ describe("MiniAppRunner — Processes tab", () => {
         .getState()
         .startExecution("exec-1", undefined, "Connect");
     });
-    await openProcessesTab();
+    await openConsoleTab();
 
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -1369,12 +1618,12 @@ describe("MiniAppRunner — Processes tab", () => {
     expect(cancelExecution).toHaveBeenCalledWith("exec-1");
   });
 
-  it("shows a live running-count badge on the Processes tab, hidden at zero", async () => {
+  it("shows a live running-count badge on the Console tab, hidden at zero", async () => {
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
     expect(
-      within(screen.getByRole("tab", { name: /Processes/ })).queryByText("1"),
+      within(screen.getByRole("tab", { name: /Console/ })).queryByText("1"),
     ).toBeNull();
 
     await act(async () => {
@@ -1385,7 +1634,7 @@ describe("MiniAppRunner — Processes tab", () => {
     });
 
     expect(
-      within(screen.getByRole("tab", { name: /Processes/ })).getByText("1"),
+      within(screen.getByRole("tab", { name: /Console/ })).getByText("1"),
     ).toBeTruthy();
 
     act(() => {
@@ -1400,7 +1649,7 @@ describe("MiniAppRunner — Processes tab", () => {
     });
 
     expect(
-      within(screen.getByRole("tab", { name: /Processes/ })).queryByText("1"),
+      within(screen.getByRole("tab", { name: /Console/ })).queryByText("1"),
     ).toBeNull();
   });
 
@@ -1414,23 +1663,23 @@ describe("MiniAppRunner — Processes tab", () => {
         .getState()
         .startExecution("exec-1", undefined, "Connect");
     });
-    await openProcessesTab();
-    expect(screen.queryByText("No active processes.")).toBeNull();
+    await openConsoleTab();
+    expect(screen.queryByText("No output yet.")).toBeNull();
 
     stageMiniApp(makeMiniApp({ id: "ma-2", widgets: [buttonWidget()] }));
     await renderRunner();
-    await openProcessesTab();
+    await openConsoleTab();
 
-    expect(screen.getByText("No active processes.")).toBeTruthy();
+    expect(screen.getByText("No output yet.")).toBeTruthy();
   });
 
-  it("refetches live while already open: an execution store update reaches the tab without switching away and back", async () => {
+  it("refetches live while already open: a store update reaches the Console without switching away and back", async () => {
     // The widget button only exists in the DOM while Interface is the
     // active tab (each tab body is conditionally rendered, not just
     // CSS-hidden — see `MiniAppRunnerTabs`). So the click that STARTS the
     // run happens on Interface, mirroring a real click; the assertion below
     // is what actually matters here — a LATER store update (the run
-    // finishing) is reflected in the Processes tab while it stays the
+    // finishing) is reflected in the Console tab while it stays the
     // active tab throughout, with no tab switch in between.
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
@@ -1442,15 +1691,16 @@ describe("MiniAppRunner — Processes tab", () => {
         .startExecution("exec-1", undefined, "Connect");
     });
 
-    await openProcessesTab();
+    await openConsoleTab();
 
     const panel = document.getElementById(
-      "miniapp-runner-panel-processes",
+      "miniapp-runner-panel-console",
     ) as HTMLElement;
-    expect(within(panel).getByText("Connect")).toBeTruthy();
-    expect(screen.queryByText("No active processes.")).toBeNull();
+    expect(
+      panel.querySelector(".miniapp-console__toolbar-status")?.textContent,
+    ).toBe("Running");
 
-    // The run finishes WHILE the Processes tab is still the active tab —
+    // The run finishes WHILE the Console tab is still the active tab —
     // no re-navigation. The list must update live.
     act(() => {
       useExecutionStore.getState().finishExecution("exec-1", {
@@ -1463,11 +1713,12 @@ describe("MiniAppRunner — Processes tab", () => {
       });
     });
 
-    expect(within(panel).queryByText("Connect")).toBeNull();
-    expect(screen.getByText("No active processes.")).toBeTruthy();
+    expect(
+      panel.querySelector(".miniapp-console__toolbar-status")?.textContent,
+    ).toBe("Success");
   });
 
-  it("updates the PID label live once the started event's pid arrives after the row is already showing", async () => {
+  it("updates the toolbar PID live once the started event's pid arrives after the run is already selected", async () => {
     stageMiniApp(makeMiniApp({ widgets: [buttonWidget()] }));
     await renderRunner();
 
@@ -1480,12 +1731,14 @@ describe("MiniAppRunner — Processes tab", () => {
         .getState()
         .startExecution("exec-1", undefined, "Connect");
     });
-    await openProcessesTab();
+    await openConsoleTab();
 
     const panel = document.getElementById(
-      "miniapp-runner-panel-processes",
+      "miniapp-runner-panel-console",
     ) as HTMLElement;
-    expect(within(panel).getByText("starting…")).toBeTruthy();
+    expect(
+      panel.querySelector(".miniapp-console__toolbar-pid")?.textContent,
+    ).toBe("starting…");
 
     act(() => {
       // The backend `started` event merging in the real pid — same
@@ -1495,16 +1748,16 @@ describe("MiniAppRunner — Processes tab", () => {
         .startExecution("exec-1", undefined, "Connect", undefined, undefined, undefined, undefined, undefined, undefined, undefined, 4242);
     });
 
-    expect(within(panel).getByText("PID 4242")).toBeTruthy();
-    expect(within(panel).queryByText("starting…")).toBeNull();
+    expect(
+      panel.querySelector(".miniapp-console__toolbar-pid")?.textContent,
+    ).toBe("PID 4242");
   });
 
-  it("refetches live while the tab stays open: two concurrent runs each disappear independently on finish, without reopening the tab", async () => {
+  it("keeps both run chips live: a finished run's chip loses its spinner and the badge count drops, without reopening the tab", async () => {
     // Both widget clicks happen on the Interface tab (the only tab that
-    // renders widget buttons — the Processes tab is a pure data view with
-    // no way to trigger a run from it). Switching to Processes afterward
-    // does NOT unmount `MiniAppRunner`'s `executionWidgets` state, so the
-    // tracked runs survive the tab switch exactly like a real session.
+    // renders widget buttons). Switching to the Console afterward does NOT
+    // unmount `MiniAppRunner`'s `executionWidgets` state, so the tracked
+    // runs survive the tab switch exactly like a real session.
     //
     // The mock resolves a DISTINCT execution id per call (mirrors the real
     // `triggerCommandRun`, which mints a fresh id per run) — without this
@@ -1538,20 +1791,19 @@ describe("MiniAppRunner — Processes tab", () => {
         .startExecution("exec-2", undefined, "Disconnect");
     });
 
-    await openProcessesTab();
+    await openConsoleTab();
 
     const panel = document.getElementById(
-      "miniapp-runner-panel-processes",
+      "miniapp-runner-panel-console",
     ) as HTMLElement;
-    expect(within(panel).getByText("Connect")).toBeTruthy();
-    expect(within(panel).getByText("Disconnect")).toBeTruthy();
+    expect(panel.querySelectorAll(".miniapp-console__chip")).toHaveLength(2);
     expect(
-      within(screen.getByRole("tab", { name: /Processes/ })).getByText("2"),
+      within(screen.getByRole("tab", { name: /Console/ })).getByText("2"),
     ).toBeTruthy();
 
-    // Finish ONE of the two runs while still viewing the Processes tab —
-    // the list must update live (no re-navigation, no remount) and leave
-    // the still-running one untouched.
+    // Finish ONE of the two runs while still viewing the Console tab — the
+    // finished run's chip STAYS (finished runs are kept until cleared), but
+    // the badge drops and the still-running one is untouched.
     act(() => {
       useExecutionStore.getState().finishExecution("exec-1", {
         status: "success",
@@ -1563,10 +1815,9 @@ describe("MiniAppRunner — Processes tab", () => {
       });
     });
 
-    expect(within(panel).queryByText("Connect")).toBeNull();
-    expect(within(panel).getByText("Disconnect")).toBeTruthy();
+    expect(panel.querySelectorAll(".miniapp-console__chip")).toHaveLength(2);
     expect(
-      within(screen.getByRole("tab", { name: /Processes/ })).getByText("1"),
+      within(screen.getByRole("tab", { name: /Console/ })).getByText("1"),
     ).toBeTruthy();
 
     act(() => {
@@ -1580,10 +1831,9 @@ describe("MiniAppRunner — Processes tab", () => {
       });
     });
 
-    expect(within(panel).queryByText("Disconnect")).toBeNull();
-    expect(screen.getByText("No active processes.")).toBeTruthy();
+    expect(panel.querySelectorAll(".miniapp-console__chip")).toHaveLength(2);
     expect(
-      within(screen.getByRole("tab", { name: /Processes/ })).queryByText("1"),
+      within(screen.getByRole("tab", { name: /Console/ })).queryByText("1"),
     ).toBeNull();
   });
 });
