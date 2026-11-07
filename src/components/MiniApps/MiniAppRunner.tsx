@@ -309,7 +309,7 @@ export function MiniAppRunner({
     new Map(),
   );
 
-  // Run tracking for the Console/Processes tabs: a mini-app can trigger
+  // Run tracking for the Console tab: a mini-app can trigger
   // MULTIPLE concurrent widget runs (one process per click — nothing here
   // assumes at most one in flight), so this is `executionId -> widgetId`,
   // not a single slot. Populated by each widget's `onExecutionStarted` the
@@ -317,13 +317,12 @@ export function MiniAppRunner({
   //
   // An entry stays here for as long as its execution still EXISTS in the
   // store, REGARDLESS of status — running, pending, success, error, or
-  // cancelled. The Console tab needs to keep showing a finished run's
-  // output/status until the user clears it, not just while it's active (the
-  // Processes tab instead filters this SAME map down to only
-  // running/pending — see `MiniAppRunnerTabs`). An entry is only pruned when
-  // its execution has actually left the store — via the Console tab's Clear
-  // button (`clearTerminated()`), the mini-app-switch reset effect below, or
-  // the `MAX_FINISHED_CONSOLE_RUNS` eviction below.
+  // cancelled. The Console tab needs to keep showing a finished run's chip
+  // and output/status until the user clears it, not just while it's active.
+  // An entry is only pruned when its execution has actually left the
+  // store — via the Console tab's per-run Clear button
+  // (`clearExecution(id)`), the mini-app-switch reset effect below, or the
+  // `MAX_FINISHED_CONSOLE_RUNS` eviction below.
   const [executionWidgets, setExecutionWidgets] = useState<
     Record<string, string>
   >({});
@@ -414,10 +413,10 @@ export function MiniAppRunner({
     setExecutionWidgets({});
   }, [miniapp?.id]);
 
-  // Which of the three permanent tabs (Interface / Console / Processes) is
-  // shown. Always starts on Interface — the primary view a user opens a
-  // mini-app to interact with — and is reset there when switching to a
-  // different mini-app, so a Console/Processes selection never carries over
+  // Which of the two permanent tabs (Interface / Console) is shown. Always
+  // starts on Interface — the primary view a user opens a mini-app to
+  // interact with — and is reset there when switching to a different
+  // mini-app, so a Console selection never carries over
   // to an unrelated panel. Deliberately NEVER auto-switched by a widget run
   // starting/finishing — the user's tab choice is authoritative.
   const [activeTab, setActiveTab] = useState<MiniAppRunnerTab>("interface");
@@ -508,8 +507,8 @@ export function MiniAppRunner({
     useMiniAppStatusPolling(statusConfigs);
 
   // Resolve `executionWidgets` (execution id -> widget id) into the display
-  // entries `MiniAppRunnerTabs` renders (Console: one run block per entry;
-  // Processes: the running/pending subset). Only `button`/`toggle` widgets
+  // entries `MiniAppRunnerTabs` renders (Console: one run chip per entry).
+  // Only `button`/`toggle` widgets
   // ever populate `executionWidgets` (the only kinds that call
   // `onExecutionStarted`), so every lookup here is expected to resolve; a
   // widget removed from the mini-app mid-run (editor open in another window)

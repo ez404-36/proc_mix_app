@@ -21,7 +21,7 @@ interface MiniAppCloseConfirmDialogProps {
 /**
  * Shown when the user tries to close a mini-app's standalone window while it
  * still has active processes (widget-triggered executions tracked by
- * `MiniAppRunner`'s `executionWidgets`, surfaced on its Processes tab via
+ * `MiniAppRunner`'s `executionWidgets`, surfaced on its Console tab via
  * `MiniAppRunnerTabs`). Offers a toggle — "Kill all child processes",
  * defaulting to ON — so the user can instead let them keep running
  * unsupervised (no console will observe them once the window is gone; this
