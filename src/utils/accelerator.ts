@@ -79,6 +79,14 @@ function normalizeMainKey(event: KeyEventLike): string | null {
   const k = event.key;
   if (!k || MODIFIER_KEYS.has(k)) return null;
 
+  // Letters and digits are accelerators by physical key, not by the character
+  // produced by the active layout. This also makes shortcut recording work
+  // when a Cyrillic layout produces, for example, key="з" for code="KeyZ".
+  const letterMatch = /^Key([A-Z])$/.exec(event.code);
+  if (letterMatch?.[1]) return letterMatch[1];
+  const digitMatch = /^Digit([0-9])$/.exec(event.code);
+  if (digitMatch?.[1]) return digitMatch[1];
+
   // Named keys mapping to Tauri-recognized accelerators.
   // Checked first so that single-character keys like " " (space) map
   // correctly before falling through to the generic character branch.

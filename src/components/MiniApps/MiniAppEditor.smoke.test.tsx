@@ -271,7 +271,11 @@ describe("MiniAppEditor — undo / redo", () => {
     });
     const nameInput = screen.getByLabelText("Name");
     act(() => {
-      fireEvent.keyDown(nameInput, { key: "z", ctrlKey: true });
+      fireEvent.keyDown(nameInput, {
+        code: "KeyZ",
+        key: "z",
+        ctrlKey: true,
+      });
     });
     expect(document.querySelectorAll(".ma-canvas-widget")).toHaveLength(1);
     act(() => {
@@ -279,7 +283,11 @@ describe("MiniAppEditor — undo / redo", () => {
     });
 
     act(() => {
-      fireEvent.keyDown(document, { key: "z", ctrlKey: true });
+      fireEvent.keyDown(document, {
+        code: "KeyZ",
+        key: "z",
+        ctrlKey: true,
+      });
     });
     expect(document.querySelectorAll(".ma-canvas-widget")).toHaveLength(0);
   });
