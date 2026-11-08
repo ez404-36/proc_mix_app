@@ -299,4 +299,17 @@ describe("buildAcceleratorFromEvent", () => {
       buildAcceleratorFromEvent(makeEvent({ key: "z", ctrlKey: true })),
     ).toBe("CommandOrControl+Z");
   });
+
+  it("should use the physical letter/digit key when the active layout is non-Latin", () => {
+    expect(
+      buildAcceleratorFromEvent(
+        makeEvent({ key: "з", code: "KeyZ", ctrlKey: true }),
+      ),
+    ).toBe("CommandOrControl+Z");
+    expect(
+      buildAcceleratorFromEvent(
+        makeEvent({ key: "1", code: "Digit1", ctrlKey: true }),
+      ),
+    ).toBe("CommandOrControl+1");
+  });
 });

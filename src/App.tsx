@@ -169,7 +169,9 @@ function App(): ReactElement {
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       const isPaletteShortcut =
-        (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "k";
+        // `event.code` is the physical key, so this keeps working when a
+        // non-Latin keyboard layout makes `event.key` Cyrillic (WebKitGTK).
+        (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyK";
       if (isPaletteShortcut) {
         e.preventDefault();
         togglePalette();

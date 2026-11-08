@@ -75,8 +75,16 @@ export function TerminalView({ sessionId, visible }: TerminalViewProps): ReactEl
       className="terminal-view"
       style={{ display: visible ? "block" : "none" }}
       role="tabpanel"
-      onContextMenu={(e) => {
+      onContextMenuCapture={(e) => {
         e.preventDefault();
+        // xterm.js installs its own bubble-phase `contextmenu` listener on the
+        // inner terminal element. It moves and selects xterm's hidden textarea
+        // to support a *native* browser context menu. Our UI replaces that
+        // menu, and on WebKitGTK the textarea dance can clear the xterm
+        // selection before the custom Copy item is rendered (the behaviour is
+        // also keyboard-layout dependent). Stopping the event before it
+        // reaches xterm keeps the selection entirely under our control.
+        e.stopPropagation();
         show({
           event: {
             clientX: e.clientX,

@@ -1239,10 +1239,13 @@ export function MiniAppEditor(): ReactElement | null {
       if (modalOpen) return;
 
       if (event.ctrlKey || event.metaKey) {
-        const key = event.key.toLowerCase();
-        if (key === "z" || key === "y") {
+        // Undo/redo/duplicate are physical-key shortcuts. `event.code` keeps
+        // them working when a non-Latin layout changes `event.key`.
+        const isZKey = event.code === "KeyZ";
+        const isYKey = event.code === "KeyY";
+        if (isZKey || isYKey) {
           event.preventDefault();
-          const wantRedo = key === "y" || event.shiftKey;
+          const wantRedo = isYKey || event.shiftKey;
           if (wantRedo) {
             handleRedo();
           } else {
@@ -1250,7 +1253,7 @@ export function MiniAppEditor(): ReactElement | null {
           }
           return;
         }
-        if (key === "d" && selectedWidgetId !== null) {
+        if (event.code === "KeyD" && selectedWidgetId !== null) {
           event.preventDefault();
           duplicateSelectedWidget();
         }

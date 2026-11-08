@@ -954,14 +954,17 @@ function InnerCanvas({ workflowId }: WorkflowCanvasProps): ReactElement {
     };
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!(event.ctrlKey || event.metaKey)) return;
-      if (event.key !== "z" && event.key !== "Z" && event.key !== "y" && event.key !== "Y") {
+      // Compare `event.code` rather than `event.key`: undo/redo must remain
+      // bound to the physical Z/Y keys on non-Latin keyboard layouts too,
+      // where `event.key` changes with the active layout.
+      const isZKey = event.code === "KeyZ";
+      const isYKey = event.code === "KeyY";
+      if (!isZKey && !isYKey) {
         return;
       }
       if (isEditableTarget(event.target)) return;
       const wantRedo =
-        event.key === "y" ||
-        event.key === "Y" ||
-        ((event.key === "z" || event.key === "Z") && event.shiftKey);
+        isYKey || (isZKey && event.shiftKey);
       event.preventDefault();
       if (wantRedo) {
         handleRedo();

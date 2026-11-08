@@ -5,6 +5,19 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.5] - 2026-11-08
+
+### Fixed
+
+- **Terminal right-click copy.** Selecting terminal text no longer clears the
+  selection when right-clicking to open Copy/Paste. The app now owns the
+  right-click flow before xterm.js performs its native-menu textarea
+  preparation, which was layout-sensitive under WebKitGTK.
+- **Keyboard-layout-safe shortcuts.** Command palette, workflow undo/redo,
+  mini-app undo/redo/duplicate, and keyboard shortcut recording now use the
+  physical key, so non-Latin/Cyrillic layouts keep the same letter-key
+  combinations.
+
 ## [0.16.4] - 2026-11-08
 
 ### Changed
