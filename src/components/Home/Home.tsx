@@ -551,10 +551,11 @@ function MiniAppRow({ miniapp }: { miniapp: MiniApp }): ReactElement {
   );
 }
 
-/** A recently-run entry, discriminated so the list can render either kind. */
+/** A recently-run entry, discriminated so the list can render any kind. */
 type RecentEntry =
   | { type: "command"; lastRunAt: string; command: Command }
-  | { type: "workflow"; lastRunAt: string; workflow: Workflow };
+  | { type: "workflow"; lastRunAt: string; workflow: Workflow }
+  | { type: "miniapp"; lastRunAt: string; miniapp: MiniApp };
 
 export function Home(): ReactElement {
   const { t } = useTranslation();
@@ -592,10 +593,17 @@ export function Home(): ReactElement {
         lastRunAt: w.lastRunAt ?? "",
         workflow: w,
       }));
-    return [...commandEntries, ...workflowEntries]
+    const miniAppEntries: RecentEntry[] = miniapps
+      .filter((m) => m.lastRunAt !== undefined)
+      .map((m) => ({
+        type: "miniapp",
+        lastRunAt: m.lastRunAt ?? "",
+        miniapp: m,
+      }));
+    return [...commandEntries, ...workflowEntries, ...miniAppEntries]
       .sort((a, b) => b.lastRunAt.localeCompare(a.lastRunAt))
       .slice(0, 5);
-  }, [commands, workflows]);
+  }, [commands, workflows, miniapps]);
 
   return (
     <div>
@@ -637,10 +645,15 @@ export function Home(): ReactElement {
                   key={`cmd-${entry.command.id}`}
                   cmd={entry.command}
                 />
-              ) : (
+              ) : entry.type === "workflow" ? (
                 <WorkflowRow
                   key={`wf-${entry.workflow.id}`}
                   wf={entry.workflow}
+                />
+              ) : (
+                <MiniAppRow
+                  key={`ma-${entry.miniapp.id}`}
+                  miniapp={entry.miniapp}
                 />
               ),
             )}
