@@ -1,7 +1,7 @@
 {
   "name": "procmix",
   "private": true,
-  "version": "0.16.5",
+  "version": "0.16.6",
   "description": "ProcMix - cross-platform automation tool",
   "productName": "ProcMix",
   "author": "Zenkin Egor Andreevich",
