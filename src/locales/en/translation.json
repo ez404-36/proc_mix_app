@@ -659,6 +659,7 @@
       "validation": {
         "issueCount_one": "{{count}} problem",
         "issueCount_other": "{{count}} problems",
+        "issueTooltipWidgetItem": "{{widget}}: {{message}}",
         "labelRequired": "A label is required.",
         "commandRequired": "Select a command.",
         "scriptRequired": "A script is required.",

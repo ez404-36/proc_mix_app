@@ -35,6 +35,13 @@ interface MiniAppMetaModalProps {
   initial: MiniAppMeta;
   categorySuggestions: ReadonlyArray<string>;
   tagSuggestions: ReadonlyArray<string>;
+  /**
+   * When set, the confirm button reads "Save" instead of "Apply": the editor
+   * opened this modal as part of a save flow (e.g. a brand-new draft was
+   * saved without a name), so confirming must both apply the metadata AND
+   * continue the save — the editor drives that from its pending-save state.
+   */
+  saveMode?: boolean;
   onSave: (meta: MiniAppMeta) => void;
   onClose: () => void;
 }
@@ -50,6 +57,7 @@ export function MiniAppMetaModal({
   initial,
   categorySuggestions,
   tagSuggestions,
+  saveMode = false,
   onSave,
   onClose,
 }: MiniAppMetaModalProps): ReactElement {
@@ -447,7 +455,7 @@ export function MiniAppMetaModal({
             onClick={handleSave}
           >
             <CheckIcon />
-            {t("common.apply")}
+            {saveMode ? t("common.save") : t("common.apply")}
           </button>
         </div>
       </div>

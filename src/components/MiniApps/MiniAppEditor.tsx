@@ -59,6 +59,7 @@ import type { StatusResult } from "../../services/miniappStatusPoller";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Dropdown } from "../Dropdown";
 import type { DropdownOption } from "../Dropdown";
+import { HoverTooltip } from "../HoverTooltip";
 import { ToggleSwitch } from "../ToggleSwitch";
 import {
   ArrowLeftIcon,
@@ -713,6 +714,19 @@ export function MiniAppEditor(): ReactElement | null {
   // open. Deletion of the whole mini-app is no longer offered from the
   // editor — it stays available from the Library list card's context menu.
   const [metaModalOpen, setMetaModalOpen] = useState<boolean>(false);
+  // Which header save action opened the Properties modal as part of a save
+  // flow (`null` = the modal was opened by the plain Properties button, so
+  // its confirm button is "Apply"). A brand-new draft without a name routes
+  // Save here instead of flashing the validation plaque.
+  const [pendingSaveAction, setPendingSaveAction] = useState<
+    "save" | "saveAndClose" | null
+  >(null);
+  // Armed after the save-mode modal confirms: the metadata is already applied
+  // to the draft, and the effect below performs the actual persist on the
+  // next render so `issues` (and `persistDraft`) see the post-apply state.
+  const [pendingAutoSave, setPendingAutoSave] = useState<
+    "save" | "saveAndClose" | null
+  >(null);
   const miniAppAssistantContext = useMemo(
     () => buildMiniAppAssistantContext(draft, createAssistantDraftVersion(draft)),
     [draft],
@@ -800,11 +814,27 @@ export function MiniAppEditor(): ReactElement | null {
   ]);
 
   const handleSave = useCallback((): void => {
+    // A brand-new draft has no name yet, so it cannot be saved — but a dead
+    // "1 problem" plaque explains nothing actionable. Collect the metadata
+    // first: the Properties modal opens in save mode and its confirm button
+    // (now "Save") applies the metadata AND continues the save.
+    if (!editing && draft.name.trim() === "") {
+      setPendingSaveAction("save");
+      setMetaModalOpen(true);
+      return;
+    }
     if (!persistDraft()) return;
     Message.success(t("miniapps.editor.saved"));
-  }, [persistDraft, t]);
+  }, [editing, draft.name, persistDraft, t]);
 
   const handleSaveAndClose = useCallback((): void => {
+    // Same collect-metadata-first flow as `handleSave` — after the modal
+    // confirms, the deferred save below navigates out of the editor.
+    if (!editing && draft.name.trim() === "") {
+      setPendingSaveAction("saveAndClose");
+      setMetaModalOpen(true);
+      return;
+    }
     if (!persistDraft()) return;
     Message.success(t("miniapps.editor.saved"));
     // The draft is clean now, so this navigates straight through the guard.
@@ -815,6 +845,37 @@ export function MiniAppEditor(): ReactElement | null {
     setLibraryTab("miniapps");
     setView("library");
   }, [
+    editing,
+    draft.name,
+    persistDraft,
+    t,
+    setMiniappEditorDirty,
+    setMiniappEditorId,
+    setLibraryTab,
+    setView,
+  ]);
+
+  // Finish a save that was routed through the save-mode Properties modal.
+  // The modal already applied its metadata to the draft, so by the time this
+  // effect runs `issues` are fresh and `persistDraft` validates the
+  // post-apply draft — remaining widget problems surface through the normal
+  // plaque path instead of being silently swallowed.
+  useEffect(() => {
+    if (pendingAutoSave === null) return;
+    const action = pendingAutoSave;
+    setPendingAutoSave(null);
+    if (!persistDraft()) return;
+    Message.success(t("miniapps.editor.saved"));
+    if (action === "saveAndClose") {
+      // The draft is clean now, so this navigates straight through the
+      // unsaved-changes guard — same contract as `handleSaveAndClose`.
+      setMiniappEditorDirty(false);
+      setMiniappEditorId(null);
+      setLibraryTab("miniapps");
+      setView("library");
+    }
+  }, [
+    pendingAutoSave,
     persistDraft,
     t,
     setMiniappEditorDirty,
@@ -1301,6 +1362,27 @@ export function MiniAppEditor(): ReactElement | null {
     nudgeSelectedWidget,
   ]);
 
+  // Hover text for the issue-count plaque: every problem in reading order,
+  // with widget-scoped ones prefixed by the widget's display label so the
+  // tooltip alone answers "what is wrong and where". The per-field hints on
+  // the canvas/inspector stay the primary guidance — this is the summary.
+  const issueTooltipLabel = useMemo(() => {
+    const widgetById = new Map(draft.widgets.map((w) => [w.id, w] as const));
+    return issues
+      .map((issue) => {
+        const message = t(issue.messageKey, issue.params);
+        if (issue.widgetId === undefined) return message;
+        const widget = widgetById.get(issue.widgetId);
+        return widget === undefined
+          ? message
+          : t("miniapps.editor.validation.issueTooltipWidgetItem", {
+              widget: previewLabel(widget, t),
+              message,
+            });
+      })
+      .join("\n");
+  }, [issues, draft.widgets, t]);
+
   if (editorId !== null && existing === null) return null;
 
   const hasErrors = issues.length > 0;
@@ -1326,11 +1408,13 @@ export function MiniAppEditor(): ReactElement | null {
         </div>
         <div className="view-header__actions">
           {showErrors && hasErrors ? (
-            <span className="ma-editor__issue-count" role="status">
-              {t("miniapps.editor.validation.issueCount", {
-                count: issues.length,
-              })}
-            </span>
+            <HoverTooltip label={issueTooltipLabel}>
+              <span className="ma-editor__issue-count" role="status">
+                {t("miniapps.editor.validation.issueCount", {
+                  count: issues.length,
+                })}
+              </span>
+            </HoverTooltip>
           ) : null}
           <button
             type="button"
@@ -1580,11 +1664,18 @@ export function MiniAppEditor(): ReactElement | null {
           }}
           categorySuggestions={categorySuggestions}
           tagSuggestions={tagSuggestions}
+          saveMode={pendingSaveAction !== null}
           onSave={(meta) => {
-            updateDraft(meta);
+            const action = pendingSaveAction;
             setMetaModalOpen(false);
+            setPendingSaveAction(null);
+            updateDraft(meta);
+            if (action !== null) setPendingAutoSave(action);
           }}
-          onClose={() => setMetaModalOpen(false)}
+          onClose={() => {
+            setMetaModalOpen(false);
+            setPendingSaveAction(null);
+          }}
         />
       ) : null}
 

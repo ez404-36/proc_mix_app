@@ -669,6 +669,7 @@
         "issueCount_few": "{{count}} проблемы",
         "issueCount_many": "{{count}} проблем",
         "issueCount_other": "{{count}} проблем",
+        "issueTooltipWidgetItem": "{{widget}}: {{message}}",
         "labelRequired": "Укажите подпись.",
         "commandRequired": "Выберите команду.",
         "scriptRequired": "Укажите скрипт.",
