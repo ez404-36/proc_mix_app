@@ -5,6 +5,26 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.6] - 2026-11-16
+
+### Added
+
+- **Mini-apps in the Home "Recently run" list.** Mini-apps that have been run
+  now appear alongside commands and workflows in the Home recent list, sorted
+  by the last run time (shared top-5 limit), with the full mini-app tile:
+  context menu, standalone window launch, and double-click to edit.
+- **Validation summary tooltip.** Hovering the "N problems" badge in the
+  mini-app editor lists every issue (shared popover, opens after a short
+  delay). Widget-scoped issues are prefixed with the widget's display label,
+  so the tooltip alone answers what is wrong and where; the per-field
+  highlights stay as the primary guidance.
+- **Guided first save for mini-apps.** Saving a brand-new mini-app that has
+  no name yet no longer flashes the problem badge — the Properties modal
+  opens in save mode (the confirm button reads "Save" instead of "Apply"),
+  and confirming applies the entered metadata AND persists the mini-app.
+  "Save & close" navigates to the Library after the modal confirms; Cancel
+  saves nothing. The plain "Properties" button keeps its Apply behaviour.
+
 ## [0.16.5] - 2026-11-08
 
 ### Fixed

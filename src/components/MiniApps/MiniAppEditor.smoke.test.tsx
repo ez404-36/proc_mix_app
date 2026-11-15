@@ -619,6 +619,43 @@ describe("MiniAppEditor — mapping rule match mode", () => {
       ),
     ).toBeTruthy();
   });
+
+  it("hovering the problem plaque lists every issue with its widget label", async () => {
+    resetStores(
+      makeMiniApp([
+        toggleWidget({
+          status: {
+            source: { kind: "inline", script: "probe" },
+            intervalMs: 5000,
+            mapping: {
+              mode: "mapped",
+              rules: [
+                { match: "(unclosed", label: "Bad", matchMode: "regex" },
+              ],
+            },
+          },
+        }),
+      ]),
+    );
+    render(<MiniAppEditor />);
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    const plaque = screen.getByText(/problem/);
+    expect(plaque).toBeTruthy();
+
+    // Hover the plaque (the HoverTooltip wrapper is its parent); the
+    // popover appears after the shared show delay.
+    act(() => {
+      fireEvent.mouseEnter(plaque.parentElement as HTMLElement);
+    });
+    const tooltip = await screen.findByRole("tooltip", {}, { timeout: 2000 });
+    expect(tooltip.textContent).toContain("VPN");
+    expect(tooltip.textContent).toContain(
+      "Rule 1's pattern is not a valid regular expression.",
+    );
+  });
 });
 
 describe("MiniAppEditor — test probe now", () => {
@@ -842,5 +879,85 @@ describe("MiniAppEditor — toolbar & Properties modal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Redo" }));
     });
     expect(document.querySelectorAll(".ma-canvas-widget")).toHaveLength(1);
+  });
+});
+
+describe("MiniAppEditor — saving a brand-new unnamed draft", () => {
+  it("opens the Properties modal in save mode instead of flashing the problem plaque", () => {
+    resetStores(null);
+    render(<MiniAppEditor />);
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    // No "1 problem" plaque — the modal collects the metadata instead.
+    expect(screen.queryByText(/problem/)).toBeNull();
+    const dialog = screen.getByRole("dialog", { name: "Properties" });
+    // The confirm button reads "Save", not "Apply": confirming continues
+    // the save rather than merely applying the metadata.
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "Apply" })).toBeNull();
+  });
+
+  it("confirming the modal applies the metadata AND persists the mini-app", () => {
+    resetStores(null);
+    render(<MiniAppEditor />);
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "Properties" });
+    act(() => {
+      fireEvent.change(within(dialog).getByLabelText("Name"), {
+        target: { value: "VPN Panel" },
+      });
+    });
+    act(() => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    });
+
+    const created = useMiniAppStore.getState().miniapps;
+    expect(created).toHaveLength(1);
+    expect(created[0]?.name).toBe("VPN Panel");
+    // The editor adopts the created id so a subsequent Save updates it.
+    expect(useUIStore.getState().miniappEditorId).toBe(created[0]?.id);
+  });
+
+  it("Cancel in the save-mode modal closes it without persisting", () => {
+    resetStores(null);
+    render(<MiniAppEditor />);
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "Properties" });
+    act(() => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    });
+
+    expect(useMiniAppStore.getState().miniapps).toHaveLength(0);
+  });
+
+  it("\"Save and close\" on an unnamed draft persists via the modal, then leaves the editor", () => {
+    resetStores(null);
+    render(<MiniAppEditor />);
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Save & close" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "Properties" });
+    act(() => {
+      fireEvent.change(within(dialog).getByLabelText("Name"), {
+        target: { value: "Deploy panel" },
+      });
+    });
+    act(() => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    });
+
+    expect(useMiniAppStore.getState().miniapps[0]?.name).toBe("Deploy panel");
+    expect(useUIStore.getState().currentView).toBe("library");
+    expect(useUIStore.getState().miniappEditorId).toBeNull();
   });
 });

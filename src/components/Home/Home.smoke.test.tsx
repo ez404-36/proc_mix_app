@@ -426,3 +426,25 @@ describe("Home mini-app tiles — favorites section", () => {
     expect(useMiniAppStore.getState().miniapps).toHaveLength(0);
   });
 });
+
+describe("Home mini-app tiles — recent section", () => {
+  // A mini-app with `lastRunAt` so it appears in the Home "Recently run"
+  // section as a MiniAppRow — recent mixes all three entity kinds.
+  function seedRecentMiniApp(): void {
+    const ma = makeMiniApp({
+      id: "ma-1",
+      name: "VPN Panel",
+      lastRunAt: "2026-08-01T00:00:00.000Z",
+    });
+    useMiniAppStore.setState({ miniapps: [ma], hydrated: true });
+  }
+
+  it("shows a recently-run mini-app in the Recent section", () => {
+    seedRecentMiniApp();
+    renderHome();
+
+    expect(screen.getByText("VPN Panel")).toBeTruthy();
+    expect(screen.getByText("Controls the office VPN")).toBeTruthy();
+    expect(screen.queryByText("No recent activity yet.")).toBeNull();
+  });
+});

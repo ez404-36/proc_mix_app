@@ -883,10 +883,7 @@ pub(crate) fn pgid_is_safe_target(pgid: i32) -> bool {
         return false;
     }
     let own_sid = libc_getsid(0);
-    if own_sid > 0 && pgid == own_sid {
-        return false;
-    }
-    true
+    !(own_sid > 0 && pgid == own_sid)
 }
 
 #[cfg(unix)]
