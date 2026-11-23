@@ -5,6 +5,24 @@ All notable changes to ProcMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.7] - 2026-11-23
+
+### Added
+
+- **Tab completion in the interactive terminal.** Typing Tab completes
+  bash-style: the first word completes executable names from `PATH` plus
+  common shell builtins; later words complete files and directories
+  (directories only after `cd` / `pushd` / `rmdir`). A single match inserts
+  with a trailing space (commands) or `/` (directories); multiple matches
+  first complete to the longest common prefix, then Tab cycles the
+  candidates (Shift+Tab backwards) with a floating candidate list anchored
+  at the cursor — a click accepts a candidate, Escape dismisses the list.
+  Quoted and special-character names are escaped like bash, and `~` plus
+  the session's current working directory are honoured (`cd ~/Pro<Tab>` →
+  `cd ~/Projects/`). When ProcMix has nothing to offer (mid-line cursor,
+  full-screen apps, empty results), Tab falls through to the shell, so the
+  shell's own native completion keeps working everywhere else.
+
 ## [0.16.6] - 2026-11-16
 
 ### Added
