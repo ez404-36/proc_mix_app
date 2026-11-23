@@ -2678,6 +2678,65 @@ body.is-editor-fullscreen .output-panel {
   padding: 6px 10px;
 }
 
+/* Tab-completion popup (see docs/plans/terminal-tab-completion-plan.md).
+   Anchored by `CompletionPopup` at the xterm cursor cell; the list floats
+   above the terminal using the same elevated surface as other popovers. */
+.terminal-completion {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  max-height: 184px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.terminal-completion__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--console-text);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.terminal-completion__item:hover {
+  background: var(--color-surface-hover);
+}
+
+.terminal-completion__item.is-active {
+  background: var(--color-accent-subtle);
+}
+
+.terminal-completion__item--dir .terminal-completion__name {
+  color: var(--color-accent);
+}
+
+.terminal-completion__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-completion__hint {
+  flex: none;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 10px;
+}
+
 /* Shortcut settings */
 .shortcut-list {
   display: flex;

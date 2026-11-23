@@ -74,10 +74,7 @@ struct CodexCatalogModelFile {
 /// Resolve a Codex path that may use `~` with a forward or backward slash
 /// separator. Returns `None` only when the OS has no home directory.
 fn resolve_codex_path(path: &str) -> Option<PathBuf> {
-    if let Some(relative) = path
-        .strip_prefix("~/")
-        .or_else(|| path.strip_prefix("~\\"))
-    {
+    if let Some(relative) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
         return home_dir().map(|home| home.join(relative));
     }
     if path == "~" {
@@ -1064,10 +1061,7 @@ mod tests {
     fn does_not_duplicate_default_codex_model() {
         let catalog = vec![("gpt-5.1".to_string(), "GPT-5.1".to_string())];
         let merged = merge_codex_models(catalog, Some("gpt-5.1"));
-        assert_eq!(
-            merged,
-            vec![("gpt-5.1".to_string(), "GPT-5.1".to_string())]
-        );
+        assert_eq!(merged, vec![("gpt-5.1".to_string(), "GPT-5.1".to_string())]);
     }
 
     #[test]
@@ -1077,17 +1071,14 @@ mod tests {
 
     #[test]
     fn resolves_codex_paths_with_windows_separator() {
-        let expanded = resolve_codex_path("~\\.codex\\models.json")
-            .expect("Windows-style ~ path resolves");
+        let expanded =
+            resolve_codex_path("~\\.codex\\models.json").expect("Windows-style ~ path resolves");
         assert!(expanded.starts_with(home_dir().expect("home exists")));
         assert_ne!(expanded, PathBuf::from("~\\.codex\\models.json"));
 
-        let untouched = resolve_codex_path("C:\\Codex\\models.json")
-            .expect("absolute Windows path resolves");
-        assert_eq!(
-            untouched,
-            PathBuf::from("C:\\Codex\\models.json")
-        );
+        let untouched =
+            resolve_codex_path("C:\\Codex\\models.json").expect("absolute Windows path resolves");
+        assert_eq!(untouched, PathBuf::from("C:\\Codex\\models.json"));
     }
 
     #[test]

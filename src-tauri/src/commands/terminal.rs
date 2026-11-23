@@ -79,3 +79,17 @@ pub async fn terminal_describe_session(
 ) -> Result<terminal::SessionDescription, String> {
     terminal::describe_session(state.inner(), &session_id)
 }
+
+/// Tab-completion candidates for one parsed word of the user's terminal
+/// input. Read-only PATH/filesystem lookup — see
+/// `core::terminal::completion`. Intentionally NOT session-scoped: it does
+/// not touch any PTY (the session may even already be exited when a stale
+/// completion request lands), and the cwd the frontend needs it passes
+/// explicitly as `baseDir` after resolving it from
+/// `terminal_describe_session`.
+#[tauri::command]
+pub async fn terminal_complete(
+    request: terminal::CompletionRequest,
+) -> Result<terminal::CompletionResponse, String> {
+    terminal::complete(&request)
+}

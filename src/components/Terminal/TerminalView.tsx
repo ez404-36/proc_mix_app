@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { Terminal } from "@xterm/xterm";
@@ -6,6 +6,8 @@ import { useContextMenu } from "../ContextMenu";
 import type { ContextMenuEntry } from "../ContextMenu";
 import { CopyIcon, PasteIcon } from "../icons";
 import { pasteFromClipboard, useTerminalSession } from "./useTerminalSession";
+import { CompletionPopup } from "./completion/CompletionPopup";
+import type { CompletionPopupState } from "./completion/completionController";
 
 interface TerminalViewProps {
   /** The tab's PTY session id. */
@@ -32,7 +34,12 @@ export function TerminalView({ sessionId, visible }: TerminalViewProps): ReactEl
   const { show } = useContextMenu();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
-  useTerminalSession(sessionId, containerRef, termRef);
+  const [completionState, setCompletionState] = useState<CompletionPopupState | null>(null);
+  const acceptRef = useRef<((candidateIndex: number) => void) | undefined>(undefined);
+  useTerminalSession(sessionId, containerRef, termRef, {
+    onCompletionState: setCompletionState,
+    acceptRef,
+  });
 
   const buildMenu = (): ContextMenuEntry[] => {
     const term = termRef.current;
@@ -94,6 +101,15 @@ export function TerminalView({ sessionId, visible }: TerminalViewProps): ReactEl
           items: buildMenu(),
         });
       }}
-    />
+    >
+      {completionState !== null && termRef.current !== null ? (
+        <CompletionPopup
+          state={completionState}
+          term={termRef.current}
+          container={containerRef.current}
+          onAccept={(candidateIndex) => acceptRef.current?.(candidateIndex)}
+        />
+      ) : null}
+    </div>
   );
 }
