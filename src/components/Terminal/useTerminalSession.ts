@@ -1,13 +1,27 @@
 import { useEffect } from "react";
+import { homeDir } from "@tauri-apps/api/path";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import {
+  completeTerminal,
   resizeTerminalSession,
+  describeTerminalSession,
   subscribeTerminalSession,
   writeTerminalSession,
 } from "../../services/terminalService";
 import { useTerminalStore } from "../../stores/terminalStore";
 import type { TerminalEvent } from "../../types/terminal";
+import { createCompletionController } from "./completion/completionController";
+import type { CompletionPopupState } from "./completion/completionController";
+
+/** Optional bridges for the M3 completion popup: TerminalView owns the
+ *  React state and renders `CompletionPopup`; the hook forwards the
+ *  controller's popup stream out and the view's accept clicks in. */
+export interface TerminalCompletionUiHooks {
+  onCompletionState?: (state: CompletionPopupState | null) => void;
+  /** Ref filled with the controller's `accept` once the session is up. */
+  acceptRef?: React.RefObject<((candidateIndex: number) => void) | undefined>;
+}
 
 /**
  * Decode a base64 string into raw bytes. `atob` + manual byte extraction
@@ -63,6 +77,7 @@ export function useTerminalSession(
   sessionId: string,
   containerRef: React.RefObject<HTMLDivElement | null>,
   termRef: React.RefObject<Terminal | null>,
+  completionUi?: TerminalCompletionUiHooks,
 ): void {
   const markExited = useTerminalStore((s) => s.markExited);
 
@@ -95,6 +110,29 @@ export function useTerminalSession(
     fitAddon.fit();
     termRef.current = term;
 
+    // Tab completion (see docs/plans/terminal-tab-completion-plan.md):
+    // the controller owns Tab keydowns, computes candidates from the
+    // backend and inserts them THROUGH the PTY (erase + retype), falling
+    // back to forwarding a literal Tab when it has nothing to offer. The
+    // user's home dir is process-constant — memoize the single resolve.
+    let homePromise: Promise<string | null> | null = null;
+    const completion = createCompletionController(term, {
+      sessionId,
+      write: (data) => {
+        void writeTerminalSession(sessionId, data);
+      },
+      complete: completeTerminal,
+      describeSession: describeTerminalSession,
+      homeDir: () => {
+        homePromise ??= homeDir().catch(() => null);
+        return homePromise;
+      },
+      onPopupStateChange: (state) => completionUi?.onCompletionState?.(state),
+    });
+    if (completionUi?.acceptRef !== undefined) {
+      completionUi.acceptRef.current = completion.accept;
+    }
+
     // xterm.js's native `Ctrl`/`Cmd`+`V` paste relies on the BROWSER's own
     // `paste` event reaching its hidden textarea, which in turn depends on
     // the OS/webview correctly mapping the physical key combo to a "paste"
@@ -119,7 +157,7 @@ export function useTerminalSession(
         pasteFromClipboard(term);
         return false;
       }
-      return true;
+      return completion.handleKeyEvent(event);
     });
 
     // Deliver the user's input straight to the PTY's stdin. Fire-and-forget:
@@ -130,6 +168,7 @@ export function useTerminalSession(
     // only, persisted solely by an explicit layout save).
     const dataDisposable = term.onData((data) => {
       useTerminalStore.getState().recordTerminalInput(sessionId, data);
+      completion.notifyInput(data);
       void writeTerminalSession(sessionId, data);
     });
 

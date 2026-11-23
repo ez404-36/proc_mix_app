@@ -107,3 +107,40 @@ export interface RegionContainer {
    */
   sizes: number[];
 }
+
+/* ------------------------------------------------------------------------- *
+ * Tab completion (see docs/plans/terminal-tab-completion-plan.md)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * What KIND of word is being completed — decided by the frontend parser
+ * (`parseCompletionContext`), consumed by the Rust `core::terminal::
+ * completion` module. Mirrors the Rust `CompletionKind` enum.
+ */
+export type TerminalCompletionKind = "command" | "path" | "dir";
+
+/** Payload of the `terminal_complete` command. Mirrors the Rust
+ *  `CompletionRequest`. `prefix` is the already-unquoted text being
+ *  matched; `baseDir` is the absolute directory to search (path/dir kinds
+ *  only — resolved from `~` and the session cwd by the frontend). */
+export interface TerminalCompletionRequest {
+  kind: TerminalCompletionKind;
+  prefix: string;
+  baseDir?: string | null;
+}
+
+/** One completion candidate. Mirrors the Rust `CompletionCandidate`.
+ *  `name` is the last path segment (or bare executable name for the
+ *  command kind) — the frontend re-joins it onto the typed directory
+ *  part. */
+export interface TerminalCompletionCandidate {
+  name: string;
+  isDir: boolean;
+}
+
+/** Response of the `terminal_complete` command. An empty `candidates`
+ *  list tells the frontend to fall through to the shell's native
+ *  readline completion (pass the raw Tab into the PTY). */
+export interface TerminalCompletionResponse {
+  candidates: TerminalCompletionCandidate[];
+}

@@ -27,10 +27,17 @@
 //   - `types`   — IPC DTOs (`TerminalEvent`), the session registry
 //                 (`TerminalState`), and constants.
 //   - `session` — spawn/write/resize/close and the app-shutdown teardown.
+//   - `completion` — read-only Tab-completion candidate lookup (PATH +
+//                 filesystem enumeration; parsing lives in the frontend).
 
+mod completion;
 mod session;
 mod types;
 
+pub use completion::{
+    complete, CompletionCandidate, CompletionKind, CompletionRequest, CompletionResponse,
+    MAX_COMPLETION_CANDIDATES,
+};
 pub use session::{
     close_session, describe_session, resize_session, shutdown_all_sync, spawn_session,
     write_to_session,

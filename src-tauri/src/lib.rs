@@ -443,6 +443,7 @@ pub fn run() {
             commands::terminal_resize,
             commands::terminal_close,
             commands::terminal_describe_session,
+            commands::terminal_complete,
             commands::list_terminal_layouts,
             commands::save_terminal_layout,
             commands::rename_terminal_layout,

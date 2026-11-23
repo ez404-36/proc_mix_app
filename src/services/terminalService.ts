@@ -10,6 +10,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { TerminalEvent } from "../types/terminal";
+import type {
+  TerminalCompletionRequest,
+  TerminalCompletionResponse,
+} from "../types/terminal";
 import type { TerminalSessionDescription } from "../types/terminalLayout";
 
 const TERMINAL_EVENT_CHANNEL = "terminal-event";
@@ -58,6 +62,20 @@ export async function resizeTerminalSession(
 /** Close a terminal session (kills its shell). Idempotent. */
 export async function closeTerminalSession(sessionId: string): Promise<void> {
   await invoke("terminal_close", { sessionId });
+}
+
+/**
+ * Tab-completion candidates for one parsed word of the terminal input.
+ * Read-only PATH/filesystem lookup on the backend (see
+ * `core::terminal::completion`); the parsing (quote handling, first-word
+ * detection, `~`/cwd resolution) happens frontend-side in
+ * `components/Terminal/completion/parseLine.ts`. NOT session-scoped: it
+ * does not touch any PTY.
+ */
+export async function completeTerminal(
+  request: TerminalCompletionRequest,
+): Promise<TerminalCompletionResponse> {
+  return await invoke<TerminalCompletionResponse>("terminal_complete", { request });
 }
 
 /**
